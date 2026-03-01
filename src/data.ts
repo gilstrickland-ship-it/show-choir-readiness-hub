@@ -3,6 +3,9 @@ import { EventItem, InviteCode, Program, Task, UpdateItem } from "./types";
 export const program: Program = {
   id: "central-high",
   name: "Central High Show Choir Program",
+  logoUrl: "",
+  primaryColor: "#7a2d20",
+  accentColor: "#efab54",
   choirs: [
     { id: "premiere", name: "Premiere Company", shortLabel: "Premiere" },
     { id: "spectrum", name: "Spectrum Ensemble", shortLabel: "Spectrum" },

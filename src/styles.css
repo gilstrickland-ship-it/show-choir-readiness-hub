@@ -1,6 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Oswald:wght@500;600;700&display=swap");
 
 :root {
+  --brand-primary: #7a2d20;
+  --brand-accent: #efab54;
   color-scheme: light;
   font-family: "Inter", system-ui, sans-serif;
   line-height: 1.5;
@@ -87,7 +89,7 @@ textarea {
 .leader-header {
   padding: 28px 24px 20px;
   background:
-    linear-gradient(135deg, rgba(122, 45, 32, 0.96), rgba(180, 61, 44, 0.9) 55%, rgba(239, 171, 84, 0.9));
+    linear-gradient(135deg, var(--brand-primary), color-mix(in srgb, var(--brand-primary) 72%, white) 55%, var(--brand-accent));
   color: #fff7ed;
   position: relative;
 }
@@ -183,6 +185,27 @@ textarea {
 .muted-line,
 .timeline-footer span {
   color: #7c6b57;
+}
+
+.brand-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.brand-logo-large {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
 }
 
 .stack-lg {
@@ -281,7 +304,7 @@ textarea {
 .metric-card strong {
   display: block;
   font-size: 1.5rem;
-  color: #7a2d20;
+  color: var(--brand-primary);
 }
 
 .hero-card,
@@ -542,12 +565,12 @@ textarea {
 }
 
 .chip-active {
-  background: #7a2d20;
+  background: var(--brand-primary);
   color: #fff7ed;
 }
 
 .chip-danger {
-  background: #bc4b27;
+  background: color-mix(in srgb, var(--brand-primary) 82%, black);
   color: #fff7ed;
 }
 
@@ -601,7 +624,7 @@ textarea {
   position: absolute;
   left: 0;
   top: 24px;
-  background: #b4532c;
+  background: var(--brand-primary);
 }
 
 .timeline-card {
@@ -733,7 +756,7 @@ textarea {
 
 .nav-link-active {
   background: rgba(122, 45, 32, 0.1);
-  color: #7a2d20;
+  color: var(--brand-primary);
 }
 
 .leader-link {
@@ -783,7 +806,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #7a2d20;
+  color: var(--brand-primary);
 }
 
 .alert-card-error {
@@ -795,7 +818,7 @@ textarea {
 .secondary-button {
   width: fit-content;
   background: rgba(122, 45, 32, 0.08);
-  color: #7a2d20;
+  color: var(--brand-primary);
   border-color: rgba(122, 45, 32, 0.12);
 }
 
@@ -866,8 +889,8 @@ textarea {
 }
 
 .segment-active {
-  background: #7a2d20;
-  border-color: #7a2d20;
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
   color: #fff7ed;
 }
 
@@ -900,7 +923,11 @@ textarea {
   border: 0;
   border-radius: 18px;
   padding: 14px 16px;
-  background: linear-gradient(135deg, #7a2d20, #bc4b27);
+  background: linear-gradient(
+    135deg,
+    var(--brand-primary),
+    color-mix(in srgb, var(--brand-primary) 72%, var(--brand-accent))
+  );
   color: #fff7ed;
   font-weight: 800;
   cursor: pointer;
@@ -927,6 +954,32 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.settings-subpanel {
+  border: 1px solid rgba(120, 53, 15, 0.08);
+}
+
+.brand-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.brand-preview strong {
+  font-size: 1rem;
+  color: #1f2937;
+}
+
+.brand-swatches {
+  display: flex;
+  gap: 10px;
+}
+
+.brand-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  border: 1px solid rgba(120, 53, 15, 0.12);
 }
 
 .info-card ul {

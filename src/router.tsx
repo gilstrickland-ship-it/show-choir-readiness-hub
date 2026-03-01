@@ -12,7 +12,8 @@ import {
   Compass,
   Home,
   LogOut,
-  Megaphone
+  Megaphone,
+  Settings
 } from "lucide-react";
 import { useAppState } from "./context/AppContext";
 import { UserRole } from "./types";
@@ -25,6 +26,7 @@ import { ParentUpdatesPage } from "./screens/parent/ParentUpdatesPage";
 import { ParentGuidePage } from "./screens/parent/ParentGuidePage";
 import { LeaderDashboardPage } from "./screens/leader/LeaderDashboardPage";
 import { LeaderPublishPage } from "./screens/leader/LeaderPublishPage";
+import { LeaderSettingsPage } from "./screens/leader/LeaderSettingsPage";
 import { SignInPage } from "./screens/auth/SignInPage";
 import { JoinTeamPage } from "./screens/auth/JoinTeamPage";
 
@@ -75,7 +77,7 @@ function AppFrame({
   subtitle: string;
   navItems: Array<{ to: string; label: string; icon: typeof Home }>;
 }) {
-  const { session, signOut } = useAppState();
+  const { program, session, signOut } = useAppState();
   const navigate = useNavigate();
 
   const handleSignOut = () => {
@@ -88,7 +90,10 @@ function AppFrame({
       <div className="phone-frame">
         <header className="app-header">
           <div className="header-row">
-            <div className="eyebrow">Show Choir Readiness Hub</div>
+            <div className="brand-row">
+              {program.logoUrl ? <img src={program.logoUrl} alt="" className="brand-logo" /> : null}
+              <div className="eyebrow">Show Choir Readiness Hub</div>
+            </div>
             <button type="button" className="header-action" onClick={handleSignOut}>
               <LogOut size={14} />
             </button>
@@ -96,7 +101,7 @@ function AppFrame({
           <h1>{title}</h1>
           <p>
             {subtitle}
-            {session.programName ? ` • ${session.programName}` : ""}
+            {program.name ? ` • ${program.name}` : ""}
           </p>
         </header>
         <main className="app-main">
@@ -125,10 +130,11 @@ function AppFrame({
 }
 
 function LeaderFrame() {
-  const { session, signOut } = useAppState();
+  const { program, signOut } = useAppState();
   const navigate = useNavigate();
   const location = useLocation();
   const isPublishPage = location.pathname.startsWith("/leader/publish");
+  const isSettingsPage = location.pathname.startsWith("/leader/settings");
 
   const handleSignOut = () => {
     signOut();
@@ -140,13 +146,26 @@ function LeaderFrame() {
       <div className="leader-shell">
         <header className="leader-header">
           <div>
-            <div className="eyebrow">{isPublishPage ? "Leader Publish" : "Leader Dashboard"}</div>
-            <h1>{isPublishPage ? "Publish Updates" : "Program Overview"}</h1>
+            <div className="brand-row">
+              {program.logoUrl ? <img src={program.logoUrl} alt="" className="brand-logo" /> : null}
+              <div className="eyebrow">
+                {isSettingsPage
+                  ? "Leader Settings"
+                  : isPublishPage
+                    ? "Leader Publish"
+                    : "Leader Dashboard"}
+              </div>
+            </div>
+            <h1>
+              {isSettingsPage ? "Program Settings" : isPublishPage ? "Publish Updates" : "Program Overview"}
+            </h1>
             <p>
-              {isPublishPage
+              {isSettingsPage
+                ? "Update school branding, logo, choir names, and other organization settings."
+                : isPublishPage
                 ? "Post routine or urgent updates and create linked action items."
                 : "Start from the dashboard, then jump into publishing when you need to post a change."}
-              {session.programName ? ` • ${session.programName}` : ""}
+              {program.name ? ` • ${program.name}` : ""}
             </p>
           </div>
           <div className="leader-header-actions">
@@ -171,6 +190,15 @@ function LeaderFrame() {
             >
               <Megaphone size={16} />
               Publish
+            </NavLink>
+            <NavLink
+              to="/leader/settings"
+              className={({ isActive }) =>
+                isActive ? "leader-link leader-link-active" : "leader-link"
+              }
+            >
+              <Settings size={16} />
+              Settings
             </NavLink>
           </div>
         </header>
@@ -255,7 +283,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/leader/dashboard" replace /> },
       { path: "dashboard", element: <LeaderDashboardPage /> },
-      { path: "publish", element: <LeaderPublishPage /> }
+      { path: "publish", element: <LeaderPublishPage /> },
+      { path: "settings", element: <LeaderSettingsPage /> }
     ]
   }
 ]);

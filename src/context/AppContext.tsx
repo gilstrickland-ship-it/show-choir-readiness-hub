@@ -11,9 +11,9 @@ import {
   initialTasks,
   initialUpdates,
   inviteCodes,
-  program
+  program as initialProgram
 } from "../data";
-import { AuthSession, EventItem, Task, UpdateItem } from "../types";
+import { AuthSession, Choir, EventItem, Program, Task, UpdateItem } from "../types";
 
 interface NewUpdateInput {
   title: string;
@@ -30,7 +30,7 @@ interface NewUpdateInput {
 }
 
 interface AppState {
-  program: typeof program;
+  program: Program;
   events: EventItem[];
   allTasks: Task[];
   allUpdates: UpdateItem[];
@@ -52,6 +52,10 @@ interface AppState {
   deleteTask: (taskId: string) => void;
   editUpdate: (updateId: string, patch: Partial<UpdateItem>) => void;
   deleteUpdate: (updateId: string) => void;
+  updateProgramBranding: (
+    patch: Partial<Pick<Program, "name" | "logoUrl" | "primaryColor" | "accentColor">>
+  ) => void;
+  updateChoirName: (choirId: string, patch: Partial<Pick<Choir, "name" | "shortLabel">>) => void;
   getChoirLabel: (choirId?: string) => string;
 }
 
@@ -59,6 +63,7 @@ const AppContext = createContext<AppState | null>(null);
 const STORAGE_KEY = "show-choir-readiness-hub-state";
 
 interface PersistedState {
+  program: Program;
   events: EventItem[];
   tasks: Task[];
   updates: UpdateItem[];
@@ -78,6 +83,7 @@ function getDefaultSession(): AuthSession {
 
 function getDefaultState(): PersistedState {
   return {
+    program: initialProgram,
     events: initialEvents,
     tasks: initialTasks,
     updates: initialUpdates,
@@ -100,6 +106,7 @@ function loadInitialState(): PersistedState {
   try {
     const parsed = JSON.parse(saved) as Partial<PersistedState>;
     return {
+      program: parsed.program ?? initialProgram,
       events: parsed.events ?? initialEvents,
       tasks: parsed.tasks ?? initialTasks,
       updates: parsed.updates ?? initialUpdates,
@@ -114,6 +121,7 @@ function loadInitialState(): PersistedState {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const persisted = useMemo(loadInitialState, []);
+  const [program, setProgram] = useState<Program>(persisted.program);
   const [events, setEvents] = useState(persisted.events);
   const [tasks, setTasks] = useState(persisted.tasks);
   const [updates, setUpdates] = useState(persisted.updates);
@@ -127,7 +135,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
+        JSON.stringify({
+        program,
         events,
         tasks,
         updates,
@@ -135,7 +144,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         activeChoirId
       })
     );
-  }, [activeChoirId, events, session, tasks, updates]);
+  }, [activeChoirId, events, program, session, tasks, updates]);
 
   useEffect(() => {
     if (session.role !== "student" && activeChoirId && !session.choirIds.includes(activeChoirId)) {
@@ -197,6 +206,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return program.choirs.find((choir) => choir.id === choirId)?.shortLabel ?? "Unknown Choir";
   };
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    document.documentElement.style.setProperty("--brand-primary", program.primaryColor);
+    document.documentElement.style.setProperty("--brand-accent", program.accentColor);
+  }, [program.accentColor, program.primaryColor]);
 
   const visibleTasks = useMemo(() => {
     if (session.role !== "student") {
@@ -338,6 +356,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUpdates((current) => current.filter((update) => update.id !== updateId));
   };
 
+  const updateProgramBranding = (
+    patch: Partial<Pick<Program, "name" | "logoUrl" | "primaryColor" | "accentColor">>
+  ) => {
+    setProgram((current) => ({ ...current, ...patch }));
+    if (patch.name) {
+      setSession((current) => ({ ...current, programName: patch.name ?? current.programName }));
+    }
+  };
+
+  const updateChoirName = (
+    choirId: string,
+    patch: Partial<Pick<Choir, "name" | "shortLabel">>
+  ) => {
+    setProgram((current) => ({
+      ...current,
+      choirs: current.choirs.map((choir) =>
+        choir.id === choirId ? { ...choir, ...patch } : choir
+      )
+    }));
+  };
+
   const value = useMemo(
     () => ({
       program,
@@ -362,9 +401,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       deleteTask,
       editUpdate,
       deleteUpdate,
+      updateProgramBranding,
+      updateChoirName,
       getChoirLabel
     }),
-    [activeChoirId, activeEvent, events, session, tasks, updates, visibleTasks, visibleUpdates]
+    [
+      activeChoirId,
+      activeEvent,
+      events,
+      program,
+      session,
+      tasks,
+      updates,
+      visibleTasks,
+      visibleUpdates
+    ]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

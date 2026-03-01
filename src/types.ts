@@ -31,6 +31,9 @@ export interface Choir {
 export interface Program {
   id: string;
   name: string;
+  logoUrl?: string;
+  primaryColor: string;
+  accentColor: string;
   choirs: Choir[];
 }
 
