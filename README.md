@@ -117,12 +117,65 @@ That means the product should avoid becoming:
 2. Define the technical architecture (frontend, backend, auth, schema, API).
 3. Build a prototype for one team and validate repeated usage during a live competition cycle.
 
-## Status
+## Current Build
 
-This repo currently contains:
+This repo now contains a working front-end prototype built with:
 
-- research,
-- product framing,
-- and MVP definition.
+- Vite
+- React
+- TypeScript
 
-It does **not** yet contain application code.
+The prototype includes:
+
+- student, parent, and leader experiences
+- simplified prototype sign-in and role selection
+- a multi-choir program model
+- leader dashboard management
+- leader publish flow
+- leader branding/settings controls
+- persistent local state in browser storage
+
+## Routes
+
+Primary routes:
+
+- `/student/home`
+- `/student/queue`
+- `/student/updates`
+- `/student/guide`
+- `/parent/home`
+- `/parent/updates`
+- `/parent/guide`
+- `/leader/dashboard`
+- `/leader/publish`
+- `/leader/settings`
+
+## Local Development
+
+- install dependencies: `npm install`
+- run locally: `npm run dev`
+- production build: `npm run build`
+
+## Prototype Access
+
+The prototype intentionally skips real auth.
+
+Flow:
+
+1. Continue past the sign-in screen with any text or a blank field.
+2. On the join screen, tap one of the built-in role options:
+   - `Student`
+   - `Parent`
+   - `Leader`
+
+## Live Prototype
+
+Production is currently deployed at:
+
+- [show-choir-readiness-hub.vercel.app](https://show-choir-readiness-hub.vercel.app)
+
+## Handoff For AI Coding Tools
+
+For tool-friendly project context, current architecture, routes, and implementation notes, use:
+
+- [AGENTS.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/AGENTS.md)
