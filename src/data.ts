@@ -1,4 +1,4 @@
-import { EventItem, InviteCode, Program, Task, UpdateItem } from "./types";
+import { EventItem, InviteCode, Program, ProgramUser, Task, UpdateItem } from "./types";
 
 export const program: Program = {
   id: "central-high",
@@ -187,5 +187,29 @@ export const inviteCodes: InviteCode[] = [
     role: "leader",
     label: "Leader invite",
     choirIds: ["premiere", "spectrum", "treble"]
+  }
+];
+
+export const initialUsers: ProgramUser[] = [
+  {
+    id: "user-1",
+    name: "Avery Stone",
+    email: "avery@centralchoir.org",
+    role: "leader",
+    choirIds: ["premiere", "spectrum"]
+  },
+  {
+    id: "user-2",
+    name: "Jordan Lee",
+    email: "jordan@student.central.edu",
+    role: "student",
+    choirIds: ["premiere"]
+  },
+  {
+    id: "user-3",
+    name: "Maya Carter",
+    email: "maya.parent@example.com",
+    role: "parent",
+    choirIds: ["premiere", "spectrum"]
   }
 ];

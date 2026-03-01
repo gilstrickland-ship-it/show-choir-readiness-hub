@@ -2,11 +2,20 @@ import { FormEvent, useState } from "react";
 import { useAppState } from "../../context/AppContext";
 
 export function LeaderSettingsPage() {
-  const { program, updateProgramBranding, updateChoirName } = useAppState();
+  const {
+    program,
+    allUsers,
+    updateProgramBranding,
+    updateChoirName,
+    importUsersFromCsv,
+    updateUser,
+    deleteUser
+  } = useAppState();
   const [programName, setProgramName] = useState(program.name);
   const [logoUrl, setLogoUrl] = useState(program.logoUrl ?? "");
   const [primaryColor, setPrimaryColor] = useState(program.primaryColor);
   const [accentColor, setAccentColor] = useState(program.accentColor);
+  const [spreadsheetText, setSpreadsheetText] = useState("");
   const [message, setMessage] = useState("");
 
   const [choirNames, setChoirNames] = useState(
@@ -32,8 +41,17 @@ export function LeaderSettingsPage() {
     setMessage("Settings saved. Theme updates apply across the app.");
   };
 
+  const handleImportUsers = () => {
+    const result = importUsersFromCsv(spreadsheetText);
+    setMessage(result.message);
+    if (result.ok) {
+      setSpreadsheetText("");
+    }
+  };
+
   return (
-    <div className="leader-grid">
+    <div className="stack-lg">
+      <div className="leader-grid">
       <section className="leader-panel stack-md">
         <div className="eyebrow">Branding</div>
         <h2>Control the program theme</h2>
@@ -127,6 +145,128 @@ export function LeaderSettingsPage() {
           </ul>
         </div>
       </aside>
+      </div>
+
+      <div className="leader-grid">
+        <section className="leader-panel stack-md">
+          <div className="eyebrow">Users</div>
+          <h2>Import from spreadsheet</h2>
+          <p>
+            Paste CSV rows in the format: <strong>name, email, role, choirs</strong>. Use
+            `|` between choir names in the fourth column.
+          </p>
+
+          <div className="leader-form">
+            <label className="field">
+              <span>Spreadsheet rows</span>
+              <textarea
+                rows={6}
+                value={spreadsheetText}
+                onChange={(event) => setSpreadsheetText(event.target.value)}
+                placeholder={"name, email, role, choirs\nJamie Smith, jamie@example.com, student, Premiere|Spectrum"}
+              />
+            </label>
+
+            <button type="button" className="primary-button" onClick={handleImportUsers}>
+              Import users
+            </button>
+          </div>
+        </section>
+
+        <aside className="leader-aside">
+          <div className="info-card">
+            <div className="eyebrow">Import notes</div>
+            <ul>
+              <li>Accepted roles: student, parent, leader.</li>
+              <li>The choir column is optional.</li>
+              <li>Choir names can use full names or short labels.</li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+
+      <section className="leader-panel stack-md">
+        <div className="eyebrow">Roster</div>
+        <h2>Manage users</h2>
+        <div className="stack-md">
+          {allUsers.map((user) => (
+            <div key={user.id} className="list-card leader-manage-card">
+              <div className="leader-manage-top">
+                <div className="split-fields">
+                  <label className="field">
+                    <span>Name</span>
+                    <input
+                      value={user.name}
+                      onChange={(event) => updateUser(user.id, { name: event.target.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Email</span>
+                    <input
+                      value={user.email}
+                      onChange={(event) => updateUser(user.id, { email: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <div className="leader-item-actions">
+                  <button
+                    type="button"
+                    className="segment"
+                    onClick={() => deleteUser(user.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              <div className="split-fields">
+                <label className="field">
+                  <span>Role</span>
+                  <select
+                    value={user.role}
+                    onChange={(event) =>
+                      updateUser(user.id, {
+                        role: event.target.value as typeof user.role
+                      })
+                    }
+                  >
+                    <option value="student">Student</option>
+                    <option value="parent">Parent</option>
+                    <option value="leader">Leader</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Choirs</span>
+                  <input
+                    value={user.choirIds.map((choirId) => program.choirs.find((choir) => choir.id === choirId)?.shortLabel ?? choirId).join(" | ")}
+                    onChange={(event) => {
+                      const choirIds = event.target.value
+                        .split("|")
+                        .map((value) => value.trim().toLowerCase())
+                        .filter(Boolean)
+                        .map((token) => {
+                          const byId = program.choirs.find((choir) => choir.id.toLowerCase() === token);
+                          if (byId) {
+                            return byId.id;
+                          }
+                          const byName = program.choirs.find(
+                            (choir) =>
+                              choir.name.toLowerCase() === token ||
+                              choir.shortLabel.toLowerCase() === token
+                          );
+                          return byName?.id;
+                        })
+                        .filter((value): value is string => Boolean(value));
+
+                      updateUser(user.id, { choirIds });
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

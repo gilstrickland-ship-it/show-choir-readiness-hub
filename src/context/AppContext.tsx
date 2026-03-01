@@ -10,10 +10,11 @@ import {
   initialEvents,
   initialTasks,
   initialUpdates,
+  initialUsers,
   inviteCodes,
   program as initialProgram
 } from "../data";
-import { AuthSession, Choir, EventItem, Program, Task, UpdateItem } from "../types";
+import { AuthSession, Choir, EventItem, Program, ProgramUser, Task, UpdateItem } from "../types";
 
 interface NewUpdateInput {
   title: string;
@@ -34,6 +35,7 @@ interface AppState {
   events: EventItem[];
   allTasks: Task[];
   allUpdates: UpdateItem[];
+  allUsers: ProgramUser[];
   activeChoirId: string | null;
   activeEvent: EventItem;
   visibleTasks: Task[];
@@ -52,6 +54,9 @@ interface AppState {
   deleteTask: (taskId: string) => void;
   editUpdate: (updateId: string, patch: Partial<UpdateItem>) => void;
   deleteUpdate: (updateId: string) => void;
+  importUsersFromCsv: (csvText: string) => { ok: boolean; added: number; message: string };
+  updateUser: (userId: string, patch: Partial<ProgramUser>) => void;
+  deleteUser: (userId: string) => void;
   updateProgramBranding: (
     patch: Partial<Pick<Program, "name" | "logoUrl" | "primaryColor" | "accentColor">>
   ) => void;
@@ -67,6 +72,7 @@ interface PersistedState {
   events: EventItem[];
   tasks: Task[];
   updates: UpdateItem[];
+  users: ProgramUser[];
   session: AuthSession;
   activeChoirId: string | null;
 }
@@ -87,6 +93,7 @@ function getDefaultState(): PersistedState {
     events: initialEvents,
     tasks: initialTasks,
     updates: initialUpdates,
+    users: initialUsers,
     session: getDefaultSession(),
     activeChoirId: null
   };
@@ -110,6 +117,7 @@ function loadInitialState(): PersistedState {
       events: parsed.events ?? initialEvents,
       tasks: parsed.tasks ?? initialTasks,
       updates: parsed.updates ?? initialUpdates,
+      users: parsed.users ?? initialUsers,
       session: parsed.session ?? getDefaultSession(),
       activeChoirId:
         parsed.activeChoirId === undefined ? null : parsed.activeChoirId
@@ -125,6 +133,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [events, setEvents] = useState(persisted.events);
   const [tasks, setTasks] = useState(persisted.tasks);
   const [updates, setUpdates] = useState(persisted.updates);
+  const [users, setUsers] = useState(persisted.users);
   const [session, setSession] = useState<AuthSession>(persisted.session);
   const [activeChoirId, setActiveChoirId] = useState<string | null>(persisted.activeChoirId);
 
@@ -140,11 +149,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         events,
         tasks,
         updates,
+        users,
         session,
         activeChoirId
       })
     );
-  }, [activeChoirId, events, program, session, tasks, updates]);
+  }, [activeChoirId, events, program, session, tasks, updates, users]);
 
   useEffect(() => {
     if (session.role !== "student" && activeChoirId && !session.choirIds.includes(activeChoirId)) {
@@ -356,6 +366,91 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUpdates((current) => current.filter((update) => update.id !== updateId));
   };
 
+  const importUsersFromCsv = (csvText: string) => {
+    const lines = csvText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      return { ok: false, added: 0, message: "No spreadsheet rows were found." };
+    }
+
+    const parsedUsers: ProgramUser[] = [];
+
+    for (const line of lines) {
+      const cells = line.split(",").map((cell) => cell.trim());
+      const looksLikeHeader =
+        cells[0]?.toLowerCase() === "name" && cells[1]?.toLowerCase() === "email";
+
+      if (looksLikeHeader) {
+        continue;
+      }
+
+      const [name, email, roleCell, choirsCell] = cells;
+
+      if (!name || !email) {
+        continue;
+      }
+
+      const normalizedRole =
+        roleCell?.toLowerCase() === "leader" ||
+        roleCell?.toLowerCase() === "parent" ||
+        roleCell?.toLowerCase() === "student"
+          ? (roleCell.toLowerCase() as ProgramUser["role"])
+          : "student";
+
+      const choirTokens = (choirsCell ?? "")
+        .split("|")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      const choirIds = choirTokens
+        .map((token) => {
+          const lowered = token.toLowerCase();
+          const byId = program.choirs.find((choir) => choir.id.toLowerCase() === lowered);
+          if (byId) {
+            return byId.id;
+          }
+          const byName = program.choirs.find(
+            (choir) =>
+              choir.name.toLowerCase() === lowered || choir.shortLabel.toLowerCase() === lowered
+          );
+          return byName?.id;
+        })
+        .filter((value): value is string => Boolean(value));
+
+      parsedUsers.push({
+        id: `user-${Date.now()}-${parsedUsers.length}`,
+        name,
+        email,
+        role: normalizedRole,
+        choirIds
+      });
+    }
+
+    if (parsedUsers.length === 0) {
+      return { ok: false, added: 0, message: "No valid user rows were found." };
+    }
+
+    setUsers((current) => [...parsedUsers, ...current]);
+    return {
+      ok: true,
+      added: parsedUsers.length,
+      message: `Imported ${parsedUsers.length} user${parsedUsers.length === 1 ? "" : "s"}.`
+    };
+  };
+
+  const updateUser = (userId: string, patch: Partial<ProgramUser>) => {
+    setUsers((current) =>
+      current.map((user) => (user.id === userId ? { ...user, ...patch } : user))
+    );
+  };
+
+  const deleteUser = (userId: string) => {
+    setUsers((current) => current.filter((user) => user.id !== userId));
+  };
+
   const updateProgramBranding = (
     patch: Partial<Pick<Program, "name" | "logoUrl" | "primaryColor" | "accentColor">>
   ) => {
@@ -383,6 +478,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       events,
       allTasks: tasks,
       allUpdates: updates,
+      allUsers: users,
       activeChoirId,
       activeEvent,
       visibleTasks,
@@ -401,6 +497,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       deleteTask,
       editUpdate,
       deleteUpdate,
+      importUsersFromCsv,
+      updateUser,
+      deleteUser,
       updateProgramBranding,
       updateChoirName,
       getChoirLabel
@@ -413,6 +512,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       session,
       tasks,
       updates,
+      users,
       visibleTasks,
       visibleUpdates
     ]

@@ -37,6 +37,14 @@ export interface Program {
   choirs: Choir[];
 }
 
+export interface ProgramUser {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  choirIds: string[];
+}
+
 export interface Task {
   id: string;
   choirId: string;
