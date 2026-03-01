@@ -129,6 +129,25 @@ SPA routing is handled by:
 - install: `npm install`
 - dev: `npm run dev`
 - build: `npm run build`
+- smoke tests: `npm run test:smoke`
+- smoke tests (headed): `npm run test:smoke:headed`
+
+## Smoke Coverage
+
+Playwright smoke tests live in:
+- `/Users/gil/Documents/codex projects/show choir kids /tests/smoke`
+
+Current smoke coverage exercises:
+- auth entry and role selection
+- student navigation and task persistence
+- parent navigation
+- leader dashboard navigation
+- leader edit drawer
+- leader publish flow
+- leader settings, branding, user import, search, and remove
+
+The Playwright config is:
+- `/Users/gil/Documents/codex projects/show choir kids /playwright.config.ts`
 
 ## Important Constraints
 

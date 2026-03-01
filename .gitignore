@@ -5,3 +5,5 @@ dist/
 vite.config.js
 vite.config.d.ts
 .vercel
+test-results/
+playwright-report/

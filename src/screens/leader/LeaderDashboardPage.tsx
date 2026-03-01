@@ -127,6 +127,7 @@ export function LeaderDashboardPage() {
                       <button
                         type="button"
                         className="segment"
+                        data-testid={event.id === events[0]?.id ? "event-edit-first" : undefined}
                         onClick={() => setEditor({ kind: "event", draft: { ...event } })}
                       >
                         Edit
@@ -161,6 +162,9 @@ export function LeaderDashboardPage() {
                         <button
                           type="button"
                           className="segment"
+                          data-testid={
+                            update.id === allUpdates[0]?.id ? "update-edit-first" : undefined
+                          }
                           onClick={() => setEditor({ kind: "update", draft: { ...update } })}
                         >
                           Edit
@@ -199,6 +203,7 @@ export function LeaderDashboardPage() {
                       <button
                         type="button"
                         className="segment"
+                        data-testid={task.id === allTasks[0]?.id ? "task-edit-first" : undefined}
                         onClick={() => setEditor({ kind: "task", draft: { ...task } })}
                       >
                         Edit
@@ -243,7 +248,11 @@ export function LeaderDashboardPage() {
 
       {editor ? (
         <div className="leader-drawer-backdrop" onClick={() => setEditor(null)}>
-          <aside className="leader-drawer" onClick={(event) => event.stopPropagation()}>
+          <aside
+            className="leader-drawer"
+            data-testid="leader-drawer"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="leader-drawer-header">
               <div>
                 <div className="eyebrow">Edit item</div>
@@ -258,6 +267,7 @@ export function LeaderDashboardPage() {
               <button
                 type="button"
                 className="header-action drawer-close"
+                data-testid="drawer-close"
                 onClick={() => setEditor(null)}
                 aria-label="Close editor"
               >
@@ -669,9 +679,14 @@ export function LeaderDashboardPage() {
               <button type="button" className="secondary-button leader-secondary" onClick={() => setEditor(null)}>
                 Cancel
               </button>
-              <button type="button" className="primary-button" onClick={saveEditor}>
-                Save changes
-              </button>
+            <button
+              type="button"
+              className="primary-button"
+              data-testid="drawer-save"
+              onClick={saveEditor}
+            >
+              Save changes
+            </button>
             </div>
           </aside>
         </div>

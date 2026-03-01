@@ -134,6 +134,7 @@ The prototype includes:
 - leader publish flow
 - leader branding/settings controls
 - persistent local state in browser storage
+- Playwright smoke coverage for desktop and mobile click-through flows
 
 ## Routes
 
@@ -155,6 +156,8 @@ Primary routes:
 - install dependencies: `npm install`
 - run locally: `npm run dev`
 - production build: `npm run build`
+- smoke tests: `npm run test:smoke`
+- smoke tests (headed): `npm run test:smoke:headed`
 
 ## Prototype Access
 

@@ -61,7 +61,7 @@ export function SignInPage() {
               </div>
             </label>
 
-            <button type="submit" className="primary-button">
+            <button type="submit" className="primary-button" data-testid="sign-in-continue">
               Continue
             </button>
           </form>

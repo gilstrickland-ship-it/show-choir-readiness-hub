@@ -138,7 +138,7 @@ export function LeaderSettingsPage() {
             ))}
           </div>
 
-          <button type="submit" className="primary-button">
+          <button type="submit" className="primary-button" data-testid="settings-save">
             Save settings
           </button>
         </form>
@@ -190,7 +190,12 @@ export function LeaderSettingsPage() {
               />
             </label>
 
-            <button type="button" className="primary-button" onClick={handleImportUsers}>
+            <button
+              type="button"
+              className="primary-button"
+              data-testid="user-import"
+              onClick={handleImportUsers}
+            >
               Import users
             </button>
           </div>
@@ -214,6 +219,7 @@ export function LeaderSettingsPage() {
         <label className="field">
           <span>Search users</span>
           <input
+            data-testid="user-search"
             value={userSearch}
             onChange={(event) => setUserSearch(event.target.value)}
             placeholder="Search by name, email, role, or choir"

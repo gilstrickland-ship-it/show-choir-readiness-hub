@@ -94,7 +94,12 @@ function AppFrame({
               {program.logoUrl ? <img src={program.logoUrl} alt="" className="brand-logo" /> : null}
               <div className="eyebrow">Show Choir Readiness Hub</div>
             </div>
-            <button type="button" className="header-action" onClick={handleSignOut}>
+            <button
+              type="button"
+              className="header-action"
+              aria-label="Sign out"
+              onClick={handleSignOut}
+            >
               <LogOut size={14} />
             </button>
           </div>

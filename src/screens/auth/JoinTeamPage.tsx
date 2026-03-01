@@ -76,6 +76,7 @@ export function JoinTeamPage() {
               <button
                 type="button"
                 className="segment"
+                data-testid="join-student"
                 onClick={() => handleQuickJoin("Student")}
               >
                 Student
@@ -83,6 +84,7 @@ export function JoinTeamPage() {
               <button
                 type="button"
                 className="segment"
+                data-testid="join-parent"
                 onClick={() => handleQuickJoin("Parent")}
               >
                 Parent
@@ -90,6 +92,7 @@ export function JoinTeamPage() {
               <button
                 type="button"
                 className="segment"
+                data-testid="join-leader"
                 onClick={() => handleQuickJoin("Leader")}
               >
                 Leader
