@@ -73,11 +73,14 @@ textarea {
 .leader-shell {
   width: 100%;
   max-width: 1120px;
+  max-height: calc(100vh - 48px);
   border-radius: 28px;
   border: 1px solid rgba(120, 53, 15, 0.12);
   background: rgba(255, 252, 248, 0.96);
   box-shadow: 0 24px 80px rgba(31, 41, 55, 0.12);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-header,
@@ -134,10 +137,16 @@ textarea {
 .app-main,
 .leader-main {
   flex: 1;
+  min-height: 0;
   padding: 20px 20px 92px;
 }
 
 .app-main {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.leader-main {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
