@@ -101,6 +101,13 @@ textarea {
   height: 220px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(255, 246, 196, 0.32), transparent 65%);
+  pointer-events: none;
+}
+
+.app-header > *,
+.leader-header > * {
+  position: relative;
+  z-index: 1;
 }
 
 .app-header h1,
