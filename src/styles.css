@@ -911,6 +911,24 @@ textarea {
   gap: 20px;
 }
 
+.leader-manage-card {
+  display: grid;
+  gap: 12px;
+}
+
+.leader-manage-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.leader-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .info-card ul {
   margin: 0;
   padding-left: 18px;
@@ -973,6 +991,13 @@ textarea {
     width: 100%;
     min-width: 0;
     text-align: left;
+  }
+
+  .leader-manage-top,
+  .leader-item-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .countdown-chip {

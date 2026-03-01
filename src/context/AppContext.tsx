@@ -32,6 +32,8 @@ interface NewUpdateInput {
 interface AppState {
   program: typeof program;
   events: EventItem[];
+  allTasks: Task[];
+  allUpdates: UpdateItem[];
   activeChoirId: string | null;
   activeEvent: EventItem;
   visibleTasks: Task[];
@@ -44,6 +46,12 @@ interface AppState {
   setActiveChoir: (choirId: string | null) => void;
   toggleTask: (taskId: string) => void;
   addLeaderUpdate: (input: NewUpdateInput) => void;
+  editEvent: (eventId: string, patch: Partial<EventItem>) => void;
+  deleteEvent: (eventId: string) => void;
+  editTask: (taskId: string, patch: Partial<Task>) => void;
+  deleteTask: (taskId: string) => void;
+  editUpdate: (updateId: string, patch: Partial<UpdateItem>) => void;
+  deleteUpdate: (updateId: string) => void;
   getChoirLabel: (choirId?: string) => string;
 }
 
@@ -51,6 +59,7 @@ const AppContext = createContext<AppState | null>(null);
 const STORAGE_KEY = "show-choir-readiness-hub-state";
 
 interface PersistedState {
+  events: EventItem[];
   tasks: Task[];
   updates: UpdateItem[];
   session: AuthSession;
@@ -69,6 +78,7 @@ function getDefaultSession(): AuthSession {
 
 function getDefaultState(): PersistedState {
   return {
+    events: initialEvents,
     tasks: initialTasks,
     updates: initialUpdates,
     session: getDefaultSession(),
@@ -90,6 +100,7 @@ function loadInitialState(): PersistedState {
   try {
     const parsed = JSON.parse(saved) as Partial<PersistedState>;
     return {
+      events: parsed.events ?? initialEvents,
       tasks: parsed.tasks ?? initialTasks,
       updates: parsed.updates ?? initialUpdates,
       session: parsed.session ?? getDefaultSession(),
@@ -103,6 +114,7 @@ function loadInitialState(): PersistedState {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const persisted = useMemo(loadInitialState, []);
+  const [events, setEvents] = useState(persisted.events);
   const [tasks, setTasks] = useState(persisted.tasks);
   const [updates, setUpdates] = useState(persisted.updates);
   const [session, setSession] = useState<AuthSession>(persisted.session);
@@ -116,13 +128,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
+        events,
         tasks,
         updates,
         session,
         activeChoirId
       })
     );
-  }, [activeChoirId, session, tasks, updates]);
+  }, [activeChoirId, events, session, tasks, updates]);
 
   useEffect(() => {
     if (session.role !== "student" && activeChoirId && !session.choirIds.includes(activeChoirId)) {
@@ -223,7 +236,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const activeEvent = useMemo(() => {
     if (activeChoirId) {
-      const choirEvent = initialEvents.find(
+      const choirEvent = events.find(
         (event) => event.scopeType === "choir" && event.choirId === activeChoirId
       );
 
@@ -233,9 +246,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
 
     return (
-      initialEvents.find((event) => event.scopeType === "program") ?? initialEvents[0]
+      events.find((event) => event.scopeType === "program") ?? events[0]
     );
-  }, [activeChoirId]);
+  }, [activeChoirId, events]);
 
   const toggleTask = (taskId: string) => {
     setTasks((current) =>
@@ -290,10 +303,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ]);
   };
 
+  const editEvent = (eventId: string, patch: Partial<EventItem>) => {
+    setEvents((current) =>
+      current.map((event) => (event.id === eventId ? { ...event, ...patch } : event))
+    );
+  };
+
+  const deleteEvent = (eventId: string) => {
+    setEvents((current) => current.filter((event) => event.id !== eventId));
+  };
+
+  const editTask = (taskId: string, patch: Partial<Task>) => {
+    setTasks((current) =>
+      current.map((task) => (task.id === taskId ? { ...task, ...patch } : task))
+    );
+  };
+
+  const deleteTask = (taskId: string) => {
+    setTasks((current) => current.filter((task) => task.id !== taskId));
+    setUpdates((current) =>
+      current.map((update) =>
+        update.linkedTaskId === taskId ? { ...update, linkedTaskId: undefined } : update
+      )
+    );
+  };
+
+  const editUpdate = (updateId: string, patch: Partial<UpdateItem>) => {
+    setUpdates((current) =>
+      current.map((update) => (update.id === updateId ? { ...update, ...patch } : update))
+    );
+  };
+
+  const deleteUpdate = (updateId: string) => {
+    setUpdates((current) => current.filter((update) => update.id !== updateId));
+  };
+
   const value = useMemo(
     () => ({
       program,
-      events: initialEvents,
+      events,
+      allTasks: tasks,
+      allUpdates: updates,
       activeChoirId,
       activeEvent,
       visibleTasks,
@@ -306,9 +356,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setActiveChoir: setActiveChoirId,
       toggleTask,
       addLeaderUpdate,
+      editEvent,
+      deleteEvent,
+      editTask,
+      deleteTask,
+      editUpdate,
+      deleteUpdate,
       getChoirLabel
     }),
-    [activeChoirId, activeEvent, session, visibleTasks, visibleUpdates]
+    [activeChoirId, activeEvent, events, session, tasks, updates, visibleTasks, visibleUpdates]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
