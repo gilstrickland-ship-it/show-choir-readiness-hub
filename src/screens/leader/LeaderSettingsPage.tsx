@@ -16,6 +16,7 @@ export function LeaderSettingsPage() {
   const [primaryColor, setPrimaryColor] = useState(program.primaryColor);
   const [accentColor, setAccentColor] = useState(program.accentColor);
   const [spreadsheetText, setSpreadsheetText] = useState("");
+  const [userSearch, setUserSearch] = useState("");
   const [message, setMessage] = useState("");
 
   const [choirNames, setChoirNames] = useState(
@@ -48,6 +49,28 @@ export function LeaderSettingsPage() {
       setSpreadsheetText("");
     }
   };
+
+  const normalizedUserSearch = userSearch.trim().toLowerCase();
+  const filteredUsers = allUsers.filter((user) => {
+    if (!normalizedUserSearch) {
+      return true;
+    }
+
+    const choirText = user.choirIds
+      .map(
+        (choirId) =>
+          program.choirs.find((choir) => choir.id === choirId)?.name ??
+          program.choirs.find((choir) => choir.id === choirId)?.shortLabel ??
+          choirId
+      )
+      .join(" ")
+      .toLowerCase();
+
+    return [user.name, user.email, user.role, choirText]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedUserSearch);
+  });
 
   return (
     <div className="stack-lg">
@@ -188,8 +211,16 @@ export function LeaderSettingsPage() {
       <section className="leader-panel stack-md">
         <div className="eyebrow">Roster</div>
         <h2>Manage users</h2>
+        <label className="field">
+          <span>Search users</span>
+          <input
+            value={userSearch}
+            onChange={(event) => setUserSearch(event.target.value)}
+            placeholder="Search by name, email, role, or choir"
+          />
+        </label>
         <div className="stack-md">
-          {allUsers.map((user) => (
+          {filteredUsers.map((user) => (
             <div key={user.id} className="list-card leader-manage-card">
               <div className="leader-manage-top">
                 <div className="split-fields">
@@ -265,6 +296,9 @@ export function LeaderSettingsPage() {
               </div>
             </div>
           ))}
+          {filteredUsers.length === 0 ? (
+            <div className="empty-card">No users match this search.</div>
+          ) : null}
         </div>
       </section>
     </div>
