@@ -25,6 +25,13 @@ export function JoinTeamPage() {
     setIsError(!result.ok);
   };
 
+  const handleQuickJoin = (inviteCode: string) => {
+    const result = joinProgram(inviteCode);
+    setCode(inviteCode);
+    setMessage(result.message);
+    setIsError(!result.ok);
+  };
+
   const handleSignOut = () => {
     signOut();
     navigate("/auth/sign-in", { replace: true });
@@ -65,11 +72,29 @@ export function JoinTeamPage() {
               <ShieldCheck size={18} />
               <strong>Prototype test codes</strong>
             </div>
-            <ul>
-              <li>Student</li>
-              <li>Parent</li>
-              <li>Leader</li>
-            </ul>
+            <div className="segmented">
+              <button
+                type="button"
+                className="segment"
+                onClick={() => handleQuickJoin("Student")}
+              >
+                Student
+              </button>
+              <button
+                type="button"
+                className="segment"
+                onClick={() => handleQuickJoin("Parent")}
+              >
+                Parent
+              </button>
+              <button
+                type="button"
+                className="segment"
+                onClick={() => handleQuickJoin("Leader")}
+              >
+                Leader
+              </button>
+            </div>
           </div>
 
           {message ? (
