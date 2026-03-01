@@ -56,23 +56,30 @@ export function LeaderSettingsPage() {
             />
           </label>
 
-          <div className="split-fields">
-            <label className="field">
-              <span>Primary color</span>
-              <input
-                type="color"
-                value={primaryColor}
-                onChange={(event) => setPrimaryColor(event.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Accent color</span>
-              <input
-                type="color"
-                value={accentColor}
-                onChange={(event) => setAccentColor(event.target.value)}
-              />
-            </label>
+          <div className="field">
+            <span>Theme colors</span>
+            <div className="color-swatch-row">
+              <label className="color-swatch-field">
+                <input
+                  type="color"
+                  value={primaryColor}
+                  onChange={(event) => setPrimaryColor(event.target.value)}
+                  aria-label="Primary color"
+                />
+                <span className="color-swatch" style={{ background: primaryColor }} />
+                <small>Primary</small>
+              </label>
+              <label className="color-swatch-field">
+                <input
+                  type="color"
+                  value={accentColor}
+                  onChange={(event) => setAccentColor(event.target.value)}
+                  aria-label="Accent color"
+                />
+                <span className="color-swatch" style={{ background: accentColor }} />
+                <small>Accent</small>
+              </label>
+            </div>
           </div>
 
           <div className="leader-panel stack-md settings-subpanel">
@@ -104,10 +111,6 @@ export function LeaderSettingsPage() {
           <div className="brand-preview">
             {logoUrl.trim() ? <img src={logoUrl.trim()} alt="" className="brand-logo brand-logo-large" /> : null}
             <strong>{programName || program.name}</strong>
-            <div className="brand-swatches">
-              <span className="brand-swatch" style={{ background: primaryColor }} />
-              <span className="brand-swatch" style={{ background: accentColor }} />
-            </div>
           </div>
           <p>
             These settings update the theme colors for student, parent, and leader views in

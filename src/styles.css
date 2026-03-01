@@ -1019,6 +1019,39 @@ textarea {
   color: #1f2937;
 }
 
+.color-swatch-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.color-swatch-field {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.color-swatch-field input[type="color"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.color-swatch-field small {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #6b5b4a;
+}
+
+.color-swatch {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(120, 53, 15, 0.12);
+}
+
 .brand-swatches {
   display: flex;
   gap: 10px;
