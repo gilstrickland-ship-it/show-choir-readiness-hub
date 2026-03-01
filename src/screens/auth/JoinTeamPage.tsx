@@ -66,9 +66,9 @@ export function JoinTeamPage() {
               <strong>Prototype test codes</strong>
             </div>
             <ul>
-              <li>`Student`</li>
-              <li>`Parent`</li>
-              <li>`Leader`</li>
+              <li>Student</li>
+              <li>Parent</li>
+              <li>Leader</li>
             </ul>
           </div>
 
