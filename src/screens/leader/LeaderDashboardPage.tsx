@@ -1,245 +1,67 @@
-import { FormEvent, useState } from "react";
+import { Link } from "react-router-dom";
+import { ClipboardList, Megaphone, Users } from "lucide-react";
 import { useAppState } from "../../context/AppContext";
-import { TaskType, UpdateCategory, UpdateUrgency } from "../../types";
-
-const categoryOptions: UpdateCategory[] = ["music", "choreo", "logistics", "costume", "general"];
-const taskTypeOptions: TaskType[] = ["listen", "watch", "read", "bring", "confirm"];
 
 export function LeaderDashboardPage() {
-  const { addLeaderUpdate, program } = useAppState();
-  const [title, setTitle] = useState("");
-  const [summary, setSummary] = useState("");
-  const [category, setCategory] = useState<UpdateCategory>("general");
-  const [audience, setAudience] = useState<"students" | "parents" | "both">("students");
-  const [urgency, setUrgency] = useState<UpdateUrgency>("routine");
-  const [scopeType, setScopeType] = useState<"program" | "choir">("choir");
-  const [choirId, setChoirId] = useState(program.choirs[0]?.id ?? "");
-  const [createTask, setCreateTask] = useState(false);
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskType, setTaskType] = useState<TaskType>("read");
-  const [taskPriority, setTaskPriority] = useState<"high" | "medium" | "low">("medium");
+  const { program, events, visibleUpdates } = useAppState();
 
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-
-    if (!title.trim() || !summary.trim()) {
-      return;
-    }
-
-    addLeaderUpdate({
-      title: title.trim(),
-      summary: summary.trim(),
-      category,
-      audience,
-      urgency,
-      scopeType,
-      choirId: scopeType === "choir" ? choirId : undefined,
-      createTask: scopeType === "choir" ? createTask : false,
-      taskTitle,
-      taskType,
-      taskPriority
-    });
-
-    setTitle("");
-    setSummary("");
-    setCategory("general");
-    setAudience("students");
-    setUrgency("routine");
-    setScopeType("choir");
-    setChoirId(program.choirs[0]?.id ?? "");
-    setCreateTask(false);
-    setTaskTitle("");
-    setTaskType("read");
-    setTaskPriority("medium");
-  };
+  const choirEvents = events.filter((event) => event.scopeType === "choir").length;
+  const urgentUpdates = visibleUpdates.filter((update) => update.urgency === "urgent").length;
 
   return (
     <div className="leader-grid">
-      <section className="leader-panel">
-        <div className="eyebrow">New update</div>
-        <h2>Publish to the right audience</h2>
-        <form className="leader-form" onSubmit={handleSubmit}>
-          <label className="field">
-            <span>Title</span>
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Short headline for the update"
-            />
-          </label>
+      <section className="leader-panel stack-md">
+        <div className="eyebrow">Overview</div>
+        <h2>Start from the dashboard</h2>
+        <p>
+          Use this page as the leader landing view, then jump into publishing when you need
+          to send a new update.
+        </p>
 
-          <label className="field">
-            <span>Summary</span>
-            <textarea
-              value={summary}
-              onChange={(event) => setSummary(event.target.value)}
-              rows={4}
-              placeholder="What changed, and what should users do next?"
-            />
-          </label>
-
-          <div className="field">
-            <span>Category</span>
-            <div className="segmented">
-              {categoryOptions.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={category === option ? "segment segment-active" : "segment"}
-                  onClick={() => setCategory(option)}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
+        <div className="status-row">
+          <div className="metric-card">
+            <strong>{program.choirs.length}</strong>
+            <span className="muted-line">Active choirs</span>
           </div>
-
-          <div className="field">
-            <span>Scope</span>
-            <div className="segmented two-up">
-              {[
-                { key: "choir", label: "Single choir" },
-                { key: "program", label: "Whole program" }
-              ].map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  className={scopeType === option.key ? "segment segment-active" : "segment"}
-                  onClick={() => setScopeType(option.key as "program" | "choir")}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+          <div className="metric-card">
+            <strong>{choirEvents}</strong>
+            <span className="muted-line">Choir events</span>
           </div>
-
-          {scopeType === "choir" ? (
-            <label className="field">
-              <span>Target choir</span>
-              <select value={choirId} onChange={(event) => setChoirId(event.target.value)}>
-                {program.choirs.map((choir) => (
-                  <option key={choir.id} value={choir.id}>
-                    {choir.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          <div className="field">
-            <span>Audience</span>
-            <div className="segmented two-up">
-              {[
-                { key: "students", label: "Students" },
-                { key: "parents", label: "Parents" },
-                { key: "both", label: "Both" }
-              ].map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  className={audience === option.key ? "segment segment-active" : "segment"}
-                  onClick={() => setAudience(option.key as typeof audience)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+          <div className="metric-card">
+            <strong>{urgentUpdates}</strong>
+            <span className="muted-line">Urgent updates</span>
           </div>
+        </div>
 
-          <div className="field">
-            <span>Urgency</span>
-            <div className="segmented two-up">
-              {[
-                { key: "routine", label: "Routine digest" },
-                { key: "urgent", label: "Urgent push" }
-              ].map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  className={urgency === option.key ? "segment segment-active" : "segment"}
-                  onClick={() => setUrgency(option.key as UpdateUrgency)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={createTask}
-              disabled={scopeType === "program"}
-              onChange={(event) => setCreateTask(event.target.checked)}
-            />
-            <span>
-              Create a linked student action item
-              {scopeType === "program" ? " (choir-only)" : ""}
-            </span>
-          </label>
-
-          {createTask && scopeType === "choir" ? (
-            <div className="linked-task-box">
-              <label className="field">
-                <span>Task title</span>
-                <input
-                  value={taskTitle}
-                  onChange={(event) => setTaskTitle(event.target.value)}
-                  placeholder="Review updated ballad counts"
-                />
-              </label>
-              <div className="split-fields">
-                <label className="field">
-                  <span>Task type</span>
-                  <select
-                    value={taskType}
-                    onChange={(event) => setTaskType(event.target.value as TaskType)}
-                  >
-                    {taskTypeOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Priority</span>
-                  <select
-                    value={taskPriority}
-                    onChange={(event) =>
-                      setTaskPriority(event.target.value as "high" | "medium" | "low")
-                    }
-                  >
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-          ) : null}
-
-          <button type="submit" className="primary-button">
-            Publish update
-          </button>
-        </form>
+        <Link to="/leader/publish" className="inline-link">
+          <Megaphone size={16} />
+          Go to publish updates
+        </Link>
       </section>
 
       <aside className="leader-aside">
         <div className="info-card">
-          <div className="eyebrow">Default guardrails</div>
+          <div className="magic-card-top">
+            <Users size={18} />
+            <strong>Choirs in this program</strong>
+          </div>
           <ul>
-            <li>Use choir scope for rehearsal or performance-specific updates.</li>
-            <li>Use program scope for paperwork, broad logistics, or all-program reminders.</li>
-            <li>Linked tasks should stay choir-scoped so students only see relevant action items.</li>
+            {program.choirs.map((choir) => (
+              <li key={choir.id}>{choir.name}</li>
+            ))}
           </ul>
         </div>
+
         <div className="info-card">
-          <div className="eyebrow">MVP note</div>
-          <p>
-            This version supports one program with multiple choirs, including students who
-            belong to more than one choir.
-          </p>
+          <div className="magic-card-top">
+            <ClipboardList size={18} />
+            <strong>Leader reminders</strong>
+          </div>
+          <ul>
+            <li>Use Dashboard as the landing page.</li>
+            <li>Use Publish for new updates and linked action items.</li>
+            <li>Keep choir-specific tasks scoped to the correct ensemble.</li>
+          </ul>
         </div>
       </aside>
     </div>

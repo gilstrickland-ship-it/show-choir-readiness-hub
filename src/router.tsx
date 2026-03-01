@@ -3,6 +3,7 @@ import {
   Outlet,
   createBrowserRouter,
   NavLink,
+  useLocation,
   useNavigate
 } from "react-router-dom";
 import {
@@ -23,6 +24,7 @@ import { ParentHomePage } from "./screens/parent/ParentHomePage";
 import { ParentUpdatesPage } from "./screens/parent/ParentUpdatesPage";
 import { ParentGuidePage } from "./screens/parent/ParentGuidePage";
 import { LeaderDashboardPage } from "./screens/leader/LeaderDashboardPage";
+import { LeaderPublishPage } from "./screens/leader/LeaderPublishPage";
 import { SignInPage } from "./screens/auth/SignInPage";
 import { JoinTeamPage } from "./screens/auth/JoinTeamPage";
 
@@ -125,6 +127,8 @@ function AppFrame({
 function LeaderFrame() {
   const { session, signOut } = useAppState();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isPublishPage = location.pathname.startsWith("/leader/publish");
 
   const handleSignOut = () => {
     signOut();
@@ -136,10 +140,12 @@ function LeaderFrame() {
       <div className="leader-shell">
         <header className="leader-header">
           <div>
-            <div className="eyebrow">Leader Dashboard</div>
-            <h1>Publish Updates</h1>
+            <div className="eyebrow">{isPublishPage ? "Leader Publish" : "Leader Dashboard"}</div>
+            <h1>{isPublishPage ? "Publish Updates" : "Program Overview"}</h1>
             <p>
-              Post routine or urgent updates and create linked action items.
+              {isPublishPage
+                ? "Post routine or urgent updates and create linked action items."
+                : "Start from the dashboard, then jump into publishing when you need to post a change."}
               {session.programName ? ` • ${session.programName}` : ""}
             </p>
           </div>
@@ -156,6 +162,15 @@ function LeaderFrame() {
             >
               <Megaphone size={16} />
               Dashboard
+            </NavLink>
+            <NavLink
+              to="/leader/publish"
+              className={({ isActive }) =>
+                isActive ? "leader-link leader-link-active" : "leader-link"
+              }
+            >
+              <Megaphone size={16} />
+              Publish
             </NavLink>
           </div>
         </header>
@@ -239,7 +254,8 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Navigate to="/leader/dashboard" replace /> },
-      { path: "dashboard", element: <LeaderDashboardPage /> }
+      { path: "dashboard", element: <LeaderDashboardPage /> },
+      { path: "publish", element: <LeaderPublishPage /> }
     ]
   }
 ]);
