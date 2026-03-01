@@ -169,18 +169,18 @@ export const initialUpdates: UpdateItem[] = [
 
 export const inviteCodes: InviteCode[] = [
   {
-    code: "CENTRAL-STUDENT",
+    code: "Student",
     role: "student",
     label: "Student invite",
     choirIds: ["premiere", "spectrum"]
   },
   {
-    code: "CENTRAL-PARENT",
+    code: "Parent",
     role: "parent",
     label: "Parent invite"
   },
   {
-    code: "CENTRAL-LEADER",
+    code: "Leader",
     role: "leader",
     label: "Leader invite",
     choirIds: ["premiere", "spectrum", "treble"]

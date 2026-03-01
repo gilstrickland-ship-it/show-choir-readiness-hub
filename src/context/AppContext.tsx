@@ -138,8 +138,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const joinProgram = (code: string) => {
-    const normalized = code.trim().toUpperCase();
-    const match = inviteCodes.find((invite) => invite.code === normalized);
+    const normalized = code.trim().toLowerCase();
+    const match = inviteCodes.find((invite) => invite.code.toLowerCase() === normalized);
 
     if (!match) {
       return {

@@ -31,8 +31,8 @@ export function JoinTeamPage() {
           <div className="eyebrow">Join Your Team</div>
           <h1>Enter your invite code</h1>
           <p>
-            You are signed in as <strong>{session.email}</strong>. Use your student, parent,
-            or leader invite code to join the program in the correct role.
+            You are signed in as <strong>{session.email}</strong>. Use the invite code for your
+            role to join the program in the correct view.
           </p>
 
           <form onSubmit={handleSubmit} className="leader-form">
@@ -43,8 +43,8 @@ export function JoinTeamPage() {
                 <input
                   type="text"
                   value={code}
-                  onChange={(event) => setCode(event.target.value.toUpperCase())}
-                  placeholder="CENTRAL-STUDENT"
+                  onChange={(event) => setCode(event.target.value)}
+                  placeholder="Student"
                 />
               </div>
             </label>
@@ -60,9 +60,9 @@ export function JoinTeamPage() {
               <strong>Prototype test codes</strong>
             </div>
             <ul>
-              <li>`CENTRAL-STUDENT`</li>
-              <li>`CENTRAL-PARENT`</li>
-              <li>`CENTRAL-LEADER`</li>
+              <li>`Student`</li>
+              <li>`Parent`</li>
+              <li>`Leader`</li>
             </ul>
           </div>
 
