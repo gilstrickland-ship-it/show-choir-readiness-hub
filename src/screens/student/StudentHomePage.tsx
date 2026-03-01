@@ -1,6 +1,7 @@
 import { AlertCircle, ArrowRight, Clock3, Layers3, MapPin } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAppState } from "../../context/AppContext";
+import { formatCountdown, formatDisplayDate, formatDisplayTime, formatEventType, formatDueAt, formatTaskType } from "../../utils/formatting";
 
 export function StudentHomePage() {
   const {
@@ -78,14 +79,14 @@ export function StudentHomePage() {
 
       <section className="hero-card">
         <div className="hero-top">
-          <span className="type-badge">Next {activeEvent.type}</span>
+          <span className="type-badge">Next {formatEventType(activeEvent.type)}</span>
           <div className="countdown-chip">
             <span>In</span>
-            <strong>{activeEvent.countdownLabel}</strong>
+            <strong>{formatCountdown(activeEvent.date)}</strong>
           </div>
         </div>
         <h2>{activeEvent.title}</h2>
-        <p>{activeEvent.dateLabel}</p>
+        <p>{formatDisplayDate(activeEvent.date)}</p>
         <div className="meta-list">
           <div className="meta-item">
             <Layers3 size={16} />
@@ -97,7 +98,7 @@ export function StudentHomePage() {
           </div>
           <div className="meta-item">
             <Clock3 size={16} />
-            <span>Call time {activeEvent.callTime}</span>
+            <span>Call time {formatDisplayTime(activeEvent.callTime)}</span>
           </div>
           <div className="meta-item">
             <MapPin size={16} />
@@ -129,8 +130,8 @@ export function StudentHomePage() {
               <div className="task-preview-copy">
                 <strong>{task.title}</strong>
                 <span>
-                  {getChoirLabel(task.choirId)} • {task.type}
-                  {task.dueLabel ? ` • ${task.dueLabel}` : ""}
+                  {getChoirLabel(task.choirId)} • {formatTaskType(task.type)}
+                  {task.dueAt ? ` • ${formatDueAt(task.dueAt)}` : ""}
                 </span>
               </div>
               <ArrowRight size={16} />

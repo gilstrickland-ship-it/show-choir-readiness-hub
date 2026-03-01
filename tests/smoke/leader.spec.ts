@@ -74,7 +74,7 @@ test("leader can save settings, import users, search, and remove an imported use
   await page.getByTestId("settings-save").click();
   await expect(page.getByText(/Settings saved\./)).toBeVisible();
 
-  await page.getByLabel("Spreadsheet rows").fill(
+  await page.getByLabel("Paste CSV rows").fill(
     "Taylor Example, taylor@example.com, student, Premiere|Spectrum"
   );
   await page.getByTestId("user-import").click();

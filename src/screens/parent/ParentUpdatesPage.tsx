@@ -10,7 +10,7 @@ export function ParentUpdatesPage() {
   return (
     <div className="stack-lg">
       <section>
-        <div className="eyebrow">Parent feed</div>
+        <div className="eyebrow">Parent updates</div>
         <h3>Choir logistics only</h3>
       </section>
 

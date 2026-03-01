@@ -1,6 +1,7 @@
 import { CheckCircle2, ExternalLink, Filter, Siren } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useAppState } from "../../context/AppContext";
+import { formatDueAt, formatTaskType } from "../../utils/formatting";
 
 export function StudentQueuePage() {
   const { getChoirLabel, toggleTask, visibleTasks } = useAppState();
@@ -73,12 +74,12 @@ export function StudentQueuePage() {
               <div className="queue-meta">
                 <span className={`mini-badge mini-${task.category}`}>{task.category}</span>
                 <span>{getChoirLabel(task.choirId)}</span>
-                <span>{task.type}</span>
-                {task.dueLabel ? <span>{task.dueLabel}</span> : null}
+                <span>{formatTaskType(task.type)}</span>
+                {task.dueAt ? <span>{formatDueAt(task.dueAt)}</span> : null}
                 {task.resourceUrl ? (
                   <span className="resource-pill">
                     <ExternalLink size={12} />
-                    Link
+                    Resource
                   </span>
                 ) : null}
               </div>

@@ -42,35 +42,16 @@ export function JoinTeamPage() {
       <div className="phone-frame auth-frame">
         <div className="auth-panel">
           <div className="eyebrow">Join Your Team</div>
-          <h1>Enter your invite code</h1>
+          <h1>Choose your role</h1>
           <p>
-            You are signed in as <strong>{session.email}</strong>. Use the invite code for your
-            role to join the program in the correct view.
+            You are signed in as <strong>{session.email}</strong>. In this prototype, choose a
+            role below to enter the right experience right away.
           </p>
-
-          <form onSubmit={handleSubmit} className="leader-form">
-            <label className="field">
-              <span>Invite code</span>
-              <div className="input-with-icon">
-                <KeyRound size={16} />
-                <input
-                  type="text"
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                  placeholder="Student"
-                />
-              </div>
-            </label>
-
-            <button type="submit" className="primary-button">
-              Join choir
-            </button>
-          </form>
 
           <div className="info-card">
             <div className="magic-card-top">
               <ShieldCheck size={18} />
-              <strong>Prototype test codes</strong>
+              <strong>Prototype role entry</strong>
             </div>
             <div className="segmented">
               <button
@@ -100,6 +81,25 @@ export function JoinTeamPage() {
             </div>
           </div>
 
+          <form onSubmit={handleSubmit} className="leader-form">
+            <label className="field">
+              <span>Enter an invite code manually</span>
+              <div className="input-with-icon">
+                <KeyRound size={16} />
+                <input
+                  type="text"
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  placeholder="Student"
+                />
+              </div>
+            </label>
+
+            <button type="submit" className="primary-button">
+              Join program
+            </button>
+          </form>
+
           {message ? (
             <div className={isError ? "alert-card alert-card-error" : "alert-card"}>
               {message}
@@ -108,7 +108,7 @@ export function JoinTeamPage() {
 
           <button type="button" className="secondary-button" onClick={handleSignOut}>
             <LogOut size={16} />
-            Use a different email
+            Start over
           </button>
         </div>
       </div>

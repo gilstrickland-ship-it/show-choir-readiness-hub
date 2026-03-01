@@ -30,7 +30,7 @@ export function SignInPage() {
     <div className="shell">
       <div className="phone-frame auth-frame">
         <div className="auth-panel">
-          <div className="eyebrow">Magic Link Sign-In</div>
+          <div className="eyebrow">Prototype Sign-In</div>
           <h1>Get into your choir fast</h1>
           <p>
             Show Choir Readiness Hub helps students, parents, and leaders stay in sync.
@@ -43,13 +43,13 @@ export function SignInPage() {
             parents.
           </p>
           <p>
-            This MVP skips real email authentication. Enter anything you want, or leave it
-            blank, then continue to your program role selection.
+            This prototype skips real email authentication. Enter a name if you want, or leave
+            it blank, then choose your role.
           </p>
 
           <form onSubmit={handleSubmit} className="leader-form">
             <label className="field">
-              <span>Name or email (optional)</span>
+              <span>Your name (optional)</span>
               <div className="input-with-icon">
                 <Mail size={16} />
                 <input
@@ -73,11 +73,11 @@ export function SignInPage() {
                 <strong>You are in</strong>
               </div>
               <p>
-                You are signed in as <strong>{displayIdentity}</strong>. Continue to join
-                your program with the correct invite code.
+                You are signed in as <strong>{displayIdentity}</strong>. Choose your role to
+                continue.
               </p>
               <Link to="/join" className="inline-link">
-                Continue to program join
+                Continue to role selection
               </Link>
             </div>
           ) : null}

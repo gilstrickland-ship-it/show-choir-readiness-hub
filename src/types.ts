@@ -53,7 +53,7 @@ export interface Task {
   category: UpdateCategory;
   priority: TaskPriority;
   completed: boolean;
-  dueLabel?: string;
+  dueAt?: string;
   resourceUrl?: string;
 }
 
@@ -82,8 +82,7 @@ export interface EventItem {
   scopeType: ScopeType;
   title: string;
   type: "rehearsal" | "competition" | "audition";
-  dateLabel: string;
-  countdownLabel: string;
+  date: string;
   callTime: string;
   location: string;
   packingList: string[];

@@ -1,5 +1,6 @@
 import { Backpack, CheckCircle2, Clock3, MapPin, ShieldAlert } from "lucide-react";
 import { useAppState } from "../../context/AppContext";
+import { formatDisplayDate, formatDisplayTime } from "../../utils/formatting";
 
 export function StudentGuidePage() {
   const { activeEvent, getChoirLabel } = useAppState();
@@ -9,6 +10,7 @@ export function StudentGuidePage() {
       <section className="guide-hero">
         <span className="type-badge">Competition guide</span>
         <h2>{activeEvent.title}</h2>
+        <p>{formatDisplayDate(activeEvent.date)}</p>
         <p className="scope-label">
           {activeEvent.scopeType === "program"
             ? "Program-wide"
@@ -17,7 +19,7 @@ export function StudentGuidePage() {
         <div className="meta-list compact">
           <div className="meta-item">
             <Clock3 size={16} />
-            <span>Call time {activeEvent.callTime}</span>
+            <span>Call time {formatDisplayTime(activeEvent.callTime)}</span>
           </div>
           <div className="meta-item">
             <MapPin size={16} />

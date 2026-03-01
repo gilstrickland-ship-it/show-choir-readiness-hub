@@ -3,6 +3,12 @@ import { Link } from "react-router-dom";
 import { ClipboardList, Megaphone, Users, X } from "lucide-react";
 import { useAppState } from "../../context/AppContext";
 import { EventItem, Task, UpdateItem } from "../../types";
+import {
+  formatCountdown,
+  formatDisplayDate,
+  formatDisplayTime,
+  formatDueAt
+} from "../../utils/formatting";
 
 type EditorState =
   | { kind: "event"; draft: EventItem }
@@ -196,7 +202,7 @@ export function LeaderDashboardPage() {
                       <strong>{task.title}</strong>
                       <div className="muted-line">
                         {getChoirLabel(task.choirId)} • {task.priority} priority
-                        {task.dueLabel ? ` • ${task.dueLabel}` : ""}
+                        {task.dueAt ? ` • ${formatDueAt(task.dueAt)}` : ""}
                       </div>
                     </div>
                     <div className="leader-item-actions">
@@ -291,7 +297,7 @@ export function LeaderDashboardPage() {
                 </label>
                 <div className="split-fields">
                   <label className="field">
-                    <span>Type</span>
+                    <span>Event type</span>
                     <select
                       value={editor.draft.type}
                       onChange={(event) =>
@@ -310,7 +316,7 @@ export function LeaderDashboardPage() {
                     </select>
                   </label>
                   <label className="field">
-                    <span>Scope</span>
+                    <span>Applies to</span>
                     <select
                       value={editor.draft.scopeType}
                       onChange={(event) =>
@@ -351,33 +357,23 @@ export function LeaderDashboardPage() {
                   </label>
                 ) : null}
                 <label className="field">
-                  <span>Date label</span>
+                  <span>Date</span>
                   <input
-                    value={editor.draft.dateLabel}
+                    type="date"
+                    value={editor.draft.date}
                     onChange={(event) =>
                       setEditor({
                         kind: "event",
-                        draft: { ...editor.draft, dateLabel: event.target.value }
+                        draft: { ...editor.draft, date: event.target.value }
                       })
                     }
                   />
                 </label>
                 <div className="split-fields">
                   <label className="field">
-                    <span>Countdown</span>
-                    <input
-                      value={editor.draft.countdownLabel}
-                      onChange={(event) =>
-                        setEditor({
-                          kind: "event",
-                          draft: { ...editor.draft, countdownLabel: event.target.value }
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="field">
                     <span>Call time</span>
                     <input
+                      type="time"
                       value={editor.draft.callTime}
                       onChange={(event) =>
                         setEditor({
@@ -387,6 +383,14 @@ export function LeaderDashboardPage() {
                       }
                     />
                   </label>
+                </div>
+                <div className="info-card">
+                  <div className="eyebrow">Preview</div>
+                  <strong>{formatDisplayDate(editor.draft.date)}</strong>
+                  <p>
+                    {formatCountdown(editor.draft.date)} • Call time{" "}
+                    {formatDisplayTime(editor.draft.callTime)}
+                  </p>
                 </div>
                 <label className="field">
                   <span>Location</span>
@@ -453,7 +457,7 @@ export function LeaderDashboardPage() {
                     </select>
                   </label>
                   <label className="field">
-                    <span>Audience</span>
+                    <span>Recipients</span>
                     <select
                       value={editor.draft.audience}
                       onChange={(event) =>
@@ -474,7 +478,7 @@ export function LeaderDashboardPage() {
                 </div>
                 <div className="split-fields">
                   <label className="field">
-                    <span>Urgency</span>
+                    <span>Delivery</span>
                     <select
                       value={editor.draft.urgency}
                       onChange={(event) =>
@@ -492,7 +496,7 @@ export function LeaderDashboardPage() {
                     </select>
                   </label>
                   <label className="field">
-                    <span>Scope</span>
+                    <span>Applies to</span>
                     <select
                       value={editor.draft.scopeType}
                       onChange={(event) =>
@@ -569,7 +573,7 @@ export function LeaderDashboardPage() {
                     </select>
                   </label>
                   <label className="field">
-                    <span>Type</span>
+                    <span>Task type</span>
                     <select
                       value={editor.draft.type}
                       onChange={(event) =>
@@ -630,22 +634,23 @@ export function LeaderDashboardPage() {
                   </label>
                 </div>
                 <label className="field">
-                  <span>Due label</span>
+                  <span>Due date</span>
                   <input
-                    value={editor.draft.dueLabel ?? ""}
+                    type="datetime-local"
+                    value={editor.draft.dueAt ?? ""}
                     onChange={(event) =>
                       setEditor({
                         kind: "task",
                         draft: {
                           ...editor.draft,
-                          dueLabel: event.target.value || undefined
+                          dueAt: event.target.value || undefined
                         }
                       })
                     }
                   />
                 </label>
                 <label className="field">
-                  <span>Resource URL</span>
+                  <span>Resource link</span>
                   <input
                     value={editor.draft.resourceUrl ?? ""}
                     onChange={(event) =>

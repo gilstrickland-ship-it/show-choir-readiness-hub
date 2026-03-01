@@ -77,6 +77,54 @@ interface PersistedState {
   activeChoirId: string | null;
 }
 
+function normalizeStoredEvents(savedEvents?: unknown): EventItem[] {
+  if (!Array.isArray(savedEvents)) {
+    return initialEvents;
+  }
+
+  return savedEvents.map((eventLike) => {
+    const event = eventLike as Partial<EventItem> & {
+      id?: string;
+      dateLabel?: string;
+      countdownLabel?: string;
+    };
+    const seed = initialEvents.find((item) => item.id === event.id);
+    const fallbackDate = seed?.date ?? initialEvents[0].date;
+    const fallbackTime = seed?.callTime ?? initialEvents[0].callTime;
+    const normalizedTime =
+      typeof event.callTime === "string" && /^\d{2}:\d{2}$/.test(event.callTime)
+        ? event.callTime
+        : fallbackTime;
+
+    return {
+      ...(seed ?? initialEvents[0]),
+      ...event,
+      date: typeof event.date === "string" ? event.date : fallbackDate,
+      callTime: normalizedTime
+    };
+  });
+}
+
+function normalizeStoredTasks(savedTasks?: unknown): Task[] {
+  if (!Array.isArray(savedTasks)) {
+    return initialTasks;
+  }
+
+  return savedTasks.map((taskLike) => {
+    const task = taskLike as Partial<Task> & { id?: string; dueLabel?: string };
+    const seed = initialTasks.find((item) => item.id === task.id);
+
+    return {
+      ...(seed ?? initialTasks[0]),
+      ...task,
+      dueAt:
+        typeof task.dueAt === "string"
+          ? task.dueAt
+          : seed?.dueAt
+    };
+  });
+}
+
 function getDefaultSession(): AuthSession {
   return {
     email: "",
@@ -114,8 +162,8 @@ function loadInitialState(): PersistedState {
     const parsed = JSON.parse(saved) as Partial<PersistedState>;
     return {
       program: parsed.program ?? initialProgram,
-      events: parsed.events ?? initialEvents,
-      tasks: parsed.tasks ?? initialTasks,
+      events: normalizeStoredEvents(parsed.events),
+      tasks: normalizeStoredTasks(parsed.tasks),
       updates: parsed.updates ?? initialUpdates,
       users: parsed.users ?? initialUsers,
       session: parsed.session ?? getDefaultSession(),

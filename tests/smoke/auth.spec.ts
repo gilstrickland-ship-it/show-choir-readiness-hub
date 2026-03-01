@@ -9,7 +9,7 @@ test("blank sign-in reaches join flow", async ({ page }) => {
   await page.getByTestId("sign-in-continue").click();
 
   await expect(page).toHaveURL(/\/join$/);
-  await expect(page.getByRole("heading", { name: "Enter your invite code" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Choose your role" })).toBeVisible();
 });
 
 test("student quick join reaches student home", async ({ page }) => {

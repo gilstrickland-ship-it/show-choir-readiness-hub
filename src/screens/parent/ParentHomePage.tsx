@@ -1,6 +1,7 @@
 import { ArrowRight, Clock3, Layers3, MapPin } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAppState } from "../../context/AppContext";
+import { formatDisplayDate, formatDisplayTime } from "../../utils/formatting";
 
 export function ParentHomePage() {
   const { activeEvent, getChoirLabel, visibleUpdates } = useAppState();
@@ -13,6 +14,7 @@ export function ParentHomePage() {
       <section className="parent-hero">
         <div className="eyebrow">Next event</div>
         <h2>{activeEvent.title}</h2>
+        <p>{formatDisplayDate(activeEvent.date)}</p>
         <div className="meta-list compact">
           <div className="meta-item">
             <Layers3 size={16} />
@@ -24,7 +26,7 @@ export function ParentHomePage() {
           </div>
           <div className="meta-item">
             <Clock3 size={16} />
-            <span>Call time {activeEvent.callTime}</span>
+            <span>Call time {formatDisplayTime(activeEvent.callTime)}</span>
           </div>
           <div className="meta-item">
             <MapPin size={16} />
@@ -41,7 +43,7 @@ export function ParentHomePage() {
         <div className="eyebrow">Major updates</div>
         <h3>What parents need to know</h3>
         {parentUpdates.length === 0 ? (
-          <div className="empty-card">No parent-visible updates yet.</div>
+          <div className="empty-card">No updates for parents yet.</div>
         ) : (
           parentUpdates.slice(0, 3).map((update) => (
             <div key={update.id} className="parent-update-card">

@@ -20,9 +20,8 @@ export const initialEvents: EventItem[] = [
     scopeType: "choir",
     title: "Midwest Regional Championship",
     type: "competition",
-    dateLabel: "Saturday, February 21",
-    countdownLabel: "2d",
-    callTime: "6:15 AM",
+    date: "2026-03-07",
+    callTime: "06:15",
     location: "North High School Auditorium",
     packingList: [
       "Full costume set A",
@@ -49,9 +48,8 @@ export const initialEvents: EventItem[] = [
     scopeType: "choir",
     title: "Spectrum Full Runthrough",
     type: "rehearsal",
-    dateLabel: "Thursday, February 20",
-    countdownLabel: "1d",
-    callTime: "3:45 PM",
+    date: "2026-03-06",
+    callTime: "15:45",
     location: "Choir Room B",
     packingList: ["Dance shoes", "Pencil", "Water bottle"],
     timeline: [
@@ -66,9 +64,8 @@ export const initialEvents: EventItem[] = [
     scopeType: "program",
     title: "Program Travel Paperwork Deadline",
     type: "audition",
-    dateLabel: "Friday, February 28",
-    countdownLabel: "9d",
-    callTime: "End of school day",
+    date: "2026-03-14",
+    callTime: "15:30",
     location: "Front office",
     packingList: ["Signed waiver", "Emergency contacts"],
     timeline: [
@@ -87,7 +84,7 @@ export const initialTasks: Task[] = [
     category: "choreo",
     priority: "high",
     completed: false,
-    dueLabel: "Tonight",
+    dueAt: "2026-03-01T21:00",
     resourceUrl: "https://example.com/choreo-video"
   },
   {
@@ -98,7 +95,7 @@ export const initialTasks: Task[] = [
     category: "music",
     priority: "high",
     completed: false,
-    dueLabel: "Before rehearsal",
+    dueAt: "2026-03-02T15:30",
     resourceUrl: "https://example.com/alto-track"
   },
   {

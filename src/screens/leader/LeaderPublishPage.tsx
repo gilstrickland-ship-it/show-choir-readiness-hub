@@ -95,7 +95,7 @@ export function LeaderPublishPage() {
           </div>
 
           <div className="field">
-            <span>Scope</span>
+            <span>Applies to</span>
             <div className="segmented two-up">
               {[
                 { key: "choir", label: "Single choir" },
@@ -115,7 +115,7 @@ export function LeaderPublishPage() {
 
           {scopeType === "choir" ? (
             <label className="field">
-              <span>Target choir</span>
+              <span>Choir</span>
               <select value={choirId} onChange={(event) => setChoirId(event.target.value)}>
                 {program.choirs.map((choir) => (
                   <option key={choir.id} value={choir.id}>
@@ -127,7 +127,7 @@ export function LeaderPublishPage() {
           ) : null}
 
           <div className="field">
-            <span>Audience</span>
+            <span>Recipients</span>
             <div className="segmented two-up">
               {[
                 { key: "students", label: "Students" },
@@ -147,11 +147,11 @@ export function LeaderPublishPage() {
           </div>
 
           <div className="field">
-            <span>Urgency</span>
+            <span>Delivery</span>
             <div className="segmented two-up">
               {[
-                { key: "routine", label: "Routine digest" },
-                { key: "urgent", label: "Urgent push" }
+                { key: "routine", label: "Include in digest" },
+                { key: "urgent", label: "Send immediately" }
               ].map((option) => (
                 <button
                   key={option.key}
@@ -173,7 +173,7 @@ export function LeaderPublishPage() {
               onChange={(event) => setCreateTask(event.target.checked)}
             />
             <span>
-              Create a linked student action item
+              Add a follow-up task for students
               {scopeType === "program" ? " (choir-only)" : ""}
             </span>
           </label>

@@ -39,7 +39,7 @@ export function LeaderSettingsPage() {
       updateChoirName(choir.id, { name: nextName, shortLabel: nextShortLabel });
     });
 
-    setMessage("Settings saved. Theme updates apply across the app.");
+    setMessage("Settings saved. School colors and branding now update across the app.");
   };
 
   const handleImportUsers = () => {
@@ -75,105 +75,107 @@ export function LeaderSettingsPage() {
   return (
     <div className="stack-lg">
       <div className="leader-grid">
-      <section className="leader-panel stack-md">
-        <div className="eyebrow">Branding</div>
-        <h2>Control the program theme</h2>
-        <form className="leader-form" onSubmit={handleSubmit}>
-          <label className="field">
-            <span>Program name</span>
-            <input
-              value={programName}
-              onChange={(event) => setProgramName(event.target.value)}
-              placeholder="School program name"
-            />
-          </label>
+        <section className="leader-panel stack-md">
+          <div className="eyebrow">Branding</div>
+          <h2>Manage program branding</h2>
+          <form className="leader-form" onSubmit={handleSubmit}>
+            <label className="field">
+              <span>Program name</span>
+              <input
+                value={programName}
+                onChange={(event) => setProgramName(event.target.value)}
+                placeholder="School program name"
+              />
+            </label>
 
-          <label className="field">
-            <span>Logo image URL</span>
-            <input
-              value={logoUrl}
-              onChange={(event) => setLogoUrl(event.target.value)}
-              placeholder="https://example.com/logo.png"
-            />
-          </label>
+            <label className="field">
+              <span>Logo image</span>
+              <input
+                type="url"
+                value={logoUrl}
+                onChange={(event) => setLogoUrl(event.target.value)}
+                placeholder="https://example.com/logo.png"
+              />
+              <small className="muted-line">Paste a direct image URL for this prototype.</small>
+            </label>
 
-          <div className="field">
-            <span>School colors</span>
-            <div className="color-swatch-row">
-              <label className="color-swatch-field">
-                <input
-                  type="color"
-                  value={primaryColor}
-                  onChange={(event) => setPrimaryColor(event.target.value)}
-                  aria-label="Primary color"
-                />
-                <span className="color-swatch" style={{ background: primaryColor }} />
-                <small>Primary</small>
-              </label>
-              <label className="color-swatch-field">
-                <input
-                  type="color"
-                  value={accentColor}
-                  onChange={(event) => setAccentColor(event.target.value)}
-                  aria-label="Accent color"
-                />
-                <span className="color-swatch" style={{ background: accentColor }} />
-                <small>Accent</small>
-              </label>
+            <div className="field">
+              <span>School colors</span>
+              <div className="color-swatch-row">
+                <label className="color-swatch-field">
+                  <input
+                    type="color"
+                    value={primaryColor}
+                    onChange={(event) => setPrimaryColor(event.target.value)}
+                    aria-label="Primary color"
+                  />
+                  <span className="color-swatch" style={{ background: primaryColor }} />
+                  <small>Primary</small>
+                </label>
+                <label className="color-swatch-field">
+                  <input
+                    type="color"
+                    value={accentColor}
+                    onChange={(event) => setAccentColor(event.target.value)}
+                    aria-label="Accent color"
+                  />
+                  <span className="color-swatch" style={{ background: accentColor }} />
+                  <small>Accent</small>
+                </label>
+              </div>
             </div>
+
+            <div className="leader-panel stack-md settings-subpanel">
+              <div className="eyebrow">Choirs</div>
+              {program.choirs.map((choir) => (
+                <label key={choir.id} className="field">
+                  <span>{choir.shortLabel}</span>
+                  <input
+                    value={choirNames[choir.id] ?? choir.name}
+                    onChange={(event) =>
+                      setChoirNames((current) => ({ ...current, [choir.id]: event.target.value }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+
+            <button type="submit" className="primary-button" data-testid="settings-save">
+              Save settings
+            </button>
+          </form>
+
+          {message ? <div className="alert-card">{message}</div> : null}
+        </section>
+
+        <aside className="leader-aside">
+          <div className="info-card stack-md">
+            <div className="eyebrow">Preview</div>
+            <div className="brand-preview">
+              {logoUrl.trim() ? <img src={logoUrl.trim()} alt="" className="brand-logo brand-logo-large" /> : null}
+              <strong>{programName || program.name}</strong>
+            </div>
+            <p>
+              These settings update school colors and branding for student, parent, and leader
+              views in this prototype.
+            </p>
           </div>
 
-          <div className="leader-panel stack-md settings-subpanel">
-            <div className="eyebrow">Choirs</div>
-            {program.choirs.map((choir) => (
-              <label key={choir.id} className="field">
-                <span>{choir.shortLabel}</span>
-                <input
-                  value={choirNames[choir.id] ?? choir.name}
-                  onChange={(event) =>
-                    setChoirNames((current) => ({ ...current, [choir.id]: event.target.value }))
-                  }
-                />
-              </label>
-            ))}
+          <div className="info-card">
+            <div className="eyebrow">Notes</div>
+            <ul>
+              <li>Use a direct image URL for the logo.</li>
+              <li>Choir short labels update automatically from the new name.</li>
+              <li>School colors apply immediately after saving.</li>
+            </ul>
           </div>
-
-          <button type="submit" className="primary-button" data-testid="settings-save">
-            Save settings
-          </button>
-        </form>
-
-        {message ? <div className="alert-card">{message}</div> : null}
-      </section>
-
-      <aside className="leader-aside">
-        <div className="info-card stack-md">
-          <div className="eyebrow">Preview</div>
-          <div className="brand-preview">
-            {logoUrl.trim() ? <img src={logoUrl.trim()} alt="" className="brand-logo brand-logo-large" /> : null}
-            <strong>{programName || program.name}</strong>
-          </div>
-          <p>
-            These settings update the theme colors for student, parent, and leader views in
-            this prototype.
-          </p>
-        </div>
-
-        <div className="info-card">
-          <div className="eyebrow">Notes</div>
-          <ul>
-            <li>Use a direct image URL for the logo.</li>
-            <li>Choir short labels update automatically from the new name.</li>
-            <li>Theme colors apply immediately after saving.</li>
-          </ul>
-        </div>
-      </aside>
+        </aside>
       </div>
 
       <div className="leader-grid">
         <section className="leader-panel stack-md">
           <div className="eyebrow">Users</div>
-          <h2>Import from spreadsheet</h2>
+          <h2>Import users</h2>
           <p>
             Paste CSV rows in the format: <strong>name, email, role, choirs</strong>. Use
             `|` between choir names in the fourth column.
@@ -181,7 +183,7 @@ export function LeaderSettingsPage() {
 
           <div className="leader-form">
             <label className="field">
-              <span>Spreadsheet rows</span>
+              <span>Paste CSV rows</span>
               <textarea
                 rows={6}
                 value={spreadsheetText}
@@ -219,6 +221,7 @@ export function LeaderSettingsPage() {
         <label className="field">
           <span>Search users</span>
           <input
+            type="search"
             data-testid="user-search"
             value={userSearch}
             onChange={(event) => setUserSearch(event.target.value)}

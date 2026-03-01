@@ -166,9 +166,9 @@ function LeaderFrame() {
             </h1>
             <p>
               {isSettingsPage
-                ? "Update school branding, logo, choir names, and other organization settings."
+                ? "Update school branding, colors, choir names, and other organization settings."
                 : isPublishPage
-                ? "Post routine or urgent updates and create linked action items."
+                ? "Send updates to the right people and add follow-up tasks when needed."
                 : "Start from the dashboard, then jump into publishing when you need to post a change."}
               {program.name ? ` • ${program.name}` : ""}
             </p>

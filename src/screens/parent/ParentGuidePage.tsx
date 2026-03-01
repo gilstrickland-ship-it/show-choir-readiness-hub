@@ -1,5 +1,6 @@
 import { CheckCircle2, Clock3, MapPin } from "lucide-react";
 import { useAppState } from "../../context/AppContext";
+import { formatDisplayDate, formatDisplayTime } from "../../utils/formatting";
 
 export function ParentGuidePage() {
   const { activeEvent, getChoirLabel } = useAppState();
@@ -9,6 +10,7 @@ export function ParentGuidePage() {
       <section className="parent-hero">
         <div className="eyebrow">Event logistics</div>
         <h2>{activeEvent.title}</h2>
+        <p>{formatDisplayDate(activeEvent.date)}</p>
         <p className="scope-label">
           {activeEvent.scopeType === "program"
             ? "All Choirs"
@@ -17,7 +19,7 @@ export function ParentGuidePage() {
         <div className="meta-list compact">
           <div className="meta-item">
             <Clock3 size={16} />
-            <span>Call time {activeEvent.callTime}</span>
+            <span>Call time {formatDisplayTime(activeEvent.callTime)}</span>
           </div>
           <div className="meta-item">
             <MapPin size={16} />
