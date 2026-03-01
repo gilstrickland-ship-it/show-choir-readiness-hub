@@ -1,10 +1,11 @@
 import { FormEvent, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import { useAppState } from "../../context/AppContext";
 
 export function JoinTeamPage() {
   const { joinProgram, session, signOut } = useAppState();
+  const navigate = useNavigate();
   const [code, setCode] = useState("");
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
@@ -22,6 +23,11 @@ export function JoinTeamPage() {
     const result = joinProgram(code);
     setMessage(result.message);
     setIsError(!result.ok);
+  };
+
+  const handleSignOut = () => {
+    signOut();
+    navigate("/auth/sign-in", { replace: true });
   };
 
   return (
@@ -72,7 +78,7 @@ export function JoinTeamPage() {
             </div>
           ) : null}
 
-          <button type="button" className="secondary-button" onClick={signOut}>
+          <button type="button" className="secondary-button" onClick={handleSignOut}>
             <LogOut size={16} />
             Use a different email
           </button>

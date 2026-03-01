@@ -2,7 +2,8 @@ import {
   Navigate,
   Outlet,
   createBrowserRouter,
-  NavLink
+  NavLink,
+  useNavigate
 } from "react-router-dom";
 import {
   Bell,
@@ -73,6 +74,12 @@ function AppFrame({
   navItems: Array<{ to: string; label: string; icon: typeof Home }>;
 }) {
   const { session, signOut } = useAppState();
+  const navigate = useNavigate();
+
+  const handleSignOut = () => {
+    signOut();
+    navigate("/auth/sign-in", { replace: true });
+  };
 
   return (
     <div className="shell">
@@ -80,7 +87,7 @@ function AppFrame({
         <header className="app-header">
           <div className="header-row">
             <div className="eyebrow">Show Choir Readiness Hub</div>
-            <button type="button" className="header-action" onClick={signOut}>
+            <button type="button" className="header-action" onClick={handleSignOut}>
               <LogOut size={14} />
             </button>
           </div>
@@ -117,6 +124,12 @@ function AppFrame({
 
 function LeaderFrame() {
   const { session, signOut } = useAppState();
+  const navigate = useNavigate();
+
+  const handleSignOut = () => {
+    signOut();
+    navigate("/auth/sign-in", { replace: true });
+  };
 
   return (
     <div className="shell shell-wide">
@@ -131,7 +144,7 @@ function LeaderFrame() {
             </p>
           </div>
           <div className="leader-header-actions">
-            <button type="button" className="leader-link" onClick={signOut}>
+            <button type="button" className="leader-link" onClick={handleSignOut}>
               <LogOut size={16} />
               Sign Out
             </button>
