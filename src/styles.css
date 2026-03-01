@@ -956,6 +956,55 @@ textarea {
   gap: 8px;
 }
 
+.drawer-open {
+  position: relative;
+}
+
+.leader-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 20;
+}
+
+.leader-drawer {
+  width: min(100%, 460px);
+  height: 100vh;
+  padding: 24px 20px;
+  background: rgba(255, 252, 248, 0.98);
+  border-left: 1px solid rgba(120, 53, 15, 0.12);
+  box-shadow: -16px 0 40px rgba(15, 23, 42, 0.16);
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  overflow-y: auto;
+}
+
+.leader-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.drawer-close {
+  color: #7a2d20;
+  background: rgba(122, 45, 32, 0.08);
+  border-color: rgba(122, 45, 32, 0.12);
+}
+
+.leader-drawer-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.leader-secondary {
+  border: 1px solid rgba(122, 45, 32, 0.12);
+}
+
 .settings-subpanel {
   border: 1px solid rgba(120, 53, 15, 0.08);
 }
@@ -1047,10 +1096,16 @@ textarea {
   }
 
   .leader-manage-top,
-  .leader-item-actions {
+  .leader-item-actions,
+  .leader-drawer-actions {
     width: 100%;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .leader-drawer {
+    width: 100%;
+    padding: 20px 16px max(24px, env(safe-area-inset-bottom));
   }
 
   .countdown-chip {
