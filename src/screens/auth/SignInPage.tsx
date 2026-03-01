@@ -33,8 +33,18 @@ export function SignInPage() {
           <div className="eyebrow">Magic Link Sign-In</div>
           <h1>Get into your choir fast</h1>
           <p>
+            Show Choir Readiness Hub helps students, parents, and leaders stay in sync.
+            Check what changed, what to practice, what to bring, and what happens next, all
+            in one place.
+          </p>
+          <p>
+            Leaders can include directors, volunteers, student leaders, and board members,
+            so the full management team can help coordinate communication for students and
+            parents.
+          </p>
+          <p>
             This MVP skips real email authentication. Enter anything you want, or leave it
-            blank, then continue to your program invite code.
+            blank, then continue to your program role selection.
           </p>
 
           <form onSubmit={handleSubmit} className="leader-form">
