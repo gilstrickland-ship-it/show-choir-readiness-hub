@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import {
   Navigate,
   Outlet,
@@ -126,16 +125,10 @@ function AppFrame({
 function LeaderFrame() {
   const { session, signOut } = useAppState();
   const navigate = useNavigate();
-  const mainRef = useRef<HTMLElement | null>(null);
 
   const handleSignOut = () => {
     signOut();
     navigate("/auth/sign-in", { replace: true });
-  };
-
-  const handleConsoleClick = () => {
-    navigate("/leader", { replace: true });
-    mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
@@ -155,17 +148,18 @@ function LeaderFrame() {
               <LogOut size={16} />
               Sign Out
             </button>
-            <button
-              type="button"
-              className="leader-link leader-link-active"
-              onClick={handleConsoleClick}
+            <NavLink
+              to="/leader/dashboard"
+              className={({ isActive }) =>
+                isActive ? "leader-link leader-link-active" : "leader-link"
+              }
             >
               <Megaphone size={16} />
               Dashboard
-            </button>
+            </NavLink>
           </div>
         </header>
-        <main className="leader-main" ref={mainRef}>
+        <main className="leader-main">
           <Outlet />
         </main>
       </div>
@@ -243,6 +237,9 @@ export const router = createBrowserRouter([
         <LeaderFrame />
       </ProtectedRole>
     ),
-    children: [{ index: true, element: <LeaderDashboardPage /> }]
+    children: [
+      { index: true, element: <Navigate to="/leader/dashboard" replace /> },
+      { path: "dashboard", element: <LeaderDashboardPage /> }
+    ]
   }
 ]);
