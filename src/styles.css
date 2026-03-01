@@ -823,6 +823,10 @@ textarea {
   color: #1f2937;
 }
 
+.field .input-with-icon input {
+  padding-left: 46px;
+}
+
 .field textarea {
   resize: vertical;
 }
