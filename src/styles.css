@@ -24,6 +24,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 a {
@@ -502,6 +503,11 @@ textarea {
   gap: 8px;
 }
 
+.chip-group.wrap {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -906,6 +912,57 @@ textarea {
   .app-main,
   .leader-main {
     padding-inline: 16px;
+  }
+
+  .status-row,
+  .section-row,
+  .filter-row,
+  .hero-top,
+  .leader-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .header-row,
+  .leader-header-actions {
+    width: 100%;
+  }
+
+  .chip-group,
+  .chip-group.wrap {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .metric-card {
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .countdown-chip {
+    align-self: flex-start;
+  }
+
+  .task-preview-card,
+  .queue-card {
+    align-items: flex-start;
+  }
+
+  .bottom-nav {
+    gap: 6px;
+    padding-inline: 10px;
+  }
+
+  .nav-link {
+    min-width: 0;
+    padding-inline: 6px;
+  }
+
+  .nav-link span {
+    font-size: 0.68rem;
   }
 
   .split-fields {
