@@ -98,6 +98,10 @@ Likely pricing shape:
 - [evidence-matrix.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/evidence-matrix.md): category scoring and weighted ranking of candidate problem areas
 - [problem-briefs.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/problem-briefs.md): top 3 problem briefs
 - [mvp-spec.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/mvp-spec.md): current MVP product spec, including the parent read-only role
+- [ux-semantics-audit.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/ux-semantics-audit.md): executive summary and prioritized semantics/heuristic UX findings
+- [ux-audit-matrix.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/ux-audit-matrix.md): screen-by-screen audit findings and recommended replacements
+- [control-type-corrections.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/control-type-corrections.md): form-control corrections and type-model follow-up
+- [vocabulary-dictionary.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/vocabulary-dictionary.md): approved UI vocabulary for future implementation
 
 ## Current Product Thesis
 
