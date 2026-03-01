@@ -143,7 +143,7 @@ function LeaderFrame() {
       <div className="leader-shell">
         <header className="leader-header">
           <div>
-            <div className="eyebrow">Leader Console</div>
+            <div className="eyebrow">Leader Dashboard</div>
             <h1>Publish Updates</h1>
             <p>
               Post routine or urgent updates and create linked action items.
@@ -161,7 +161,7 @@ function LeaderFrame() {
               onClick={handleConsoleClick}
             >
               <Megaphone size={16} />
-              Console
+              Dashboard
             </button>
           </div>
         </header>
