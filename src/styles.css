@@ -57,7 +57,7 @@ textarea {
   position: relative;
   width: 100%;
   max-width: 430px;
-  min-height: calc(100vh - 64px);
+  height: calc(100vh - 64px);
   border: 1px solid rgba(120, 53, 15, 0.12);
   border-radius: 32px;
   background:
@@ -135,6 +135,11 @@ textarea {
 .leader-main {
   flex: 1;
   padding: 20px 20px 92px;
+}
+
+.app-main {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .auth-frame {
@@ -910,6 +915,7 @@ textarea {
   .phone-frame,
   .leader-shell {
     min-height: 100vh;
+    height: 100vh;
     border-radius: 0;
     border-left: 0;
     border-right: 0;
