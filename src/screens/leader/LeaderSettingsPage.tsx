@@ -75,7 +75,7 @@ export function LeaderSettingsPage() {
           </label>
 
           <div className="field">
-            <span>Theme colors</span>
+            <span>School colors</span>
             <div className="color-swatch-row">
               <label className="color-swatch-field">
                 <input
