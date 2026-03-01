@@ -169,9 +169,8 @@ function LeaderFrame() {
             </p>
           </div>
           <div className="leader-header-actions">
-            <button type="button" className="leader-link" onClick={handleSignOut}>
-              <LogOut size={16} />
-              Sign Out
+            <button type="button" className="header-action" onClick={handleSignOut} aria-label="Sign out">
+              <LogOut size={14} />
             </button>
             <NavLink
               to="/leader/dashboard"
