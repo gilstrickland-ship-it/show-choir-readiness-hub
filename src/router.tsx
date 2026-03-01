@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import {
   Navigate,
   Outlet,
@@ -125,10 +126,16 @@ function AppFrame({
 function LeaderFrame() {
   const { session, signOut } = useAppState();
   const navigate = useNavigate();
+  const mainRef = useRef<HTMLElement | null>(null);
 
   const handleSignOut = () => {
     signOut();
     navigate("/auth/sign-in", { replace: true });
+  };
+
+  const handleConsoleClick = () => {
+    navigate("/leader", { replace: true });
+    mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
@@ -148,18 +155,17 @@ function LeaderFrame() {
               <LogOut size={16} />
               Sign Out
             </button>
-            <NavLink
-              to="/leader"
-              className={({ isActive }) =>
-                isActive ? "leader-link leader-link-active" : "leader-link"
-              }
+            <button
+              type="button"
+              className="leader-link leader-link-active"
+              onClick={handleConsoleClick}
             >
               <Megaphone size={16} />
               Console
-            </NavLink>
+            </button>
           </div>
         </header>
-        <main className="leader-main">
+        <main className="leader-main" ref={mainRef}>
           <Outlet />
         </main>
       </div>
