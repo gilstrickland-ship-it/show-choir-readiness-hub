@@ -22,16 +22,16 @@
 
 ## Phase P3 — Costumes (needs P2)
 
-- [ ] T009 Inventory CRUD: `costume_pieces` (kinds incl. prop/set_piece), `costume_sets`, program-level persistence, condition/storage fields.
-- [ ] T010 Assignment grid (students × pieces per set, sizes surfaced inline, mismatch warning chips), alterations queue view sortable by next competition.
-- [ ] T011 Per-competition checkout: idempotent seed of `costume_checkouts`, phone-first tap-to-toggle grid, absent students greyed (reads attendance).
+- [X] T009 Inventory CRUD: `costume_pieces` (kinds incl. prop/set_piece), `costume_sets`, program-level persistence, condition/storage fields.
+- [X] T010 Assignment grid (students × pieces per set, sizes surfaced inline, mismatch warning chips), alterations queue view sortable by next competition.
+- [X] T011 Per-competition checkout: idempotent seed of `costume_checkouts`, phone-first tap-to-toggle grid, absent students greyed (reads attendance).
 
 ## Phase P4 — Competitions (needs P2; parallel with P3)
 
-- [ ] T012 Competitions CRUD + `competition/seed` (attendance expected-seed, idempotent), attendance edit screen (mobile-first), results form (placement/captions/score) + `status='done'` prompt.
-- [ ] T013 [P] Events (`events` table UI): CRUD + materialized repeat helper; calendar week/month views.
-- [ ] T014 Manual itinerary editor (items CRUD, kinds, sort) + publish flow (gates per §9 invariant 3) + PDF-alongside layout.
-- [ ] T015 Packet parse pipeline: upload → Storage → `documents` → Inngest `packet/parse` (extract/rasterize → Claude vision, zod-validated JSON, `prompt_version` recorded) → validation pass → review screen (source pages side-by-side with editable itinerary). Prompts in `lib/ai/prompts/packet-parse/`. Draft-only per Constitution IV.
+- [X] T012 Competitions CRUD + `competition/seed` (attendance expected-seed, idempotent), attendance edit screen (mobile-first), results form (placement/captions/score) + `status='done'` prompt.
+- [X] T013 [P] Events (`events` table UI): CRUD + materialized repeat helper; calendar week/month views.
+- [X] T014 Manual itinerary editor (items CRUD, kinds, sort) + publish flow (gates per §9 invariant 3) + PDF-alongside layout.
+- [X] T015 Packet parse pipeline: upload → Storage → `documents` → Inngest `packet/parse` (extract/rasterize → Claude vision, zod-validated JSON, `prompt_version` recorded) → validation pass → review screen (source pages side-by-side with editable itinerary). Prompts in `lib/ai/prompts/packet-parse/`. Draft-only per Constitution IV.
 
 ## Phase P5 — Travel + PDFs (needs P3+P4)
 
