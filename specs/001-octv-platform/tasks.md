@@ -16,9 +16,9 @@
 
 ## Phase P2 — Roster (needs P1)
 
-- [ ] T006 Students + guardians CRUD (server actions + pages under `(app)/[program]/roster/`), soft-delete with §9 invariant cascade, size-field config in Settings (program-defined `sizes` jsonb keys).
-- [ ] T007 Ensembles + season-scoped `ensemble_members` management (multi-ensemble membership, voice parts, roles).
-- [ ] T008 Combined CSV import: upload → parse → preview with per-row validation errors + health-column keyword skip notice → commit (students + multi-guardians). `lib/roster/import.ts` + tests in `tests/unit/`.
+- [X] T006 Students + guardians CRUD (server actions + pages under `(app)/[program]/roster/`), soft-delete with §9 invariant cascade, size-field config in Settings (program-defined `sizes` jsonb keys).
+- [X] T007 Ensembles + season-scoped `ensemble_members` management (multi-ensemble membership, voice parts, roles).
+- [X] T008 Combined CSV import: upload → parse → preview with per-row validation errors + health-column keyword skip notice → commit (students + multi-guardians). `lib/roster/import.ts` + tests in `tests/unit/`.
 
 ## Phase P3 — Costumes (needs P2)
 

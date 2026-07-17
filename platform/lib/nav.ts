@@ -14,6 +14,12 @@ import type { Role } from "@/lib/auth";
 // capabilities today (§2), so settings-class surfaces gate on both.
 export const SETTINGS_ROLES: readonly Role[] = ["director", "admin"];
 
+// Roster (§2 matrix "Roster CRUD"): director/admin write, board_member reads.
+// treasurer and costume_manager have no roster-directory access — the costume
+// surface reads student sizes through its own screens, not this one.
+export const ROSTER_ROLES: readonly Role[] = ["director", "admin", "board_member"];
+export const ROSTER_WRITE_ROLES: readonly Role[] = ["director", "admin"];
+
 export const COSTUMES_ROLES: readonly Role[] = [
   "director",
   "admin",
@@ -44,7 +50,7 @@ export interface NavItem {
 
 export const NAV: readonly NavItem[] = [
   { slot: "dashboard", label: "Dashboard" },
-  { slot: "roster", label: "Roster" },
+  { slot: "roster", label: "Roster", roles: ROSTER_ROLES },
   { slot: "costumes", label: "Costumes", flag: "costumes", roles: COSTUMES_ROLES },
   { slot: "competitions", label: "Competitions", flag: "competitions" },
   { slot: "events", label: "Events", flag: "events" },

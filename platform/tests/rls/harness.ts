@@ -23,7 +23,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -220,8 +220,15 @@ export async function applySchema(url: string): Promise<void> {
     const c = await admin.connect();
     try {
       await c.query(STUB_SQL);
-      await c.query(readFileSync(join(MIGRATIONS_DIR, '0001_foundation.sql'), 'utf8'));
-      await c.query(readFileSync(join(MIGRATIONS_DIR, '0002_rls.sql'), 'utf8'));
+      // Apply EVERY migration in lexical order (0001, 0002, 0003, …) so a new
+      // migration is exercised by the suite automatically — no hardcoded list to
+      // drift. Grants run last so RLS, not a missing GRANT, is what specs test.
+      const migrations = readdirSync(MIGRATIONS_DIR)
+        .filter((f) => f.endsWith('.sql'))
+        .sort();
+      for (const file of migrations) {
+        await c.query(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+      }
       await c.query(GRANTS_SQL);
     } finally {
       c.release();

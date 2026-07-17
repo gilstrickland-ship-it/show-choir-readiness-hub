@@ -21,6 +21,7 @@ export interface TenantProgram extends FlaggableProgram {
   tier: "prep" | "varsity" | "program";
   feature_overrides: Record<string, boolean> | null;
   weekly_note: string | null;
+  size_fields: string[];
 }
 
 export interface TenantSeason {
@@ -56,7 +57,7 @@ export const getTenantContext = cache(
     const { data: program } = await supabase
       .from("programs")
       .select(
-        "id, name, slug, school_name, city, state, timezone, tier, feature_overrides, weekly_note",
+        "id, name, slug, school_name, city, state, timezone, tier, feature_overrides, weekly_note, size_fields",
       )
       .eq("slug", programSlug)
       .maybeSingle();
