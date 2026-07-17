@@ -1,0 +1,61 @@
+name: platform-ci
+
+# Tenant isolation is existential (Constitution I): the RLS suite is CI-blocking
+# and runs against a real Postgres 16 on every change under platform/.
+on:
+  push:
+    paths:
+      - 'platform/**'
+      - '.github/workflows/platform-ci.yml'
+  pull_request:
+    paths:
+      - 'platform/**'
+      - '.github/workflows/platform-ci.yml'
+
+jobs:
+  platform:
+    name: typecheck · build · rls
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: platform
+
+    env:
+      # applySchema() creates the auth stubs + anon/authenticated/service_role
+      # roles as superuser, then applies 0001+0002 and seeds the two-program set.
+      DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: platform/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: RLS suite (tenant isolation)
+        run: npm run test:rls

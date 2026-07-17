@@ -1,0 +1,200 @@
+// ============================================================================
+// Octv Platform — RLS fixtures (T004)
+// ----------------------------------------------------------------------------
+// Stable, human-readable UUIDs for the two-program seed. Fixed ids (not
+// gen_random_uuid()) so the specs can reference exact seed rows without having
+// to round-trip through the DB. `a…` ids belong to program A, `b…` to program B.
+// ============================================================================
+
+/** Deterministic v4-shaped UUID: <prefix>0000000-0000-4000-8000-<12-hex-of-n>. */
+function fid(prefix: 'a' | 'b', n: number): string {
+  return `${prefix}0000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+}
+
+/** Entity → slot number. Shared by both programs so A/B structures mirror. */
+const SLOT = {
+  program: 1,
+  season_active: 2,
+  season_archived: 3,
+  user_director: 4,
+  user_admin: 5,
+  user_treasurer: 6,
+  user_costume: 7,
+  user_board: 8,
+  ensemble: 9,
+  student: 10,
+  guardian: 11,
+  ensemble_member: 12,
+  competition: 13,
+  competition_result: 14,
+  attendance: 15,
+  document: 16,
+  costume_set: 17,
+  costume_piece: 18,
+  costume_assignment: 19,
+  costume_checkout: 20,
+  trip: 21,
+  travel_group_room: 22,
+  travel_group_bus: 23,
+  travel_assignment: 24,
+  travel_chaperone: 25,
+  budget: 26,
+  budget_category: 27,
+  budget_line: 28,
+  ledger_live: 29,
+  ledger_audit: 30,
+  shift: 31,
+  shift_signup: 32,
+  announcement: 33,
+  announcement_send: 34,
+  digest: 35,
+  digest_send: 36,
+  guardian_token: 37,
+  share_link: 38,
+  token_event: 39,
+  member_director: 40,
+  member_admin: 41,
+  member_treasurer: 42,
+  member_costume: 43,
+  member_board: 44,
+  itinerary: 45,
+  itinerary_item: 46,
+  packet_parse: 47,
+  absence_request: 48,
+  event: 49,
+  // A-only archived-season extras + ledger states (slots ≥ 60)
+  competition_archived: 60,
+  costume_set_archived: 61,
+  budget_archived: 62,
+  budget_category_archived: 63,
+  budget_line_archived: 64,
+  ledger_voided: 65,
+  ledger_audit_extra: 66,
+} as const;
+
+type Slot = keyof typeof SLOT;
+
+export interface ProgramIds {
+  program: string;
+  seasonActive: string;
+  seasonArchived: string;
+  director: string;
+  admin: string;
+  treasurer: string;
+  costume: string;
+  board: string;
+  ensemble: string;
+  student: string;
+  guardian: string;
+  ensembleMember: string;
+  competition: string;
+  competitionResult: string;
+  attendance: string;
+  document: string;
+  costumeSet: string;
+  costumePiece: string;
+  costumeAssignment: string;
+  costumeCheckout: string;
+  trip: string;
+  travelGroupRoom: string;
+  travelGroupBus: string;
+  travelAssignment: string;
+  travelChaperone: string;
+  budget: string;
+  budgetCategory: string;
+  budgetLine: string;
+  ledgerLive: string;
+  ledgerAudit: string;
+  shift: string;
+  shiftSignup: string;
+  announcement: string;
+  announcementSend: string;
+  digest: string;
+  digestSend: string;
+  guardianToken: string;
+  shareLink: string;
+  tokenEvent: string;
+  memberDirector: string;
+  memberAdmin: string;
+  memberTreasurer: string;
+  memberCostume: string;
+  memberBoard: string;
+  itinerary: string;
+  itineraryItem: string;
+  packetParse: string;
+  absenceRequest: string;
+  event: string;
+  // A-only
+  competitionArchived: string;
+  costumeSetArchived: string;
+  budgetArchived: string;
+  budgetCategoryArchived: string;
+  budgetLineArchived: string;
+  ledgerVoided: string;
+  ledgerAuditExtra: string;
+}
+
+function build(prefix: 'a' | 'b'): ProgramIds {
+  const g = (s: Slot) => fid(prefix, SLOT[s]);
+  return {
+    program: g('program'),
+    seasonActive: g('season_active'),
+    seasonArchived: g('season_archived'),
+    director: g('user_director'),
+    admin: g('user_admin'),
+    treasurer: g('user_treasurer'),
+    costume: g('user_costume'),
+    board: g('user_board'),
+    ensemble: g('ensemble'),
+    student: g('student'),
+    guardian: g('guardian'),
+    ensembleMember: g('ensemble_member'),
+    competition: g('competition'),
+    competitionResult: g('competition_result'),
+    attendance: g('attendance'),
+    document: g('document'),
+    costumeSet: g('costume_set'),
+    costumePiece: g('costume_piece'),
+    costumeAssignment: g('costume_assignment'),
+    costumeCheckout: g('costume_checkout'),
+    trip: g('trip'),
+    travelGroupRoom: g('travel_group_room'),
+    travelGroupBus: g('travel_group_bus'),
+    travelAssignment: g('travel_assignment'),
+    travelChaperone: g('travel_chaperone'),
+    budget: g('budget'),
+    budgetCategory: g('budget_category'),
+    budgetLine: g('budget_line'),
+    ledgerLive: g('ledger_live'),
+    ledgerAudit: g('ledger_audit'),
+    shift: g('shift'),
+    shiftSignup: g('shift_signup'),
+    announcement: g('announcement'),
+    announcementSend: g('announcement_send'),
+    digest: g('digest'),
+    digestSend: g('digest_send'),
+    guardianToken: g('guardian_token'),
+    shareLink: g('share_link'),
+    tokenEvent: g('token_event'),
+    memberDirector: g('member_director'),
+    memberAdmin: g('member_admin'),
+    memberTreasurer: g('member_treasurer'),
+    memberCostume: g('member_costume'),
+    memberBoard: g('member_board'),
+    itinerary: g('itinerary'),
+    itineraryItem: g('itinerary_item'),
+    packetParse: g('packet_parse'),
+    absenceRequest: g('absence_request'),
+    event: g('event'),
+    competitionArchived: g('competition_archived'),
+    costumeSetArchived: g('costume_set_archived'),
+    budgetArchived: g('budget_archived'),
+    budgetCategoryArchived: g('budget_category_archived'),
+    budgetLineArchived: g('budget_line_archived'),
+    ledgerVoided: g('ledger_voided'),
+    ledgerAuditExtra: g('ledger_audit_extra'),
+  };
+}
+
+export const A: ProgramIds = build('a');
+export const B: ProgramIds = build('b');
