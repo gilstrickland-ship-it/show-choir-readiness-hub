@@ -12,7 +12,7 @@
 - [X] T002 Foundation migration set in `supabase/migrations/`: all enums + all 35 tables from data-model.md with constraints, indexes, triggers (updated_at, one-room-one-bus, single-active-season/budget) — schema complete per Constitution VIII.
 - [X] T003 RLS migration: enable RLS everywhere; membership read policies, role write policies per §2 matrix, archived-season write blocks; storage bucket policies.
 - [ ] T004 RLS test suite in `tests/rls/` (Vitest against local Supabase): two-program seed; per-table cross-tenant read/write denial; role gates (admin cannot write ledger; treasurer can); archived season rejects writes. CI workflow `.github/workflows/platform-ci.yml` (typecheck, build, RLS tests when Docker available — loud skip otherwise).
-- [ ] T005 Supabase SSR client helpers (`lib/supabase/`), auth flow (staff sign-in, invite acceptance), tenant shell layout resolving program + membership + role, role-aware nav, Settings → Members (invite, re-role, remove) and Settings → Program (name, timezone, colors), feature-flag plumbing (server-side 404 gating).
+- [X] T005 Supabase SSR client helpers (`lib/supabase/`), auth flow (staff sign-in, invite acceptance), tenant shell layout resolving program + membership + role, role-aware nav, Settings → Members (invite, re-role, remove) and Settings → Program (name, timezone, colors), feature-flag plumbing (server-side 404 gating).
 
 ## Phase P2 — Roster (needs P1)
 

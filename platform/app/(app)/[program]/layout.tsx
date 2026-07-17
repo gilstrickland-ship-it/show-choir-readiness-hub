@@ -1,25 +1,22 @@
 import Link from "next/link";
+import { brand } from "@/lib/brand";
+import { getTenantContext } from "@/lib/tenant";
+import { NAV, isNavItemVisible } from "@/lib/nav";
+import { signOut } from "@/app/auth/actions";
 
-// Tenant shell placeholder. T005 resolves program + membership + role here and
-// makes navigation role-aware and feature-flag gated (server-side 404). For now
-// this is a typed shell exposing the nav slots for each domain surface.
+// Tenant shell (server layout). Resolves program + active membership + role +
+// active season and evaluates flags once via getTenantContext() (cached — pages
+// call the same helper without a second round-trip). Nav is role-aware and
+// flag-gated: flagged-off or role-forbidden items are omitted server-side, never
+// hidden with CSS (Constitution VIII).
 
-interface NavItem {
-  slot: string;
-  label: string;
-}
-
-const NAV: readonly NavItem[] = [
-  { slot: "dashboard", label: "Dashboard" },
-  { slot: "roster", label: "Roster" },
-  { slot: "costumes", label: "Costumes" },
-  { slot: "competitions", label: "Competitions" },
-  { slot: "events", label: "Events" },
-  { slot: "travel", label: "Travel" },
-  { slot: "treasury", label: "Treasury" },
-  { slot: "comms", label: "Comms" },
-  { slot: "settings", label: "Settings" },
-];
+const ROLE_LABELS: Record<string, string> = {
+  director: "Director",
+  admin: "Admin",
+  treasurer: "Treasurer",
+  costume_manager: "Costume manager",
+  board_member: "Board member",
+};
 
 export default async function ProgramLayout({
   children,
@@ -28,18 +25,36 @@ export default async function ProgramLayout({
   children: React.ReactNode;
   params: Promise<{ program: string }>;
 }) {
-  const { program } = await params;
+  const { program: slug } = await params;
+  const { program, role, season, flags } = await getTenantContext(slug);
+
+  const items = NAV.filter((item) => isNavItemVisible(item, role, flags));
 
   return (
-    <div>
-      <nav>
-        <ul>
-          {NAV.map((item) => (
-            <li key={item.slot}>
-              <Link href={`/${program}/${item.slot}`}>{item.label}</Link>
-            </li>
-          ))}
-        </ul>
+    <div className="shell">
+      <header className="shell-header">
+        <div className="shell-brand">
+          <Link href={`/${slug}/dashboard`}>{program.name}</Link>
+          <span className="shell-meta">
+            {brand.name}
+            {season ? ` · ${season.label}` : ""}
+          </span>
+        </div>
+        <div className="shell-account">
+          <span className="badge">{ROLE_LABELS[role] ?? role}</span>
+          <form action={signOut}>
+            <button type="submit" className="linklike">
+              Sign out
+            </button>
+          </form>
+        </div>
+      </header>
+      <nav className="shell-nav" aria-label="Program navigation">
+        {items.map((item) => (
+          <Link key={item.slot} href={`/${slug}/${item.slot}`}>
+            {item.label}
+          </Link>
+        ))}
       </nav>
       <main>{children}</main>
     </div>
