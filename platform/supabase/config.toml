@@ -1,0 +1,18 @@
+# Supabase CLI configuration — Octv Platform
+# Minimal config; full local-stack tuning is added as the app harness lands.
+
+project_id = "octv-platform"
+
+[db]
+# Postgres major version used by the hosted project + local stack.
+major_version = 16
+
+[db.migrations]
+# Applied in lexical order: 0001_foundation.sql, 0002_rls.sql, ...
+schema_paths = []
+
+[storage]
+enabled = true
+
+[auth]
+enabled = true

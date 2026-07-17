@@ -1,0 +1,7 @@
+-- ============================================================================
+-- Octv Platform — Seed data
+-- ----------------------------------------------------------------------------
+-- Intentionally empty. Demo / pilot seed data is populated by task T030
+-- (seed & demo-data job). Keep this file as the single seed entrypoint the
+-- Supabase CLI runs after migrations (`supabase db reset`).
+-- ============================================================================
