@@ -18,7 +18,7 @@ port = 54322
 # Shadow DB port (used by `db diff`).
 shadow_port = 54320
 # Postgres major version used by the hosted project + local stack.
-major_version = 16
+major_version = 17
 
 [db.pooler]
 enabled = false
@@ -36,7 +36,7 @@ enabled = true
 port = 54323
 
 # Local email testing UI (Mailpit / Inbucket depending on CLI version).
-[inbucket]
+[local_smtp]
 enabled = true
 port = 54324
 
