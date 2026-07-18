@@ -42,6 +42,9 @@ export async function createCompetition(formData: FormData): Promise<void> {
 
   const status = str(formData, "status") as CompetitionStatus;
   const ensembleId = nullable(formData, "ensemble_id");
+  // Ensemble is required going forward (F6): a null-ensemble competition can
+  // never seed attendance/meals/checkout. The column stays nullable for old rows.
+  if (!ensembleId) redirect(`/${slug}/competitions?error=ensemble`);
 
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -87,6 +90,9 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   if (!name) redirect(`/${slug}/competitions/${competitionId}?error=name`);
 
   const newEnsemble = nullable(formData, "ensemble_id");
+  // Ensemble is required going forward (F6) — the Overview edit form now requires
+  // it, matching the create form.
+  if (!newEnsemble) redirect(`/${slug}/competitions/${competitionId}?error=ensemble`);
   const currentEnsemble = nullable(formData, "current_ensemble_id");
   const confirmed = str(formData, "confirm_ensemble") === "1";
   const ensembleChanged = newEnsemble !== currentEnsemble;

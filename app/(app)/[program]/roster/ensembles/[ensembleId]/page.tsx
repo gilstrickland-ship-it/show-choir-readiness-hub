@@ -56,7 +56,9 @@ export default async function EnsembleMembersPage({
 
       {!season ? (
         <p className="muted">
-          No active season. Set one active in Settings to manage membership.
+          No active season.{" "}
+          <Link href={`/${slug}/settings/rollover`}>Start a season</Link> to manage
+          membership.
         </p>
       ) : (
         <EnsembleMembers
@@ -117,9 +119,11 @@ async function EnsembleMembers({
     .eq("status", "active")
     .order("last_name", { ascending: true })
     .order("first_name", { ascending: true });
-  const addable = ((studentData as
-    | { id: string; first_name: string; last_name: string }[]
-    | null) ?? []).filter((s) => !memberIds.has(s.id));
+  const activeStudents =
+    (studentData as
+      | { id: string; first_name: string; last_name: string }[]
+      | null) ?? [];
+  const addable = activeStudents.filter((s) => !memberIds.has(s.id));
 
   return (
     <>
@@ -210,7 +214,14 @@ async function EnsembleMembers({
         <>
           <h2>Add a member</h2>
           {addable.length === 0 ? (
-            <p className="muted">Every active student is already in this ensemble.</p>
+            activeStudents.length === 0 ? (
+              <p className="muted">
+                No students on the roster yet.{" "}
+                <Link href={`/${slug}/roster`}>Add students to the roster first</Link>.
+              </p>
+            ) : (
+              <p className="muted">Every active student is already in this ensemble.</p>
+            )
           ) : (
             <form action={addMember} className="stack">
               <input type="hidden" name="programId" value={programId} />

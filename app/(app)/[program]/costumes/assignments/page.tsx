@@ -88,8 +88,8 @@ export default async function AssignmentsPage({
       <h1>Assignments</h1>
       {!season && (
         <p className="muted">
-          No active season — assignments are season-scoped. Set a season active in
-          Settings.
+          No active season — assignments are season-scoped.{" "}
+          <Link href={`/${slug}/settings/rollover`}>Start a season</Link>.
         </p>
       )}
 
@@ -101,7 +101,14 @@ export default async function AssignmentsPage({
         <p className="alert-error">Couldn&apos;t update the alteration. Try again.</p>
       )}
 
-      {season && (
+      {season && sets.length === 0 && (
+        <p className="muted">
+          No costume sets yet. Create one on the{" "}
+          <Link href={`/${slug}/costumes/sets`}>Sets page</Link>.
+        </p>
+      )}
+
+      {season && sets.length > 0 && (
         <form method="get" className="row-inline">
           <label>
             Set

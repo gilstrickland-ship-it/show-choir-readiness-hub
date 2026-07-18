@@ -11,6 +11,7 @@ import {
   updateGuardian,
   removeGuardian,
   resendGuardianLinks,
+  emailGuardianLinks,
 } from "../actions";
 import { guardianLinks } from "@/lib/tokens";
 
@@ -51,13 +52,14 @@ export default async function StudentDetailPage({
     confirm?: string;
     linked?: string;
     token?: string;
+    emailed?: string;
   }>;
 }) {
   const { program: slug, studentId } = await params;
   const { program, role, season } = await getTenantContext(slug);
   if (!ROSTER_ROLES.includes(role)) notFound();
   const canWrite = ROSTER_WRITE_ROLES.includes(role);
-  const { saved, error, deactivated, confirm, linked, token } = await searchParams;
+  const { saved, error, deactivated, confirm, linked, token, emailed } = await searchParams;
   const freshLinks = token ? guardianLinks(token) : null;
 
   const supabase = await createClient();
@@ -122,6 +124,24 @@ export default async function StudentDetailPage({
       )}
       {error === "links" && (
         <p className="alert-error">Couldn&apos;t generate links. Try again.</p>
+      )}
+      {error === "email" && (
+        <p className="alert-error">Couldn&apos;t send the email. Try again.</p>
+      )}
+      {error === "email_missing" && (
+        <p className="alert-error">
+          That guardian has no email on file. Add an email, or rotate the links
+          and copy them into a message instead.
+        </p>
+      )}
+      {emailed === "ok" && (
+        <p className="alert-ok">Family links emailed. Earlier links still work.</p>
+      )}
+      {emailed === "nokey" && (
+        <p className="alert-error">
+          Email isn&apos;t configured, so nothing was sent. Copy the links below
+          into a message instead.
+        </p>
       )}
       {error === "deactivate" && (
         <p className="alert-error">Couldn&apos;t deactivate the student. Try again.</p>
@@ -214,12 +234,22 @@ export default async function StudentDetailPage({
       {/* ---- Guardians ---- */}
       <h2 id="guardians">Guardians</h2>
       <p className="muted">{NO_HEALTH_LABEL}</p>
+      {canWrite && (
+        <p className="muted">
+          <strong>Email links to this family</strong> sends the parent links to a
+          guardian&apos;s email without disturbing any links they already have.{" "}
+          <strong>Rotate links (show once)</strong> mints a new link and{" "}
+          <em>revokes every link previously sent to this guardian</em> — only use
+          it when a link may have leaked or you need to copy the URLs by hand.
+        </p>
+      )}
       {freshLinks && (
         <div className="confirm-box stack" style={{ width: "100%" }}>
-          <strong>Family links generated.</strong>
+          <strong>Family links{emailed === "nokey" ? " (email not sent)" : " generated"}.</strong>
           <p className="muted">
-            Copy these into a message to the family. Any previous link for this
-            guardian is now revoked — the newest link is always the live one.
+            {emailed === "nokey"
+              ? "Email isn't configured, so nothing was sent. Copy these links into a message to the family — they work now, and any earlier links this family has still work too."
+              : "Copy these into a message to the family. Rotating just revoked every previous link for this guardian — the newest link is always the live one."}
           </p>
           <div>
             Itinerary: <code>{freshLinks.itinerary}</code>
@@ -287,13 +317,27 @@ export default async function StudentDetailPage({
                   </td>
                   <td>
                     <div className="stack">
+                      <form action={emailGuardianLinks}>
+                        <input type="hidden" name="programId" value={program.id} />
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="guardianId" value={g.id} />
+                        <button
+                          type="submit"
+                          className="secondary"
+                          disabled={!g.email}
+                          title={g.email ? undefined : "Add an email first"}
+                        >
+                          Email links to this family
+                        </button>
+                      </form>
                       <form action={resendGuardianLinks}>
                         <input type="hidden" name="programId" value={program.id} />
                         <input type="hidden" name="slug" value={slug} />
                         <input type="hidden" name="studentId" value={student.id} />
                         <input type="hidden" name="guardianId" value={g.id} />
-                        <button type="submit" className="secondary">
-                          {linked === g.id ? "Resend links" : "Generate links"}
+                        <button type="submit" className="linklike">
+                          Rotate links (show once)
                         </button>
                       </form>
                       <form action={removeGuardian}>

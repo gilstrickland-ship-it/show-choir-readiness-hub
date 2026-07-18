@@ -59,7 +59,9 @@ export async function commitImport(
   let studentsCreated = 0;
   let guardiansCreated = 0;
 
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNum = i + 1;
     const { data: student, error: studentErr } = await supabase
       .from("students")
       .insert({
@@ -74,12 +76,17 @@ export async function commitImport(
       .single();
 
     if (studentErr || !student) {
+      // Raw Postgres detail is for the logs only — the user gets plain guidance.
+      console.error(
+        `Roster import: student insert failed on row ${rowNum}:`,
+        studentErr?.message ?? "no row returned",
+      );
       return {
         studentsCreated,
         guardiansCreated,
         errorCount: errors.length,
         ok: false,
-        message: `Stopped after ${studentsCreated} students — ${studentErr?.message ?? "insert failed"}.`,
+        message: `Row ${rowNum} couldn't be saved — it may duplicate an existing student. Stopped after importing ${studentsCreated}.`,
       };
     }
     studentsCreated += 1;
@@ -96,12 +103,16 @@ export async function commitImport(
         })),
       );
       if (guardianErr) {
+        console.error(
+          `Roster import: guardian insert failed on row ${rowNum}:`,
+          guardianErr.message,
+        );
         return {
           studentsCreated,
           guardiansCreated,
           errorCount: errors.length,
           ok: false,
-          message: `Students imported, but a guardian insert failed: ${guardianErr.message}.`,
+          message: `Students imported, but a guardian on row ${rowNum} couldn't be saved — check that row's guardian email addresses.`,
         };
       }
       guardiansCreated += row.guardians.length;

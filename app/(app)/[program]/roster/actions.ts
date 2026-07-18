@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { ROSTER_WRITE_ROLES } from "@/lib/nav";
 import { rotateGuardianToken } from "@/lib/tokens";
+import { sendGuardianLinksEmail } from "@/lib/comms-send";
+import { computeRecipients } from "@/lib/comms";
 
 // Roster mutations (students + guardians + size-field config). Writes are
 // director/admin per §2 "Roster CRUD" — every action re-checks the role via
@@ -279,14 +281,15 @@ export async function removeGuardian(formData: FormData): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Guardian tokenized links (§8a) — "generate / resend links"
+// Guardian tokenized links (§8a) — rotate (show once) + email to family
 // ---------------------------------------------------------------------------
 
-// Mint a fresh guardian token (revoking any prior one — "resend links" rotates
-// per §8a) and hand the raw token back to the page so staff can copy the three
-// canonical links. The raw token is only knowable at mint time (hash-only at
-// rest), so it rides back in the redirect for a one-time display on the staff's
-// own screen. Director/admin only (guardian_tokens write gate).
+// ROTATE: mint a fresh guardian token AND revoke any prior one, handing the raw
+// token back to the page for a one-time on-screen display so staff can copy the
+// three canonical links. Rotating BREAKS every previously-sent link for this
+// family — use "Email links" for the everyday case. The raw token is only
+// knowable at mint time (hash-only at rest), so it rides back in the redirect.
+// Director/admin only (guardian_tokens write gate).
 export async function resendGuardianLinks(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
@@ -304,6 +307,103 @@ export async function resendGuardianLinks(formData: FormData): Promise<void> {
   redirect(
     `/${slug}/roster/${studentId}?linked=${guardianId}&token=${encodeURIComponent(result.raw)}#guardians`,
   );
+}
+
+// EMAIL LINKS TO THIS FAMILY: mint a FRESH token (append-only — earlier links
+// keep working) and email the three parent links to this one guardian. This is
+// the everyday "get the family into the system" path — no rotation, so a family
+// that already has a working link keeps it. Graceful no-key mode: when email
+// isn't configured the send is 'skipped_no_key' and the page tells staff to copy
+// the links instead. Director/admin only.
+export async function emailGuardianLinks(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const studentId = String(formData.get("studentId") ?? "");
+  const guardianId = String(formData.get("guardianId") ?? "");
+  await requireRole(programId, ROSTER_WRITE_ROLES);
+
+  const supabase = await createClient();
+
+  const { data: g } = await supabase
+    .from("guardians")
+    .select("email")
+    .eq("id", guardianId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  const email = ((g as { email: string | null } | null)?.email ?? "").trim();
+  if (!email) {
+    redirect(`/${slug}/roster/${studentId}?error=email_missing#guardians`);
+  }
+
+  const { data: prog } = await supabase
+    .from("programs")
+    .select("name")
+    .eq("id", programId)
+    .maybeSingle();
+  const programName = (prog as { name: string } | null)?.name ?? "";
+
+  const { send, raw } = await sendGuardianLinksEmail(supabase, {
+    programId,
+    guardianId,
+    email,
+    programName,
+  });
+
+  revalidatePath(`/${slug}/roster/${studentId}`);
+  if (send.status === "sent") {
+    redirect(`/${slug}/roster/${studentId}?emailed=ok#guardians`);
+  }
+  if (send.status === "skipped_no_key" && raw) {
+    // No mail provider — surface the freshly-minted (append-only) links so staff
+    // can copy them into a message. These links WORK; earlier links still work too.
+    redirect(
+      `/${slug}/roster/${studentId}?emailed=nokey&linked=${guardianId}&token=${encodeURIComponent(raw)}#guardians`,
+    );
+  }
+  redirect(`/${slug}/roster/${studentId}?error=email#guardians`);
+}
+
+// BULK EMAIL LINKS TO ALL FAMILIES: for every guardian with email_status='ok'
+// (deduped per family by computeRecipients — one message per household), mint a
+// fresh token and email the three links. Reports sent / skipped / failed counts.
+// No-key mode reports every recipient as skipped. Director/admin only.
+export async function emailAllGuardianLinks(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  await requireRole(programId, ROSTER_WRITE_ROLES);
+
+  const supabase = await createClient();
+
+  const { data: prog } = await supabase
+    .from("programs")
+    .select("name")
+    .eq("id", programId)
+    .maybeSingle();
+  const programName = (prog as { name: string } | null)?.name ?? "";
+
+  const recipients = await computeRecipients(supabase, {
+    programId,
+    seasonId: null,
+    ensembleId: null,
+  });
+
+  let sent = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const r of recipients) {
+    const { send } = await sendGuardianLinksEmail(supabase, {
+      programId,
+      guardianId: r.guardianId,
+      email: r.email,
+      programName,
+    });
+    if (send.status === "sent") sent++;
+    else if (send.status === "skipped_no_key") skipped++;
+    else failed++;
+  }
+
+  revalidatePath(`/${slug}/roster`);
+  redirect(`/${slug}/roster?bulk=${sent}.${skipped}.${failed}`);
 }
 
 // ---------------------------------------------------------------------------

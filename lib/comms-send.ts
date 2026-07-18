@@ -1,7 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeRecipients, announcementHtml } from "@/lib/comms";
-import { mintGuardianTokenForEmail, guardianLinks } from "@/lib/tokens";
-import { sendEmail } from "@/lib/email";
+import {
+  mintGuardianTokenForEmail,
+  guardianLinks,
+  type GuardianLinks,
+} from "@/lib/tokens";
+import { sendEmail, type SendResult } from "@/lib/email";
 
 // Shared send cores (§8, T038). The announcement and digest send loops live here
 // ONCE so both the inline server-action path (no Inngest) and the Inngest jobs
@@ -76,6 +80,56 @@ async function sendToRecipients(
   }
 
   return { sent, skipped, failed };
+}
+
+// ---- Guardian family-links email (§8a, F13) --------------------------------
+// A links-only email: the three canonical parent links and nothing else. No
+// sensitive info (Constitution III), no account (Constitution II) — just the
+// family's live entry points, so "Generate/Resend links" can actually REACH the
+// family instead of only showing URLs to staff.
+
+// Branded HTML for the family-links email. Deliberately tiny: a one-line intro
+// plus the three footer links assembled by announcementHtml (one link style
+// across every parent email).
+export function guardianLinksEmailHtml(args: {
+  programName: string;
+  links: GuardianLinks;
+}): string {
+  const intro =
+    `Here are your personal links for ${args.programName}. ` +
+    "Use them to view the itinerary, sign up to volunteer, and report an absence. " +
+    "Keep this email — the newest links are always the ones that work.";
+  return announcementHtml({ bodyMd: intro, links: args.links });
+}
+
+// Mint a FRESH per-email token (append-only — earlier links keep working) and
+// send the three family links to one guardian. Returns the send status AND the
+// minted raw token so a caller can surface the copyable links when email is
+// unconfigured (skipped_no_key). `raw` is null only when the mint itself failed.
+// Never throws.
+export async function sendGuardianLinksEmail(
+  supabase: SupabaseClient,
+  args: {
+    programId: string;
+    guardianId: string;
+    email: string;
+    programName: string;
+  },
+): Promise<{ send: SendResult; raw: string | null }> {
+  const minted = await mintGuardianTokenForEmail(supabase, {
+    programId: args.programId,
+    guardianId: args.guardianId,
+  });
+  if (!("raw" in minted)) {
+    return { send: { status: "failed", error: minted.error }, raw: null };
+  }
+  const links = guardianLinks(minted.raw);
+  const send = await sendEmail({
+    to: args.email,
+    subject: `Your ${args.programName} family links`,
+    html: guardianLinksEmailHtml({ programName: args.programName, links }),
+  });
+  return { send, raw: minted.raw };
 }
 
 // Announcement send core. The announcement row already exists (created 'sent' by

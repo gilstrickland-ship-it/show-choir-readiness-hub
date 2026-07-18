@@ -4,17 +4,16 @@ import { getSessionUser, getMembership } from "@/lib/auth";
 import { TREASURY_ROLES } from "@/lib/nav";
 import {
   loadTripDoc,
-  loadPacketData,
   loadBoardSnapshot,
   loadMealData,
 } from "@/lib/pdf/queries";
 import {
   BusManifest,
   RoomSheet,
-  ParentPacket,
   BoardSnapshot,
   MealCount,
 } from "@/lib/pdf/documents";
+import { renderParentPacket } from "@/lib/pdf/render";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ReactElement } from "react";
 
@@ -98,16 +97,10 @@ export async function GET(
     const membership = await getMembership(programId, user.id);
     if (!membership) return text("Forbidden", 403);
 
-    const data = await loadPacketData(supabase, competitionId);
-    if (!data) return text("Competition not found", 404);
-    // Invariant §9.3: the packet is gated on a published itinerary.
-    if (!data.itineraryPublished) {
-      return text(
-        "This competition's itinerary is not published yet. Publish it before generating the parent packet.",
-        409,
-      );
-    }
-    return pdf(<ParentPacket data={data} />, `parent-packet-${competitionId}.pdf`);
+    // Shared renderer (one source of truth with the token packet route, F15).
+    const result = await renderParentPacket(supabase, competitionId);
+    if (!result.ok) return text(result.message, result.status);
+    return result.response;
   }
 
   if (doc === "meal") {

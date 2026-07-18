@@ -145,6 +145,9 @@ export default async function CompetitionsPage({
         <p className="alert-error">Couldn&apos;t attach the packet. Pick a competition and try again.</p>
       )}
       {error === "name" && <p className="alert-error">A competition needs a name.</p>}
+      {error === "ensemble" && (
+        <p className="alert-error">Pick an ensemble for the competition.</p>
+      )}
       {error === "season" && (
         <p className="alert-error">Activate a season before adding competitions.</p>
       )}
@@ -196,7 +199,18 @@ export default async function CompetitionsPage({
         </tbody>
       </table>
 
-      {canWrite && season && (
+      {canWrite && season && ensembles.length === 0 && (
+        <div className="stack">
+          <h2>Add a competition</h2>
+          <p className="muted">
+            A competition attaches to an ensemble so it can seed attendance, meals,
+            and checkout.{" "}
+            <Link href={`/${slug}/roster/ensembles`}>Create an ensemble first</Link>.
+          </p>
+        </div>
+      )}
+
+      {canWrite && season && ensembles.length > 0 && (
         <>
           <h2>Add a competition</h2>
           <form action={createCompetition} className="stack">
@@ -214,8 +228,10 @@ export default async function CompetitionsPage({
               </label>
               <label>
                 Ensemble
-                <select name="ensemble_id" defaultValue="">
-                  <option value="">— (none / whole program)</option>
+                <select name="ensemble_id" defaultValue="" required>
+                  <option value="" disabled>
+                    — choose ensemble —
+                  </option>
                   {ensembles.map((e) => (
                     <option key={e.id} value={e.id}>
                       {e.name}
@@ -246,6 +262,10 @@ export default async function CompetitionsPage({
                 <input type="url" name="showchoir_com_url" />
               </label>
             </div>
+            <p className="muted">
+              Two groups performing at the same event? Create one competition per
+              ensemble.
+            </p>
             <p className="muted">
               Creating a competition seeds attendance (everyone expected) for the
               selected ensemble.

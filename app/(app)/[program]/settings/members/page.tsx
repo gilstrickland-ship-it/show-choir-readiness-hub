@@ -88,11 +88,19 @@ export default async function MembersPage({
 
       {saved && <p className="alert-ok">Saved.</p>}
       {invited && (
-        <p className="alert-ok">
-          Invite created. Share this link with the invitee:
-          <br />
-          <code className="invite-link">{inviteLink}</code>
-        </p>
+        <div className="alert-ok stack">
+          <span>
+            Invite created. Share this link with the invitee:
+            <br />
+            <code className="invite-link">{inviteLink}</code>
+          </span>
+          <span className="muted">
+            If they&apos;ve never set a password, tell them to open the link, choose
+            &ldquo;Email me a sign-in link,&rdquo; and enter{" "}
+            <strong>this exact email address</strong> — the sign-in link lets them
+            in without a password.
+          </span>
+        </div>
       )}
       {error === "last_director" && (
         <p className="alert-error">
