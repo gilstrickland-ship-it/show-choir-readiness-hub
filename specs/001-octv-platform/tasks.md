@@ -35,14 +35,14 @@
 
 ## Phase P5 — Travel + PDFs (needs P3+P4)
 
-- [ ] T016 Trips + travel groups (rooms/buses, capacity, chaperones incl. guardian refs), two-pane assignment UI with unassigned queue + capacity meters (warn, never block); one-room-one-bus trigger already in P1 schema — surface violations kindly.
-- [ ] T017 React-PDF renderers in `api/pdf/[doc]/`: bus manifest (✓ columns, chaperone line, absent annotations, med-binder checklist line), room sheet (+door-slip variant), parent packet (itinerary + groups + meals + shift roster), board snapshot. Auth-checked, streamed, brand from `lib/brand.ts`.
+- [X] T016 Trips + travel groups (rooms/buses, capacity, chaperones incl. guardian refs), two-pane assignment UI with unassigned queue + capacity meters (warn, never block); one-room-one-bus trigger already in P1 schema — surface violations kindly.
+- [X] T017 React-PDF renderers in `api/pdf/[doc]/`: bus manifest (✓ columns, chaperone line, absent annotations, med-binder checklist line), room sheet (+door-slip variant), parent packet (itinerary + groups + meals + shift roster), board snapshot. Auth-checked, streamed, brand from `lib/brand.ts`.
 
 ## Phase P6 — Treasury (needs P1; parallel with P2–P5)
 
-- [ ] T018 Budget builder (categories/lines, income/expense, template seeder), treasurer-only writes.
-- [ ] T019 Ledger: entry form (cents, receipts to Storage), void + re-enter flow, `ledger_audit` writes, running ledger view with filters, Uncategorized nudge.
-- [ ] T020 [P] Budget-vs-actual view, per-event cost report (competition/trip tags), board snapshot data feed (PDF in T017).
+- [X] T018 Budget builder (categories/lines, income/expense, template seeder), treasurer-only writes.
+- [X] T019 Ledger: entry form (cents, receipts to Storage), void + re-enter flow, `ledger_audit` writes, running ledger view with filters, Uncategorized nudge.
+- [X] T020 [P] Budget-vs-actual view, per-event cost report (competition/trip tags), board snapshot data feed (PDF in T017).
 
 ## Phase P7 — Comms + token layer (needs P2+P4)
 

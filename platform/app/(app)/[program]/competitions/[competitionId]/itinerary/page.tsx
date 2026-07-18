@@ -136,6 +136,14 @@ export default async function ItineraryPage({
           {itinerary.status === "published" && itinerary.published_at
             ? ` · published ${formatDateTimeInTz(itinerary.published_at, tz)}`
             : ""}
+          {itinerary.status === "published" && (
+            <>
+              {" · "}
+              <a href={`/api/pdf/packet?competition=${competitionId}`}>
+                Download parent packet (PDF)
+              </a>
+            </>
+          )}
         </p>
       )}
 
