@@ -63,16 +63,12 @@ function TokenFrame({
   programName?: string;
 }) {
   return (
-    <div style={{ maxWidth: "34rem", margin: "0 auto", padding: "1rem" }}>
-      <header style={{ marginBottom: "1rem" }}>
-        <strong style={{ fontSize: "1.05rem" }}>{programName ?? brand.name}</strong>
-        {programName && (
-          <div className="muted" style={{ fontSize: "0.8rem" }}>
-            {brand.name}
-          </div>
-        )}
+    <div className="token-frame">
+      <header className="token-header">
+        <strong>{programName ?? brand.name}</strong>
+        {programName && <div className="muted">{brand.name}</div>}
       </header>
-      <main style={{ padding: 0 }}>{children}</main>
+      <main>{children}</main>
     </div>
   );
 }

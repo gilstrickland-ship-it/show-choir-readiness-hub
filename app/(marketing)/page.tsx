@@ -36,6 +36,7 @@ export default function LandingPage() {
   return (
     <main className="landing">
       <section className="hero stack">
+        <p className="eyebrow">From load-in to finals</p>
         <h1>{brand.name}</h1>
         <p className="tagline">The season operating system for competitive show choir.</p>
         <p className="muted">
