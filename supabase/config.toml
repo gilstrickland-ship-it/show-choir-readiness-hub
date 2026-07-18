@@ -1,18 +1,66 @@
-# Supabase CLI configuration — Octv Platform
-# Minimal config; full local-stack tuning is added as the app harness lands.
+# Supabase CLI configuration — Octv Platform (local stack for CI e2e).
+# Standard local-development config: `supabase start` brings this stack up and
+# `supabase db reset` applies supabase/migrations/* then supabase/seed.sql.
 
 project_id = "octv-platform"
 
+[api]
+enabled = true
+port = 54321
+# Schemas exposed over the REST/GraphQL API. `public` is where the app lives.
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
 [db]
+# Postgres port for the local stack.
+port = 54322
+# Shadow DB port (used by `db diff`).
+shadow_port = 54320
 # Postgres major version used by the hosted project + local stack.
 major_version = 16
 
-[db.migrations]
-# Applied in lexical order: 0001_foundation.sql, 0002_rls.sql, ...
-schema_paths = []
+[db.pooler]
+enabled = false
+
+[db.seed]
+# Apply supabase/seed.sql on `supabase db reset` (and on a fresh `db start`).
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+# Local email testing UI (Mailpit / Inbucket depending on CLI version).
+[inbucket]
+enabled = true
+port = 54324
 
 [storage]
 enabled = true
 
 [auth]
 enabled = true
+# The app's local origin — sign-in redirects + email links resolve here.
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000", "http://localhost:3000/auth/callback"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+# Staff sign in with email + password; parents/students never have accounts.
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+# CI creates users with email_confirm=true via the admin API; keep confirmations
+# off so password sign-in never waits on a confirmation email.
+enable_confirmations = false
+secure_password_change = false
+
+[analytics]
+enabled = false
