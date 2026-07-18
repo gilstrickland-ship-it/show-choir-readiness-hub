@@ -1,0 +1,191 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getTenantContext } from "@/lib/tenant";
+import { requireFlag } from "@/lib/require-flag";
+import { createClient } from "@/lib/supabase/server";
+import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
+import { formatDateTimeInTz } from "@/lib/datetime";
+import { CompetitionTabs } from "../CompetitionTabs";
+import { uploadPacket, reparsePacket } from "./actions";
+
+// Packet tab (§5, T015). Upload a host packet (PDF/image); when the packet_parse
+// flag is on, an AI draft parse runs and lands in a review screen (draft-only,
+// Constitution IV). A failed or flag-off state degrades to the manual itinerary
+// editor with the document shown alongside (T014).
+
+interface DocRow {
+  id: string;
+  storage_path: string;
+  created_at: string;
+}
+
+interface ParseRow {
+  id: string;
+  document_id: string;
+  status: "queued" | "running" | "review" | "accepted" | "failed";
+  error: string | null;
+  created_at: string;
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  queued: "Queued",
+  running: "Running…",
+  review: "Ready to review",
+  accepted: "Accepted",
+  failed: "Failed",
+};
+
+export default async function PacketPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ program: string; competitionId: string }>;
+  searchParams: Promise<{ uploaded?: string; error?: string }>;
+}) {
+  const { program: slug, competitionId } = await params;
+  const { program, role, flags } = await getTenantContext(slug);
+  requireFlag(program, "competitions");
+  const canWrite = COMPETITION_WRITE_ROLES.includes(role);
+  const parseEnabled = flags.packet_parse;
+  const sp = await searchParams;
+
+  const supabase = await createClient();
+  const { data: compData } = await supabase
+    .from("competitions")
+    .select("id, name")
+    .eq("id", competitionId)
+    .eq("program_id", program.id)
+    .maybeSingle();
+  const comp = compData as { id: string; name: string } | null;
+  if (!comp) notFound();
+
+  const { data: docData } = await supabase
+    .from("documents")
+    .select("id, storage_path, created_at")
+    .eq("program_id", program.id)
+    .eq("competition_id", competitionId)
+    .eq("kind", "host_packet")
+    .order("created_at", { ascending: false });
+  const docs = (docData as DocRow[] | null) ?? [];
+
+  const { data: parseData } = await supabase
+    .from("packet_parses")
+    .select("id, document_id, status, error, created_at")
+    .eq("program_id", program.id)
+    .eq("competition_id", competitionId)
+    .order("created_at", { ascending: false });
+  const parses = (parseData as ParseRow[] | null) ?? [];
+  const parseByDoc = new Map<string, ParseRow>();
+  for (const p of parses) {
+    if (!parseByDoc.has(p.document_id)) parseByDoc.set(p.document_id, p);
+  }
+
+  return (
+    <section className="stack">
+      <p>
+        <Link href={`/${slug}/competitions/${competitionId}`}>← {comp.name}</Link>
+      </p>
+      <CompetitionTabs slug={slug} competitionId={competitionId} active="packet" />
+      <h1>Host packet</h1>
+
+      {sp.uploaded && (
+        <p className="alert-ok">
+          Uploaded.{" "}
+          {parseEnabled ? "Parsing started — check back for the review screen." : ""}
+        </p>
+      )}
+      {sp.error === "file" && <p className="alert-error">Choose a file to upload.</p>}
+      {sp.error === "type" && (
+        <p className="alert-error">Only PDF or image files (PNG/JPEG/WebP/GIF).</p>
+      )}
+      {sp.error === "upload" && <p className="alert-error">Upload failed. Try again.</p>}
+      {sp.error === "save" && <p className="alert-error">Couldn&apos;t record the document.</p>}
+
+      {!parseEnabled && (
+        <p className="muted">
+          AI packet parsing is off for this program. Uploaded packets show alongside
+          the{" "}
+          <Link href={`/${slug}/competitions/${competitionId}/itinerary`}>manual editor</Link>.
+        </p>
+      )}
+
+      {canWrite && (
+        <form action={uploadPacket} className="stack">
+          <input type="hidden" name="programId" value={program.id} />
+          <input type="hidden" name="slug" value={slug} />
+          <input type="hidden" name="competitionId" value={competitionId} />
+          <label>
+            Packet file (PDF or image)
+            <input type="file" name="file" accept="application/pdf,image/*" required />
+          </label>
+          <button type="submit">Upload packet</button>
+        </form>
+      )}
+
+      <h2>Uploaded packets</h2>
+      <table className="members">
+        <thead>
+          <tr>
+            <th>Uploaded</th>
+            <th>Parse status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {docs.map((d) => {
+            const p = parseByDoc.get(d.id);
+            return (
+              <tr key={d.id}>
+                <td>{formatDateTimeInTz(d.created_at, program.timezone)}</td>
+                <td>
+                  {p ? (
+                    <span className="badge">{STATUS_LABEL[p.status]}</span>
+                  ) : (
+                    <span className="muted">no parse</span>
+                  )}
+                  {p?.status === "failed" && p.error ? (
+                    <div className="muted">{p.error}</div>
+                  ) : null}
+                </td>
+                <td>
+                  {p && (p.status === "review" || p.status === "accepted") && (
+                    <Link
+                      href={`/${slug}/competitions/${competitionId}/packet/${p.id}/review`}
+                    >
+                      {p.status === "review" ? "Review draft" : "View / re-review"}
+                    </Link>
+                  )}
+                  {p && p.status === "failed" && (
+                    <>
+                      <Link href={`/${slug}/competitions/${competitionId}/itinerary`}>
+                        Enter manually
+                      </Link>
+                      {canWrite && (
+                        <form action={reparsePacket} style={{ display: "inline" }}>
+                          <input type="hidden" name="programId" value={program.id} />
+                          <input type="hidden" name="slug" value={slug} />
+                          <input type="hidden" name="competitionId" value={competitionId} />
+                          <input type="hidden" name="parseId" value={p.id} />
+                          <button type="submit" className="linklike">
+                            Try again
+                          </button>
+                        </form>
+                      )}
+                    </>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+          {docs.length === 0 && (
+            <tr>
+              <td colSpan={3} className="muted">
+                No packets uploaded yet.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </section>
+  );
+}

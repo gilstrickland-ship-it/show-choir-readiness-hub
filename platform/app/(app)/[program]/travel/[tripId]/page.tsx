@@ -1,0 +1,620 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getTenantContext } from "@/lib/tenant";
+import { requireFlag } from "@/lib/require-flag";
+import { createClient } from "@/lib/supabase/server";
+import {
+  TRAVEL_WRITE_ROLES,
+  TRAVEL_GROUP_KINDS,
+  GROUP_KIND_LABEL,
+  GROUP_KIND_LABEL_PLURAL,
+  relevantKinds,
+  type TravelGroupKind,
+} from "@/lib/travel";
+import { formatDateInTz } from "@/lib/datetime";
+import {
+  createGroup,
+  updateGroup,
+  deleteGroup,
+  assignStudent,
+  unassignStudent,
+  addChaperone,
+  removeChaperone,
+  deleteTrip,
+} from "../actions";
+
+// Two-pane assignment UI (§6, T016). LEFT: the unassigned queue — eligible
+// students (the linked competition's ensemble+season, or every active-season
+// student for a standalone trip) minus those already placed in every relevant
+// group kind, with absent students flagged when competition-linked. RIGHT: group
+// cards (rooms + buses) with per-card capacity meters (over-capacity warns, never
+// blocks). Tap a student (?sel=) → tap a group's "Assign here". The one-room-one-
+// bus trigger is caught in the action and rendered kindly here.
+
+interface TripRow {
+  id: string;
+  name: string;
+  season_id: string;
+  competition_id: string | null;
+  starts_on: string | null;
+  ends_on: string | null;
+  is_overnight: boolean;
+}
+interface GroupRow {
+  id: string;
+  kind: TravelGroupKind;
+  label: string;
+  capacity: number | null;
+  notes: string | null;
+  sort_order: number;
+}
+interface AssignmentRow {
+  id: string;
+  travel_group_id: string;
+  student_id: string;
+  student: { first_name: string; last_name: string } | null;
+}
+interface ChaperoneRow {
+  id: string;
+  travel_group_id: string;
+  guardian_id: string | null;
+  name_override: string | null;
+  guardian: { name: string } | null;
+}
+interface Student {
+  id: string;
+  first_name: string;
+  last_name: string;
+}
+interface GuardianRow {
+  id: string;
+  name: string;
+  student: { last_name: string } | null;
+}
+
+function studentName(s: { first_name: string; last_name: string }): string {
+  return `${s.last_name}, ${s.first_name}`;
+}
+
+export default async function TripPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ program: string; tripId: string }>;
+  searchParams: Promise<{
+    sel?: string;
+    conflict?: string;
+    conflictKind?: string;
+    error?: string;
+  }>;
+}) {
+  const { program: slug, tripId } = await params;
+  const { program, role } = await getTenantContext(slug);
+  requireFlag(program, "travel");
+  const canWrite = TRAVEL_WRITE_ROLES.includes(role);
+  const tz = program.timezone;
+  const sp = await searchParams;
+
+  const supabase = await createClient();
+
+  const { data: tripData } = await supabase
+    .from("trips")
+    .select("id, name, season_id, competition_id, starts_on, ends_on, is_overnight")
+    .eq("id", tripId)
+    .eq("program_id", program.id)
+    .maybeSingle();
+  const trip = tripData as TripRow | null;
+  if (!trip) notFound();
+
+  // Linked competition name (if any).
+  let compName: string | null = null;
+  let compEnsembleId: string | null = null;
+  if (trip.competition_id) {
+    const { data: c } = await supabase
+      .from("competitions")
+      .select("name, ensemble_id")
+      .eq("id", trip.competition_id)
+      .maybeSingle();
+    compName = (c as { name: string } | null)?.name ?? null;
+    compEnsembleId = (c as { ensemble_id: string | null } | null)?.ensemble_id ?? null;
+  }
+
+  // Groups for this trip.
+  const { data: groupData } = await supabase
+    .from("travel_groups")
+    .select("id, kind, label, capacity, notes, sort_order")
+    .eq("program_id", program.id)
+    .eq("trip_id", tripId)
+    .order("kind", { ascending: true })
+    .order("sort_order", { ascending: true })
+    .order("label", { ascending: true });
+  const groups = (groupData as GroupRow[] | null) ?? [];
+  const groupIds = groups.map((g) => g.id);
+
+  // Assignments + chaperones across the trip's groups.
+  let assignments: AssignmentRow[] = [];
+  let chaperones: ChaperoneRow[] = [];
+  if (groupIds.length > 0) {
+    const { data: aData } = await supabase
+      .from("travel_assignments")
+      .select("id, travel_group_id, student_id, student:students(first_name, last_name)")
+      .eq("program_id", program.id)
+      .in("travel_group_id", groupIds);
+    assignments = (aData as AssignmentRow[] | null) ?? [];
+
+    const { data: cData } = await supabase
+      .from("travel_chaperones")
+      .select("id, travel_group_id, guardian_id, name_override, guardian:guardians(name)")
+      .eq("program_id", program.id)
+      .in("travel_group_id", groupIds);
+    chaperones = (cData as ChaperoneRow[] | null) ?? [];
+  }
+
+  // Eligible students (§6): competition-linked ⇒ that ensemble's members; else
+  // every student who is an ensemble member this season (Constitution VI — read
+  // through ensemble_members, never students directly).
+  let eligible: Student[] = [];
+  {
+    let q = supabase
+      .from("ensemble_members")
+      .select("students(id, first_name, last_name)")
+      .eq("program_id", program.id)
+      .eq("season_id", trip.season_id);
+    if (trip.competition_id && compEnsembleId) q = q.eq("ensemble_id", compEnsembleId);
+    const { data: memberData } = await q;
+    const byId = new Map<string, Student>();
+    for (const m of (memberData as { students: Student | null }[] | null) ?? []) {
+      if (m.students) byId.set(m.students.id, m.students);
+    }
+    eligible = [...byId.values()].sort((a, b) =>
+      studentName(a).localeCompare(studentName(b)),
+    );
+  }
+  const studentById = new Map(eligible.map((s) => [s.id, s]));
+
+  // Absent students (only meaningful when competition-linked).
+  const absent = new Set<string>();
+  if (trip.competition_id) {
+    const { data: attData } = await supabase
+      .from("attendance")
+      .select("student_id")
+      .eq("program_id", program.id)
+      .eq("competition_id", trip.competition_id)
+      .eq("status", "absent");
+    for (const a of (attData as { student_id: string }[] | null) ?? []) {
+      absent.add(a.student_id);
+    }
+  }
+
+  // Guardians for the chaperone picker (name + student surname for context).
+  const { data: gData } = await supabase
+    .from("guardians")
+    .select("id, name, student:students(last_name)")
+    .eq("program_id", program.id)
+    .order("name", { ascending: true });
+  const guardians = (gData as GuardianRow[] | null) ?? [];
+  const guardianName = new Map(guardians.map((g) => [g.id, g.name]));
+
+  // Derived maps.
+  const assignmentsByGroup = new Map<string, AssignmentRow[]>();
+  const studentKinds = new Map<string, Set<TravelGroupKind>>();
+  const kindByGroup = new Map(groups.map((g) => [g.id, g.kind]));
+  for (const a of assignments) {
+    const list = assignmentsByGroup.get(a.travel_group_id) ?? [];
+    list.push(a);
+    assignmentsByGroup.set(a.travel_group_id, list);
+    const k = kindByGroup.get(a.travel_group_id);
+    if (k) {
+      const set = studentKinds.get(a.student_id) ?? new Set<TravelGroupKind>();
+      set.add(k);
+      studentKinds.set(a.student_id, set);
+    }
+  }
+  const chaperonesByGroup = new Map<string, ChaperoneRow[]>();
+  for (const c of chaperones) {
+    const list = chaperonesByGroup.get(c.travel_group_id) ?? [];
+    list.push(c);
+    chaperonesByGroup.set(c.travel_group_id, list);
+  }
+
+  const needed = relevantKinds(trip.is_overnight);
+  const neededOf = (studentId: string): TravelGroupKind[] => {
+    const has = studentKinds.get(studentId) ?? new Set();
+    return needed.filter((k) => !has.has(k));
+  };
+
+  // Queue: eligible students still missing a relevant kind, sorted by name.
+  const queue = eligible.filter((s) => neededOf(s.id).length > 0);
+
+  const selId = sp.sel && studentById.has(sp.sel) ? sp.sel : null;
+  const selStudent = selId ? studentById.get(selId)! : null;
+  const selNeeds = selId ? neededOf(selId) : [];
+
+  // Kinds/sections to render: buses always (writers can add); rooms when overnight
+  // or any room group already exists.
+  const kindsToShow: TravelGroupKind[] = TRAVEL_GROUP_KINDS.filter((k) => {
+    if (k === "bus") return true;
+    return trip.is_overnight || groups.some((g) => g.kind === "room");
+  });
+
+  // Friendly one-room-one-bus conflict message (§6).
+  let conflictMsg: string | null = null;
+  if (sp.conflict && sp.conflictKind) {
+    const s = studentById.get(sp.conflict);
+    const kind = sp.conflictKind as TravelGroupKind;
+    const existing = groups.find(
+      (g) =>
+        g.kind === kind &&
+        (assignmentsByGroup.get(g.id) ?? []).some((a) => a.student_id === sp.conflict),
+    );
+    const who = s ? s.first_name : "That student";
+    conflictMsg = existing
+      ? `${who} is already in ${existing.label} — remove them there first.`
+      : `${who} is already assigned to a ${GROUP_KIND_LABEL[kind].toLowerCase()} on this trip.`;
+  }
+
+  const roomsExist = groups.some((g) => g.kind === "room");
+
+  return (
+    <section className="stack">
+      <p>
+        <Link href={`/${slug}/travel`}>← Travel</Link>
+      </p>
+      <h1>{trip.name}</h1>
+      <p className="muted">
+        {trip.starts_on ? formatDateInTz(`${trip.starts_on}T12:00:00Z`, tz) : "No dates"}
+        {trip.ends_on && trip.ends_on !== trip.starts_on
+          ? ` – ${formatDateInTz(`${trip.ends_on}T12:00:00Z`, tz)}`
+          : ""}
+        {" · "}
+        <span className="badge">{trip.is_overnight ? "Overnight" : "Day"}</span>
+        {trip.competition_id && compName ? (
+          <>
+            {" · "}
+            <Link href={`/${slug}/competitions/${trip.competition_id}`}>{compName}</Link>
+          </>
+        ) : null}
+      </p>
+
+      {/* Derived-document downloads (§6, VI) */}
+      <p className="row-inline">
+        <a href={`/api/pdf/bus?trip=${trip.id}`} target="_blank" rel="noopener">
+          Download bus manifest (PDF)
+        </a>
+        {(trip.is_overnight || roomsExist) && (
+          <a href={`/api/pdf/rooms?trip=${trip.id}`} target="_blank" rel="noopener">
+            Download room sheets (PDF)
+          </a>
+        )}
+      </p>
+
+      {conflictMsg && <p className="alert-error">{conflictMsg}</p>}
+      {sp.error === "assign" && (
+        <p className="alert-error">Couldn&apos;t place that student. Try again.</p>
+      )}
+      {sp.error === "group" && (
+        <p className="alert-error">A group needs a kind and a label.</p>
+      )}
+      {sp.error === "chaperone" && (
+        <p className="alert-error">Pick a guardian or type a name for the chaperone.</p>
+      )}
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", width: "100%" }}>
+        {/* ==================== LEFT: unassigned queue ==================== */}
+        <div className="stack" style={{ flex: "1 1 16rem", minWidth: "14rem" }}>
+          <h2>Unassigned · {queue.length}</h2>
+          {eligible.length === 0 && (
+            <p className="muted">
+              No eligible students. {trip.competition_id
+                ? "Add ensemble members for the linked competition's ensemble this season."
+                : "Add ensemble members for this season."}
+            </p>
+          )}
+          {eligible.length > 0 && queue.length === 0 && (
+            <p className="alert-ok">Everyone eligible is placed.</p>
+          )}
+
+          <ul className="stack" style={{ listStyle: "none", padding: 0 }}>
+            {queue.map((s) => {
+              const isAbsent = absent.has(s.id);
+              const isSel = s.id === selId;
+              const needs = neededOf(s.id);
+              return (
+                <li
+                  key={s.id}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.25rem",
+                    padding: "0.5rem",
+                    borderBottom: "1px solid var(--border)",
+                    background: isSel ? "var(--border)" : undefined,
+                    borderRadius: isSel ? 6 : undefined,
+                    opacity: isAbsent ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{ fontWeight: 600 }}>
+                    {studentName(s)}
+                    {isAbsent && <span className="chip danger"> absent</span>}
+                  </div>
+                  <div className="row-inline" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                    {needs.map((k) => (
+                      <span key={k} className="chip">
+                        needs {GROUP_KIND_LABEL[k].toLowerCase()}
+                      </span>
+                    ))}
+                  </div>
+                  {canWrite &&
+                    (isSel ? (
+                      <div className="row-inline">
+                        <strong>Selected — choose a group →</strong>
+                        <Link href={`/${slug}/travel/${tripId}`} className="linklike">
+                          Cancel
+                        </Link>
+                      </div>
+                    ) : (
+                      <Link href={`/${slug}/travel/${tripId}?sel=${s.id}`} className="linklike">
+                        Select to place
+                      </Link>
+                    ))}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        {/* ==================== RIGHT: group cards ==================== */}
+        <div className="stack" style={{ flex: "3 1 26rem", minWidth: "18rem" }}>
+          {kindsToShow.map((kind) => {
+            const kindGroups = groups.filter((g) => g.kind === kind);
+            return (
+              <div key={kind} className="stack">
+                <h2>{GROUP_KIND_LABEL_PLURAL[kind]}</h2>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "1rem",
+                    width: "100%",
+                  }}
+                >
+                  {kindGroups.map((g) => {
+                    const members = (assignmentsByGroup.get(g.id) ?? []).sort((a, b) =>
+                      studentName(a.student ?? { first_name: "", last_name: "" }).localeCompare(
+                        studentName(b.student ?? { first_name: "", last_name: "" }),
+                      ),
+                    );
+                    const count = members.length;
+                    const over = g.capacity != null && count > g.capacity;
+                    const groupChaps = chaperonesByGroup.get(g.id) ?? [];
+                    const selAlreadyHere = selId
+                      ? (studentKinds.get(selId)?.has(kind) ?? false)
+                      : false;
+                    const canAssignHere = selStudent != null && selNeeds.includes(kind);
+                    return (
+                      <div
+                        key={g.id}
+                        className="stack"
+                        style={{
+                          flex: "1 1 15rem",
+                          minWidth: "13rem",
+                          border: `1px solid ${over ? "#d97706" : "var(--border)"}`,
+                          background: over ? "rgba(217,119,6,0.08)" : undefined,
+                          borderRadius: 8,
+                          padding: "0.75rem",
+                        }}
+                      >
+                        <div className="row-inline" style={{ justifyContent: "space-between" }}>
+                          <strong>{g.label}</strong>
+                          <span className={over ? "chip danger" : "chip"}>
+                            {count}
+                            {g.capacity != null ? ` / ${g.capacity}` : ""}
+                            {over ? " over" : ""}
+                          </span>
+                        </div>
+                        {g.notes && <p className="muted">{g.notes}</p>}
+
+                        {/* Members */}
+                        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                          {members.map((a) => (
+                            <li
+                              key={a.id}
+                              className="row-inline"
+                              style={{ justifyContent: "space-between", gap: "0.5rem" }}
+                            >
+                              <span style={{ opacity: absent.has(a.student_id) ? 0.6 : 1 }}>
+                                {a.student ? studentName(a.student) : "?"}
+                                {absent.has(a.student_id) && (
+                                  <span className="chip danger"> absent</span>
+                                )}
+                              </span>
+                              {canWrite && (
+                                <form action={unassignStudent}>
+                                  <input type="hidden" name="programId" value={program.id} />
+                                  <input type="hidden" name="slug" value={slug} />
+                                  <input type="hidden" name="tripId" value={tripId} />
+                                  <input type="hidden" name="assignmentId" value={a.id} />
+                                  <button type="submit" className="linklike danger">
+                                    remove
+                                  </button>
+                                </form>
+                              )}
+                            </li>
+                          ))}
+                          {members.length === 0 && (
+                            <li className="muted">Empty</li>
+                          )}
+                        </ul>
+
+                        {/* Assign selected student here */}
+                        {canWrite && selStudent && (
+                          canAssignHere ? (
+                            <form action={assignStudent}>
+                              <input type="hidden" name="programId" value={program.id} />
+                              <input type="hidden" name="slug" value={slug} />
+                              <input type="hidden" name="tripId" value={tripId} />
+                              <input type="hidden" name="travelGroupId" value={g.id} />
+                              <input type="hidden" name="studentId" value={selStudent.id} />
+                              <input type="hidden" name="kind" value={kind} />
+                              <button type="submit" className="secondary">
+                                Assign {selStudent.first_name} here
+                              </button>
+                            </form>
+                          ) : selAlreadyHere ? (
+                            <p className="muted">
+                              {selStudent.first_name} already has a {GROUP_KIND_LABEL[kind].toLowerCase()}.
+                            </p>
+                          ) : null
+                        )}
+
+                        {/* Chaperones */}
+                        <div className="stack" style={{ gap: "0.35rem" }}>
+                          <span className="muted">Chaperones</span>
+                          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                            {groupChaps.map((c) => (
+                              <li
+                                key={c.id}
+                                className="row-inline"
+                                style={{ justifyContent: "space-between", gap: "0.5rem" }}
+                              >
+                                <span>
+                                  {c.guardian_id
+                                    ? guardianName.get(c.guardian_id) ?? c.guardian?.name ?? "?"
+                                    : c.name_override ?? "?"}
+                                </span>
+                                {canWrite && (
+                                  <form action={removeChaperone}>
+                                    <input type="hidden" name="programId" value={program.id} />
+                                    <input type="hidden" name="slug" value={slug} />
+                                    <input type="hidden" name="tripId" value={tripId} />
+                                    <input type="hidden" name="chaperoneId" value={c.id} />
+                                    <button type="submit" className="linklike danger">
+                                      remove
+                                    </button>
+                                  </form>
+                                )}
+                              </li>
+                            ))}
+                            {groupChaps.length === 0 && <li className="muted">None yet</li>}
+                          </ul>
+                          {canWrite && (
+                            <form action={addChaperone} className="stack" style={{ gap: "0.35rem" }}>
+                              <input type="hidden" name="programId" value={program.id} />
+                              <input type="hidden" name="slug" value={slug} />
+                              <input type="hidden" name="tripId" value={tripId} />
+                              <input type="hidden" name="travelGroupId" value={g.id} />
+                              <select name="guardian_id" defaultValue="">
+                                <option value="">— parent (guardian)…</option>
+                                {guardians.map((gd) => (
+                                  <option key={gd.id} value={gd.id}>
+                                    {gd.name}
+                                    {gd.student?.last_name ? ` (${gd.student.last_name})` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="text"
+                                name="name_override"
+                                placeholder="…or type a one-off helper's name"
+                              />
+                              <button type="submit" className="secondary">
+                                Add chaperone
+                              </button>
+                            </form>
+                          )}
+                        </div>
+
+                        {/* Edit / delete group */}
+                        {canWrite && (
+                          <details>
+                            <summary className="muted">Edit {GROUP_KIND_LABEL[kind].toLowerCase()}</summary>
+                            <form action={updateGroup} className="stack" style={{ gap: "0.35rem", marginTop: "0.5rem" }}>
+                              <input type="hidden" name="programId" value={program.id} />
+                              <input type="hidden" name="slug" value={slug} />
+                              <input type="hidden" name="tripId" value={tripId} />
+                              <input type="hidden" name="groupId" value={g.id} />
+                              <label>
+                                Label
+                                <input type="text" name="label" defaultValue={g.label} required />
+                              </label>
+                              <label>
+                                Capacity
+                                <input type="number" name="capacity" className="num" defaultValue={g.capacity ?? ""} min={0} />
+                              </label>
+                              <label>
+                                Sort
+                                <input type="number" name="sort_order" className="num" defaultValue={g.sort_order} />
+                              </label>
+                              <label>
+                                Notes
+                                <input type="text" name="notes" defaultValue={g.notes ?? ""} />
+                              </label>
+                              <button type="submit" className="secondary">Save</button>
+                            </form>
+                            <form action={deleteGroup} style={{ marginTop: "0.5rem" }}>
+                              <input type="hidden" name="programId" value={program.id} />
+                              <input type="hidden" name="slug" value={slug} />
+                              <input type="hidden" name="tripId" value={tripId} />
+                              <input type="hidden" name="groupId" value={g.id} />
+                              <button type="submit" className="linklike danger">
+                                Delete this {GROUP_KIND_LABEL[kind].toLowerCase()} (and its assignments)
+                              </button>
+                            </form>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {kindGroups.length === 0 && (
+                    <p className="muted">No {GROUP_KIND_LABEL_PLURAL[kind].toLowerCase()} yet.</p>
+                  )}
+                </div>
+
+                {/* Add a group of this kind */}
+                {canWrite && (
+                  <form action={createGroup} className="row-inline">
+                    <input type="hidden" name="programId" value={program.id} />
+                    <input type="hidden" name="slug" value={slug} />
+                    <input type="hidden" name="tripId" value={tripId} />
+                    <input type="hidden" name="kind" value={kind} />
+                    <label>
+                      Add {GROUP_KIND_LABEL[kind].toLowerCase()}
+                      <input
+                        type="text"
+                        name="label"
+                        required
+                        placeholder={kind === "room" ? "Room 214" : "Bus 1"}
+                      />
+                    </label>
+                    <label>
+                      Capacity
+                      <input type="number" name="capacity" className="num" min={0} />
+                    </label>
+                    <button type="submit" className="secondary">
+                      Add
+                    </button>
+                  </form>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Danger zone — delete trip */}
+      {canWrite && (
+        <details>
+          <summary className="muted">Delete trip</summary>
+          <form action={deleteTrip} style={{ marginTop: "0.5rem" }}>
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="tripId" value={tripId} />
+            <button type="submit" className="linklike danger">
+              Delete this trip and all its groups, assignments, and chaperones
+            </button>
+          </form>
+        </details>
+      )}
+    </section>
+  );
+}

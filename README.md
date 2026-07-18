@@ -1,188 +1,59 @@
-# Show Choir Readiness Hub
+# Season OS for Competitive Show Choir
 
-Show Choir Readiness Hub is a mobile-first product concept for high school show choir students.
+The operational backbone for a school's competitive show choir program — director + booster side. Tracks money, never moves it. AI strictly backstage. Parents never need accounts.
 
-It is designed to solve one specific problem:
+> The product is currently under the working codename "Octv"; all branding is env-driven via `platform/lib/brand.ts` (renaming is a one-file change plus DNS).
 
-**students struggle to stay rehearsal- and competition-ready because instructions, practice materials, and next steps are scattered across informal channels.**
+## What's in this repo
 
-The product turns that fragmented workflow into a simple, structured readiness experience so a student can quickly answer:
+| Path | Contents |
+|---|---|
+| `platform/` | The application: Next.js App Router + Supabase (Postgres/Auth/Storage with per-program RLS), Inngest jobs, Resend email, React-PDF documents, Claude API (packet parse + digest drafts, always draft-only) |
+| `specs/001-octv-platform/` | Spec Kit artifacts: architecture spec (authoritative), feature spec, plan, data model, and the 41-task build log |
+| `.specify/memory/constitution.md` | The project constitution — ten governing principles, three non-negotiable |
+| `docs/research/` | Original problem discovery, evidence matrix, MVP spec, and UX research that preceded the platform |
+| `.github/workflows/platform-ci.yml` | CI: typecheck, build, and the RLS test suite against Postgres 16 on every platform change |
 
-**What changed? What do I need to practice? What do I need to bring? What happens next?**
+An earlier front-end prototype (Vite/React) lived at the repo root; it was retired in favor of `platform/` and remains available in git history.
 
-## Why This Exists
+## Quick start
 
-Public-source research in this repo points to the same recurring pattern:
+```bash
+cd platform
+npm install
+cp .env.example .env.local   # fill in Supabase URL + keys
+# Apply supabase/migrations/*.sql to your Supabase project (supabase db push
+# or the SQL editor), optionally load supabase/seed.sql for demo data
+npm run dev
+```
 
-- students do not always know what to expect at competitions,
-- practice materials are split across tracks, videos, handbooks, chats, and verbal reminders,
-- catch-up after missing rehearsal is messy,
-- and the result is confusion, stress, and preventable lost time.
+Optional integrations (everything degrades gracefully without them):
 
-The goal is not to build a generic school coordination app.
+- `ANTHROPIC_API_KEY` — host-packet parsing and weekly digest drafts
+- `RESEND_API_KEY` — announcement/digest email delivery + bounce webhooks
+- `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` — background jobs (inline fallbacks run without them)
+- `SENTRY_DSN` — error reporting (no-op when absent)
 
-The goal is to build a focused readiness tool for show choir students first, then decide later whether the pattern extends into a broader platform.
+## Tests
 
-## Product Direction
+```bash
+cd platform
+npm run typecheck
+npm run test:unit   # pure-function suites (import parsing, money, tz, tokens, flags…)
+npm run test:rls    # 169 tests: tenant isolation on every table, role gates,
+                    # archived-season freeze, ledger void-only, token surfaces —
+                    # provisions a throwaway Postgres (or uses DATABASE_URL)
+npm run build
+```
 
-The first version is a **student readiness hub**, not a social app.
+The RLS suite is CI-blocking: a cross-program data leak is the existential bug for this product, so isolation tests enumerate every `program_id` table at runtime — new tables can't dodge coverage.
 
-Core MVP surfaces:
+## Deployment
 
-- `Home / Next Up`
-- `Practice Queue`
-- `Change Digest`
-- `Competition Guide`
-- `Parent Read-Only View`
+- **Vercel**: set the project's Root Directory to `platform/`. No root-level config is needed.
+- **Supabase**: apply migrations in order (`0001`–`0005`); storage buckets and RLS policies are created by the migrations.
+- **Email**: verify the sending domain in Resend and point the bounce + inbound webhooks at `/api/webhooks/resend` and `/api/webhooks/resend-inbound`.
 
-The product should help a student feel:
+## Development workflow
 
-- caught up,
-- prepared,
-- less anxious,
-- and clear on what to do next.
-
-## Users
-
-### Student
-
-Primary user.
-
-Needs to know:
-
-- what changed,
-- what to practice next,
-- what to bring,
-- and whether they are ready for the next event.
-
-### Director / Captain
-
-Content owner.
-
-Needs to:
-
-- publish updates,
-- attach resources,
-- create tasks,
-- and reduce repeated reminders.
-
-### Parent
-
-Secondary read-only user.
-
-Needs:
-
-- event timing,
-- logistics,
-- packing visibility,
-- and major updates that affect their student.
-
-## Monetization Direction
-
-The most likely early business model is a **team subscription**:
-
-- students use the app,
-- parents get read-only visibility,
-- directors/captains manage the shared content,
-- and the team/program/booster pays.
-
-Likely pricing shape:
-
-- free or pilot usage for initial validation,
-- then a seasonal team subscription for active programs.
-
-## Repository Contents
-
-- [show-choir-problem-discovery.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/show-choir-problem-discovery.md): public-source research summary and recommended problem statement
-- [source-log.csv](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/source-log.csv): source log of public posts and references used in the research pass
-- [evidence-matrix.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/evidence-matrix.md): category scoring and weighted ranking of candidate problem areas
-- [problem-briefs.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/problem-briefs.md): top 3 problem briefs
-- [mvp-spec.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/mvp-spec.md): current MVP product spec, including the parent read-only role
-- [ux-semantics-audit.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/ux-semantics-audit.md): executive summary and prioritized semantics/heuristic UX findings
-- [ux-audit-matrix.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/ux-audit-matrix.md): screen-by-screen audit findings and recommended replacements
-- [control-type-corrections.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/control-type-corrections.md): form-control corrections and type-model follow-up
-- [vocabulary-dictionary.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/vocabulary-dictionary.md): approved UI vocabulary for future implementation
-
-## Current Product Thesis
-
-The strongest current product thesis is:
-
-**Build a simple, student-first app that gives one reliable place for readiness: next event, top tasks, major changes, and competition clarity.**
-
-That means the product should avoid becoming:
-
-- a generic social network,
-- a bloated school admin suite,
-- or a catch-all collaboration platform too early.
-
-## Suggested Next Build Steps
-
-1. Turn the MVP spec into screen-by-screen wireframes.
-2. Define the technical architecture (frontend, backend, auth, schema, API).
-3. Build a prototype for one team and validate repeated usage during a live competition cycle.
-
-## Current Build
-
-This repo now contains a working front-end prototype built with:
-
-- Vite
-- React
-- TypeScript
-
-The prototype includes:
-
-- student, parent, and leader experiences
-- simplified prototype sign-in and role selection
-- a multi-choir program model
-- leader dashboard management
-- leader publish flow
-- leader branding/settings controls
-- persistent local state in browser storage
-- Playwright smoke coverage for desktop and mobile click-through flows
-
-## Routes
-
-Primary routes:
-
-- `/student/home`
-- `/student/queue`
-- `/student/updates`
-- `/student/guide`
-- `/parent/home`
-- `/parent/updates`
-- `/parent/guide`
-- `/leader/dashboard`
-- `/leader/publish`
-- `/leader/settings`
-
-## Local Development
-
-- install dependencies: `npm install`
-- run locally: `npm run dev`
-- production build: `npm run build`
-- smoke tests: `npm run test:smoke`
-- smoke tests (headed): `npm run test:smoke:headed`
-
-## Prototype Access
-
-The prototype intentionally skips real auth.
-
-Flow:
-
-1. Continue past the sign-in screen with any text or a blank field.
-2. On the join screen, tap one of the built-in role options:
-   - `Student`
-   - `Parent`
-   - `Leader`
-
-## Live Prototype
-
-Production is currently deployed at:
-
-- [show-choir-readiness-hub.vercel.app](https://show-choir-readiness-hub.vercel.app)
-
-## Handoff For AI Coding Tools
-
-For tool-friendly project context, current architecture, routes, and implementation notes, use:
-
-- [AGENTS.md](/Users/gil/Documents/codex%20projects/show%20choir%20kids%20/AGENTS.md)
+This repo uses Spec Kit (spec-driven development): constitution → spec → plan → tasks → implement → converge. Planning artifacts live in `specs/`; every implementation task traces to a task ID in `specs/001-octv-platform/tasks.md`. See `AGENTS.md` for AI-tool handoff notes.
