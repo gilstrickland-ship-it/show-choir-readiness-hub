@@ -10,6 +10,10 @@ const displayFont = Big_Shoulders({
   subsets: ["latin"],
   variable: "--font-display",
   axes: ["opsz"],
+  // next/font has no fallback metrics for this family yet; skip the
+  // automatic size-adjust and provide the fallback stack ourselves.
+  adjustFontFallback: false,
+  fallback: ["Arial Narrow", "Impact", "sans-serif"],
 });
 
 const uiFont = Instrument_Sans({
