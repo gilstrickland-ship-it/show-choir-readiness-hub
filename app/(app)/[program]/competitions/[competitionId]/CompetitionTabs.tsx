@@ -21,7 +21,7 @@ export function CompetitionTabs({
   const base = `/${slug}/competitions/${competitionId}`;
   const tab = (key: CompetitionTab, href: string, label: string) =>
     active === key ? (
-      <strong key={key}>{label}</strong>
+      <strong key={key} aria-current="page">{label}</strong>
     ) : (
       <Link key={key} href={href}>
         {label}

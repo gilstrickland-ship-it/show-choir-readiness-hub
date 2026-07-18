@@ -17,7 +17,7 @@ export function RosterTabs({
 }) {
   const tab = (key: RosterTab, href: string, label: string) =>
     active === key ? (
-      <strong key={key}>{label}</strong>
+      <strong key={key} aria-current="page">{label}</strong>
     ) : (
       <Link key={key} href={href}>
         {label}

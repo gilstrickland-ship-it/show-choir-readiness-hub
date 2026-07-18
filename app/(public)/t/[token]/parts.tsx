@@ -13,17 +13,7 @@ export function TokenFooter({
 }) {
   const base = `/t/${token}`;
   return (
-    <footer
-      style={{
-        marginTop: "2rem",
-        paddingTop: "1rem",
-        borderTop: "1px solid var(--border)",
-        display: "flex",
-        flexWrap: "wrap",
-        gap: "1rem",
-        fontSize: "0.9rem",
-      }}
-    >
+    <footer className="token-footer">
       <Link href={`${base}/itinerary`}>Itinerary</Link>
       <Link href={`${base}/signup`}>Volunteer signup</Link>
       {kind === "guardian" && <Link href={`${base}/absence`}>Report an absence</Link>}

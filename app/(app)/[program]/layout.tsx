@@ -3,6 +3,7 @@ import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
 import { NAV, isNavItemVisible } from "@/lib/nav";
 import { signOut } from "@/app/auth/actions";
+import { ShellNav } from "./ShellNav";
 
 // Tenant shell (server layout). Resolves program + active membership + role +
 // active season and evaluates flags once via getTenantContext() (cached — pages
@@ -57,13 +58,10 @@ export default async function ProgramLayout({
           </form>
         </div>
       </header>
-      <nav className="shell-nav" aria-label="Program navigation">
-        {items.map((item) => (
-          <Link key={item.slot} href={`/${slug}/${item.slot}`}>
-            {item.label}
-          </Link>
-        ))}
-      </nav>
+      <ShellNav
+        slug={slug}
+        items={items.map(({ slot, label }) => ({ slot, label }))}
+      />
       <main>{children}</main>
     </div>
   );
