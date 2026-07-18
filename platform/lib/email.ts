@@ -12,7 +12,7 @@ export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
 }
 
-// The From header, e.g. "Boosters <no-reply@octv.example>". Address from
+// The From header, e.g. "Boosters <no-reply@example.org>". Address from
 // BRAND_EMAIL_FROM_ADDRESS or derived from the brand domain; name from brand.
 export function emailFrom(): string {
   const address =

@@ -221,11 +221,11 @@ export async function attachPacket(formData: FormData): Promise<void> {
   // Parse only when the flag is on (Constitution VIII, server-side gate).
   const { data: prog } = await supabase
     .from("programs")
-    .select("feature_overrides")
+    .select("tier, feature_overrides")
     .eq("id", programId)
     .maybeSingle();
   const parseOn = flag(
-    (prog as FlaggableProgram | null) ?? { feature_overrides: null },
+    (prog as FlaggableProgram | null) ?? { tier: "prep", feature_overrides: null },
     "packet_parse",
   );
 

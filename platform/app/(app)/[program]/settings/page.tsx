@@ -2,13 +2,21 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
+import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { formatDateTimeInTz } from "@/lib/datetime";
-import { supportAccessActive, SUPPORT_ACCESS_DAYS } from "@/lib/support";
+import {
+  supportAccessActive,
+  SUPPORT_ACCESS_DAYS,
+  recentSupportViews,
+} from "@/lib/support";
+import { activeShareLinks } from "@/lib/tokens";
+import { formatDateOnly } from "@/lib/treasury";
 import {
   updateProgram,
   grantSupportAccess,
   revokeSupportAccess,
+  revokeShareLinkAction,
 } from "./actions";
 
 // Program settings (director/admin only). Timezone is IANA (Constitution VII) —
@@ -39,6 +47,43 @@ export default async function SettingsPage({
 
   const isDirector = role === "director";
   const supportOn = supportAccessActive(program.support_access_until);
+
+  // Recent support views (T035) — the transparency panel. Scoped to this program
+  // by the support_access_log_read RLS policy (director/admin/board).
+  const supabase = await createClient();
+  const supportViews = await recentSupportViews(supabase, program.id, 10);
+
+  // Active broadcast share links (FR-002 / §8a). Resolve friendly labels:
+  // itinerary → competition name, signup_page → season label.
+  const shareLinks = await activeShareLinks(supabase, program.id);
+  const linkLabels = new Map<string, string>();
+  if (shareLinks.length > 0) {
+    const compIds = shareLinks.filter((l) => l.resource === "itinerary").map((l) => l.resource_id);
+    const seasonIds = shareLinks.filter((l) => l.resource === "signup_page").map((l) => l.resource_id);
+    if (compIds.length > 0) {
+      const { data } = await supabase
+        .from("competitions")
+        .select("id, name")
+        .eq("program_id", program.id)
+        .in("id", compIds);
+      for (const c of (data as { id: string; name: string }[] | null) ?? [])
+        linkLabels.set(c.id, c.name);
+    }
+    if (seasonIds.length > 0) {
+      const { data } = await supabase
+        .from("seasons")
+        .select("id, label")
+        .eq("program_id", program.id)
+        .in("id", seasonIds);
+      for (const s of (data as { id: string; label: string }[] | null) ?? [])
+        linkLabels.set(s.id, s.label);
+    }
+  }
+  const RESOURCE_LABEL: Record<string, string> = {
+    itinerary: "Itinerary",
+    signup_page: "Volunteer signup",
+    packet: "Parent packet",
+  };
 
   return (
     <section className="stack">
@@ -145,6 +190,81 @@ export default async function SettingsPage({
           <p className="muted">
             Support access is off. Only the director can grant it.
           </p>
+        )}
+
+        {/* Recent support views (T035) — the durable audit trail, for you. */}
+        <h3>Recent support views</h3>
+        {supportViews.length === 0 ? (
+          <p className="muted">
+            No support views recorded. This list fills in only when {brand.name}{" "}
+            support opens your program under an active consent window.
+          </p>
+        ) : (
+          <table className="members">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Path</th>
+              </tr>
+            </thead>
+            <tbody>
+              {supportViews.map((v, i) => (
+                <tr key={i}>
+                  <td>{formatDateTimeInTz(v.at, program.timezone)}</td>
+                  <td className="muted">{v.path ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Share links (FR-002 / §8a) — active broadcast links + revoke. */}
+      <div className="confirm-box stack" style={{ width: "100%" }}>
+        <h2>Share links</h2>
+        <p className="muted">
+          Read-only broadcast links you have handed out (an itinerary, a season&apos;s
+          volunteer signup). For privacy the URL itself is shown only once when a
+          link is created — mint or regenerate links from the itinerary and shifts
+          pages. Revoke a link here to make its URL stop working immediately.
+        </p>
+        {shareLinks.length === 0 ? (
+          <p className="muted">No active share links.</p>
+        ) : (
+          <table className="members">
+            <thead>
+              <tr>
+                <th>Link</th>
+                <th>Created</th>
+                <th>Expires</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {shareLinks.map((l) => (
+                <tr key={l.id}>
+                  <td>
+                    {RESOURCE_LABEL[l.resource] ?? l.resource}
+                    {linkLabels.get(l.resource_id) ? (
+                      <span className="muted"> · {linkLabels.get(l.resource_id)}</span>
+                    ) : null}
+                  </td>
+                  <td className="muted">{formatDateOnly(l.created_at)}</td>
+                  <td className="muted">{l.expires_at ? formatDateOnly(l.expires_at) : "Never"}</td>
+                  <td>
+                    <form action={revokeShareLinkAction}>
+                      <input type="hidden" name="programId" value={program.id} />
+                      <input type="hidden" name="slug" value={slug} />
+                      <input type="hidden" name="shareLinkId" value={l.id} />
+                      <button type="submit" className="linklike danger">
+                        Revoke
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </section>

@@ -41,6 +41,7 @@ export default async function CommsPage({
   searchParams: Promise<{
     error?: string;
     done?: string;
+    queued?: string;
     sent?: string;
     skipped?: string;
     failed?: string;
@@ -144,7 +145,12 @@ export default async function CommsPage({
         </p>
       )}
 
-      {sp.done && (
+      {sp.done && sp.queued && (
+        <p className="alert-ok">
+          Announcement recorded — emails are sending in the background.
+        </p>
+      )}
+      {sp.done && !sp.queued && (
         <p className="alert-ok">
           Announcement recorded. Sent {sp.sent ?? 0}
           {Number(sp.skipped ?? 0) > 0 && `, skipped ${sp.skipped}`}

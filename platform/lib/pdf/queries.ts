@@ -330,6 +330,149 @@ export async function loadPacketData(
   };
 }
 
+// ---- Meal count (per competition) ------------------------------------------
+
+// MEAL-HEADCOUNT ASSUMPTION (§9 / §1.7 / US4): a meal headcount counts everyone
+// who will be present to eat. Attendance has three states — `expected`, `partial`
+// (there for part of the day), and `absent`. For MEALS, `partial` counts as
+// ATTENDING: a student present for part of the day still eats, and undercounting
+// meals strands a kid without food. Only `absent` is excluded. This is a
+// deliberately generous count (better one extra boxed lunch than one short).
+export interface MealEnsembleCount {
+  ensembleName: string;
+  attending: number; // expected + partial
+  absent: number;
+}
+export interface MealData {
+  programName: string;
+  tz: string;
+  competitionName: string;
+  date: string | null;
+  hostSchool: string | null;
+  venueAddress: string | null;
+  mealNote: string | null;
+  ensembles: MealEnsembleCount[];
+  totalAttending: number;
+  totalAbsent: number;
+  absentNames: string[]; // "Last, First"
+}
+
+interface MealCompBase {
+  program_id: string;
+  season_id: string;
+  name: string;
+  date: string | null;
+  host_school: string | null;
+  venue_address: string | null;
+  meal_note: string | null;
+}
+
+// Per-ensemble meal headcount for one competition. Attendance is grouped by the
+// ensemble each student belongs to in the competition's season (a competition
+// usually targets one ensemble, but grouping keeps whole-program events correct);
+// students with no ensemble membership bucket under "Unassigned".
+export async function loadMealData(
+  supabase: SupabaseClient,
+  competitionId: string,
+): Promise<MealData | null> {
+  const { data: compRow } = await supabase
+    .from("competitions")
+    .select("program_id, season_id, name, date, host_school, venue_address, meal_note")
+    .eq("id", competitionId)
+    .maybeSingle();
+  const comp = compRow as MealCompBase | null;
+  if (!comp) return null;
+
+  const { data: progRow } = await supabase
+    .from("programs")
+    .select("name, timezone")
+    .eq("id", comp.program_id)
+    .maybeSingle();
+  const program = progRow as { name: string; timezone: string } | null;
+
+  // Attendance rows + student names.
+  const { data: attRows } = await supabase
+    .from("attendance")
+    .select("student_id, status, students(first_name, last_name)")
+    .eq("program_id", comp.program_id)
+    .eq("competition_id", competitionId);
+  const attendance =
+    (attRows as {
+      student_id: string;
+      status: "expected" | "absent" | "partial";
+      students: { first_name: string; last_name: string } | null;
+    }[] | null) ?? [];
+
+  // Student → ensemble membership(s) in the competition's season.
+  const studentIds = attendance.map((a) => a.student_id);
+  const ensembleByStudent = new Map<string, string>();
+  const ensembleNames = new Map<string, string>();
+  if (studentIds.length > 0) {
+    const { data: mems } = await supabase
+      .from("ensemble_members")
+      .select("student_id, ensemble_id, ensembles(name)")
+      .eq("program_id", comp.program_id)
+      .eq("season_id", comp.season_id)
+      .in("student_id", studentIds);
+    for (const m of (mems as {
+      student_id: string;
+      ensemble_id: string;
+      ensembles: { name: string } | null;
+    }[] | null) ?? []) {
+      if (!ensembleByStudent.has(m.student_id)) {
+        ensembleByStudent.set(m.student_id, m.ensemble_id);
+        if (m.ensembles?.name) ensembleNames.set(m.ensemble_id, m.ensembles.name);
+      }
+    }
+  }
+
+  const UNASSIGNED = "__unassigned__";
+  const counts = new Map<string, { attending: number; absent: number }>();
+  const absentNames: string[] = [];
+  let totalAttending = 0;
+  let totalAbsent = 0;
+
+  for (const a of attendance) {
+    const key = ensembleByStudent.get(a.student_id) ?? UNASSIGNED;
+    const bucket = counts.get(key) ?? { attending: 0, absent: 0 };
+    if (a.status === "absent") {
+      bucket.absent += 1;
+      totalAbsent += 1;
+      const nm = a.students ? `${a.students.last_name}, ${a.students.first_name}` : "?";
+      absentNames.push(nm);
+    } else {
+      // expected OR partial → attending for meals (assumption above).
+      bucket.attending += 1;
+      totalAttending += 1;
+    }
+    counts.set(key, bucket);
+  }
+
+  const ensembles: MealEnsembleCount[] = Array.from(counts.entries())
+    .map(([key, v]) => ({
+      ensembleName: key === UNASSIGNED ? "Unassigned" : ensembleNames.get(key) ?? "Ensemble",
+      attending: v.attending,
+      absent: v.absent,
+    }))
+    .sort((a, b) => a.ensembleName.localeCompare(b.ensembleName));
+
+  absentNames.sort((a, b) => a.localeCompare(b));
+
+  return {
+    programName: program?.name ?? "",
+    tz: program?.timezone ?? "UTC",
+    competitionName: comp.name,
+    date: comp.date,
+    hostSchool: comp.host_school,
+    venueAddress: comp.venue_address,
+    mealNote: comp.meal_note,
+    ensembles,
+    totalAttending,
+    totalAbsent,
+    absentNames,
+  };
+}
+
 // ---- Board snapshot (per season) -------------------------------------------
 
 export function formatCents(cents: number): string {

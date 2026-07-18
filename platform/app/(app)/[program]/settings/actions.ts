@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRole, type Role } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { supportAccessUntilFromNow } from "@/lib/support";
+import { revokeShareLink } from "@/lib/tokens";
 
 // Season archive/unarchive + support access are director-only (unarchive and the
 // support-consent toggle are the most consequential lifecycle switches; §10, §9.4).
@@ -199,8 +200,8 @@ export async function removeMember(formData: FormData): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Support access (§10, T030). Director grants a 7-day read-only window to Octv
-// support, or revokes it immediately. RLS (0004) is the real gate; this just
+// Support access (§10, T030). Director grants a 7-day read-only window to
+// support staff, or revokes it immediately. RLS (0004) is the real gate; this just
 // sets/clears programs.support_access_until.
 // ---------------------------------------------------------------------------
 
@@ -236,6 +237,26 @@ export async function revokeSupportAccess(formData: FormData): Promise<void> {
   if (error) {
     redirect(`/${slug}/settings?error=support`);
   }
+  revalidatePath(`/${slug}/settings`);
+  redirect(`/${slug}/settings?saved=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Share links (FR-002 / §8a). director/admin revoke a broadcast link from the
+// Settings listing. Minting happens where the resource lives (itinerary page,
+// shifts page); revocation is centralized here. RLS (share_links_write) is the
+// real gate; requireRole re-checks (Constitution I).
+// ---------------------------------------------------------------------------
+
+export async function revokeShareLinkAction(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const shareLinkId = String(formData.get("shareLinkId") ?? "");
+  await requireRole(programId, SETTINGS_ROLES);
+
+  const supabase = await createClient();
+  await revokeShareLink(supabase, { programId, shareLinkId });
+
   revalidatePath(`/${slug}/settings`);
   redirect(`/${slug}/settings?saved=1`);
 }

@@ -27,7 +27,7 @@ async function digestPrograms(): Promise<ProgramRow[]> {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("programs")
-    .select("id, timezone, feature_overrides");
+    .select("id, timezone, tier, feature_overrides");
   const rows = (data as ProgramRow[] | null) ?? [];
   return rows.filter((p) => flag(p, "digest"));
 }

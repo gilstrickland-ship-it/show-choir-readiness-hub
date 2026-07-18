@@ -17,6 +17,8 @@ import { A, B, SUPPORT_USER } from './fixtures';
 import { asUser, rlsSkipped, RLS_DENIED } from './harness';
 
 const support = () => asUser(SUPPORT_USER);
+const director = (p: typeof A) => asUser(p.director);
+const board = (p: typeof A) => asUser(p.board);
 
 describe.skipIf(rlsSkipped())('support access', () => {
   describe('support + consent → read the consenting program (A)', () => {
@@ -111,6 +113,63 @@ describe.skipIf(rlsSkipped())('support access', () => {
         [randomUUID(), B.program],
       );
       expect(err.code).toBe(RLS_DENIED);
+    });
+  });
+
+  // T035 — the durable support-view audit log. It exists FOR the consenting
+  // program (transparency), is written ONLY by the service role, and never
+  // crosses tenants.
+  describe('support_access_log — program members read their own log', () => {
+    test("program A's director reads A's log", async () => {
+      expect(
+        await director(A).count(`select 1 from support_access_log where program_id = $1`, [
+          A.program,
+        ]),
+      ).toBe(1);
+    });
+
+    test("program A's board member reads A's log (transparency seat)", async () => {
+      expect(
+        await board(A).count(`select 1 from support_access_log where program_id = $1`, [
+          A.program,
+        ]),
+      ).toBe(1);
+    });
+
+    test("program A's director CANNOT read program B's log", async () => {
+      expect(
+        await director(A).count(`select 1 from support_access_log where program_id = $1`, [
+          B.program,
+        ]),
+      ).toBe(0);
+    });
+  });
+
+  describe('support_access_log — writes are service-role only', () => {
+    test('the support user cannot insert an audit row directly (RLS denies)', async () => {
+      const err = await support().expectDenied(
+        `insert into support_access_log (program_id, support_user_id, path)
+         values ($1, $2, '/forged')`,
+        [A.program, SUPPORT_USER],
+      );
+      expect(err.code).toBe(RLS_DENIED);
+    });
+
+    test('even a program director cannot insert an audit row (no client write policy)', async () => {
+      const err = await director(A).expectDenied(
+        `insert into support_access_log (program_id, support_user_id, path)
+         values ($1, $2, '/forged')`,
+        [A.program, A.director],
+      );
+      expect(err.code).toBe(RLS_DENIED);
+    });
+
+    test('the support user cannot read the log either (it is not theirs to see)', async () => {
+      expect(
+        await support().count(`select 1 from support_access_log where program_id = $1`, [
+          A.program,
+        ]),
+      ).toBe(0);
     });
   });
 });

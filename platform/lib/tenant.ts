@@ -3,7 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser, getMembership, type Membership, type Role } from "@/lib/auth";
 import { flag, flagRegistry, type FlagKey, type FlaggableProgram } from "@/lib/flags";
-import { supportAccessActive, logSupportView } from "@/lib/support";
+import { supportAccessActive, logSupportView, recordSupportView } from "@/lib/support";
 
 // The tenant shell's single resolution point. Server components (layout + pages)
 // call getTenantContext(slug); React cache() dedupes it within a request so the
@@ -41,7 +41,7 @@ export interface TenantContext {
   role: Role;
   season: TenantSeason | null;
   flags: Record<FlagKey, boolean>;
-  // True when the caller is an Octv support user viewing under active consent
+  // True when the caller is a support-staff user viewing under active consent
   // (no program_members row of their own). Read-only everywhere: the synthetic
   // role is board_member (the read-only seat), server actions re-check
   // membership (which support lacks) so no write can succeed, and the tenant
@@ -76,7 +76,7 @@ export const getTenantContext = cache(
     const typedProgram = program as TenantProgram;
 
     // Normal path: the caller is an active member; their role drives everything.
-    // Support path: no membership, but an Octv support user (profiles.is_support)
+    // Support path: no membership, but a support-staff user (profiles.is_support)
     // viewing under active director consent gets a READ-ONLY view mapped to the
     // board_member seat. Anything else → 404 (never reveal the program exists).
     let membership = await getMembership(typedProgram.id, user.id);
@@ -95,6 +95,13 @@ export const getTenantContext = cache(
       }
       isSupport = true;
       logSupportView({
+        programSlug,
+        programId: typedProgram.id,
+        userId: user.id,
+      });
+      // Durable audit trail (T035) — awaited so the row is written before the
+      // page renders. Best-effort inside; never blocks or throws.
+      await recordSupportView({
         programSlug,
         programId: typedProgram.id,
         userId: user.id,

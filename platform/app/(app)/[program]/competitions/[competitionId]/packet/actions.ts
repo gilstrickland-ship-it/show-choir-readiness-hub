@@ -35,10 +35,13 @@ async function packetParseOn(programId: string): Promise<boolean> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("programs")
-    .select("feature_overrides")
+    .select("tier, feature_overrides")
     .eq("id", programId)
     .maybeSingle();
-  return flag((data as FlaggableProgram | null) ?? { feature_overrides: null }, "packet_parse");
+  return flag(
+    (data as FlaggableProgram | null) ?? { tier: "prep", feature_overrides: null },
+    "packet_parse",
+  );
 }
 
 async function triggerParse(args: {

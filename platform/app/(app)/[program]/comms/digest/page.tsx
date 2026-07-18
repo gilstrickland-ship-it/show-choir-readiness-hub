@@ -46,6 +46,7 @@ export default async function DigestPage({
     saved?: string;
     approved?: string;
     done?: string;
+    queued?: string;
     sent?: string;
     skipped?: string;
     failed?: string;
@@ -135,7 +136,10 @@ export default async function DigestPage({
       {sp.drafted && <p className="alert-ok">Draft ready below for review.</p>}
       {sp.saved && <p className="alert-ok">Draft saved.</p>}
       {sp.approved && <p className="alert-ok">Approved. You can send it now.</p>}
-      {sp.done && (
+      {sp.done && sp.queued && (
+        <p className="alert-ok">The digest is sending in the background.</p>
+      )}
+      {sp.done && !sp.queued && (
         <p className="alert-ok">
           Digest sent to {sp.sent ?? 0}
           {Number(sp.skipped ?? 0) > 0 && `, skipped ${sp.skipped}`}

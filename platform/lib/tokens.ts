@@ -363,6 +363,96 @@ export async function mintGuardianTokenForEmail(
   return mintGuardianToken(supabase, args);
 }
 
+// ---- Share links (broadcast, read-only; §8a / FR-002) ----------------------
+
+// The public URL a share link resolves to — same /t/<token> shape as guardian
+// links (parents learn one pattern). Known ONLY at mint time (hash-only storage),
+// so callers surface it once and never reconstruct it later.
+export function shareLinkUrl(rawToken: string): string {
+  return `${appBaseUrl()}/t/${rawToken}`;
+}
+
+export type MintableShareResource = "itinerary" | "signup_page";
+
+export interface ActiveShareLink {
+  id: string;
+  resource: "itinerary" | "packet" | "signup_page";
+  resource_id: string;
+  created_at: string;
+  expires_at: string | null;
+}
+
+// Mint a broadcast share link, returning the RAW token (shown/embedded once).
+// Staff mint uses the caller's RLS client (director/admin share_links write
+// policy). Append-only — it never revokes prior links; use revokeShareLink to
+// retire one. `expiresAt` is optional (null = no expiry).
+export async function mintShareLink(
+  supabase: SupabaseClient,
+  args: {
+    programId: string;
+    resource: MintableShareResource;
+    resourceId: string;
+    expiresAt?: string | null;
+  },
+): Promise<{ raw: string } | { error: string }> {
+  const { raw, hash } = generateToken();
+  const { error } = await supabase.from("share_links").insert({
+    program_id: args.programId,
+    resource: args.resource,
+    resource_id: args.resourceId,
+    token_hash: hash,
+    expires_at: args.expiresAt ?? null,
+  });
+  if (error) return { error: error.message };
+  return { raw };
+}
+
+// Revoke one share link by id (idempotent; scoped to the program).
+export async function revokeShareLink(
+  supabase: SupabaseClient,
+  args: { programId: string; shareLinkId: string },
+): Promise<void> {
+  await supabase
+    .from("share_links")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", args.shareLinkId)
+    .eq("program_id", args.programId)
+    .is("revoked_at", null);
+}
+
+// Revoke every active share link for one resource (used to "rotate": retire the
+// old broadcast link(s) for a competition/season before minting a fresh one).
+export async function revokeShareLinksForResource(
+  supabase: SupabaseClient,
+  args: { programId: string; resource: MintableShareResource; resourceId: string },
+): Promise<void> {
+  await supabase
+    .from("share_links")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("program_id", args.programId)
+    .eq("resource", args.resource)
+    .eq("resource_id", args.resourceId)
+    .is("revoked_at", null);
+}
+
+// Active (non-revoked, non-expired) share links for a program — the Settings
+// listing. Metadata only (resource / created / expires); the raw URL is never
+// stored, so it cannot be re-shown here — staff rotate to get a fresh URL.
+export async function activeShareLinks(
+  supabase: SupabaseClient,
+  programId: string,
+): Promise<ActiveShareLink[]> {
+  const nowIso = new Date().toISOString();
+  const { data } = await supabase
+    .from("share_links")
+    .select("id, resource, resource_id, created_at, expires_at")
+    .eq("program_id", programId)
+    .is("revoked_at", null)
+    .order("created_at", { ascending: false });
+  const rows = (data as ActiveShareLink[] | null) ?? [];
+  return rows.filter((r) => !r.expires_at || r.expires_at > nowIso);
+}
+
 // ---- Token event logging (§10 security audit) ------------------------------
 
 // Append a token_events row. Best-effort: logging never blocks or fails a token

@@ -203,6 +203,12 @@ insert into profiles (id, full_name, is_support) values
 
 -- Program A consents to support for the next day; program B leaves it null.
 update programs set support_access_until = now() + interval '1 day' where id = '${A.program}';
+
+-- Durable support-view audit rows (T035). One per program so the spec can prove
+-- a program's own director/admin/board reads ITS log, and never program B's.
+insert into support_access_log (program_id, support_user_id, path) values
+  ('${A.program}', '${SUPPORT_USER}', '/A-program/dashboard'),
+  ('${B.program}', '${SUPPORT_USER}', '/B-program/dashboard');
 `;
 }
 

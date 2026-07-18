@@ -8,6 +8,7 @@ import {
   type PacketData,
   type BoardSnapshotData,
   type SnapshotCategory,
+  type MealData,
 } from "./queries";
 
 // The four derived documents (§6, §7, T017). Pure: data in, PDF tree out. Times
@@ -330,6 +331,96 @@ export function ParentPacket({ data }: { data: PacketData }) {
             ))}
           </View>
         )}
+      </DocPage>
+    </Document>
+  );
+}
+
+// ============================ MEAL COUNT ============================
+// A meal-vendor / logistics headcount (§9 / §1.7 / US4): per-ensemble attending
+// counts (partial counts as attending — see loadMealData), the absent list, and
+// a NON-health logistics note (vendor, serving time). Constitution III: the
+// note is explicitly labeled as logistics-only, never health/medical info.
+
+const MEAL_NOTE_LABEL =
+  "Logistics only (vendor, serving time, pickup location). Health and dietary/medical information is NOT recorded here — it lives outside this system.";
+
+export function MealCount({ data }: { data: MealData }) {
+  const dateStr = data.date ? formatDateInTz(`${data.date}T12:00:00Z`, data.tz) : "";
+  return (
+    <Document title={`Meal count — ${data.competitionName}`}>
+      <DocPage tz={data.tz} footerNote="Meal count">
+        <View style={styles.header}>
+          <Text style={styles.brandName}>MEAL COUNT</Text>
+          <Text style={styles.title}>{data.competitionName}</Text>
+          <Text style={styles.subtitle}>
+            {data.programName}
+            {dateStr ? ` · ${dateStr}` : ""}
+          </Text>
+          {(data.hostSchool || data.venueAddress) && (
+            <Text style={styles.subtitle}>
+              {data.hostSchool ?? ""}
+              {data.hostSchool && data.venueAddress ? " · " : ""}
+              {data.venueAddress ?? ""}
+            </Text>
+          )}
+        </View>
+
+        {/* Headcount by ensemble */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Headcount by ensemble</Text>
+          <View style={styles.tableHeadRow}>
+            <Text style={[styles.bold, { flexGrow: 1 }]}>Ensemble</Text>
+            <Text style={[styles.bold, { width: 80, textAlign: "right" }]}>Meals</Text>
+            <Text style={[styles.bold, { width: 80, textAlign: "right" }]}>Absent</Text>
+          </View>
+          {data.ensembles.map((e, i) => (
+            <View style={styles.tableRow} key={i}>
+              <Text style={{ flexGrow: 1 }}>{e.ensembleName}</Text>
+              <Text style={{ width: 80, textAlign: "right" }}>{e.attending}</Text>
+              <Text style={[styles.muted, { width: 80, textAlign: "right" }]}>{e.absent}</Text>
+            </View>
+          ))}
+          {data.ensembles.length === 0 && (
+            <Text style={styles.muted}>No attendance recorded yet.</Text>
+          )}
+          <View style={[styles.tableRow, { borderTopWidth: 1, borderTopColor: "#111827" }]}>
+            <Text style={[styles.bold, { flexGrow: 1 }]}>Total meals needed</Text>
+            <Text style={[styles.bold, { width: 80, textAlign: "right" }]}>
+              {data.totalAttending}
+            </Text>
+            <Text style={[styles.muted, { width: 80, textAlign: "right" }]}>
+              {data.totalAbsent}
+            </Text>
+          </View>
+          <Text style={[styles.muted, { marginTop: 4 }]}>
+            Meals count students marked expected or partial; only absent students
+            are excluded.
+          </Text>
+        </View>
+
+        {/* Logistics note */}
+        {data.mealNote ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Logistics note</Text>
+            <Text>{data.mealNote}</Text>
+            <Text style={[styles.muted, { marginTop: 4, fontSize: 8 }]}>{MEAL_NOTE_LABEL}</Text>
+          </View>
+        ) : null}
+
+        {/* Absent list */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Absent ({data.absentNames.length})</Text>
+          {data.absentNames.length === 0 ? (
+            <Text style={styles.muted}>No absences recorded.</Text>
+          ) : (
+            data.absentNames.map((n, i) => (
+              <Text key={i} style={{ marginBottom: 1 }}>
+                • {n}
+              </Text>
+            ))
+          )}
+        </View>
       </DocPage>
     </Document>
   );

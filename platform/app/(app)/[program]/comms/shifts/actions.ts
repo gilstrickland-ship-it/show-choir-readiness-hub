@@ -3,9 +3,15 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireRole } from "@/lib/auth";
+import { requireRole, type Role } from "@/lib/auth";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { zonedWallToUtc } from "@/lib/datetime";
+import { mintShareLink, revokeShareLinksForResource } from "@/lib/tokens";
+
+// Minting/revoking share links is director/admin only — the share_links RLS
+// write policy gates on those roles, so treasurer/costume_manager (who can edit
+// shifts) still cannot broadcast a signup link.
+const SHARE_LINK_ROLES: readonly Role[] = ["director", "admin"];
 
 // Shift management server actions (§8, T024). Writes are director/admin/treasurer/
 // costume_manager (SHIFT_WRITE_ROLES; matches the shifts_write RLS policy). Staff
@@ -167,6 +173,38 @@ export async function cancelSignup(formData: FormData): Promise<void> {
 
   revalidatePath(shiftsPath(slug));
   redirect(`${shiftsPath(slug)}?cancelled=1`);
+}
+
+// Broadcast a read-only volunteer-signup browse link (FR-002 / §8a). The public
+// signup page shows the ACTIVE SEASON's open shifts, so we scope the share link's
+// resource_id to the season id — that is the natural unit a "sign up to help this
+// season" link addresses (token resolution keys on program + resource; the
+// resource_id records intent and is what Settings lists/rotates). director/admin
+// only. Rotates: any active signup_page link for this season is revoked first, so
+// the newest URL is always the live one, then a fresh raw URL is shown once via
+// ?share=. When there is no active season there is nothing to scope a link to.
+export async function regenerateSignupShareLink(formData: FormData): Promise<void> {
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const seasonId = str(formData, "seasonId");
+  await requireRole(programId, SHARE_LINK_ROLES);
+  if (!seasonId) redirect(`${shiftsPath(slug)}?error=season`);
+
+  const supabase = await createClient();
+  await revokeShareLinksForResource(supabase, {
+    programId,
+    resource: "signup_page",
+    resourceId: seasonId,
+  });
+  const minted = await mintShareLink(supabase, {
+    programId,
+    resource: "signup_page",
+    resourceId: seasonId,
+  });
+  const share = "raw" in minted ? minted.raw : "";
+
+  revalidatePath(shiftsPath(slug));
+  redirect(`${shiftsPath(slug)}${share ? `?share=${encodeURIComponent(share)}` : ""}`);
 }
 
 // Confirm a batch of suggested shifts (from the "Suggest shifts" flow). Each

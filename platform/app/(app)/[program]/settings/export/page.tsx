@@ -2,7 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
+import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
+import { formatDateTimeInTz } from "@/lib/datetime";
+import { requestExport } from "./actions";
 
 // Settings → Export & Data (§13.2, §13.3, T029). director/admin. Two halves:
 //   • Export everything — a real button producing one zip of CSVs + generated
@@ -13,14 +16,55 @@ import { SETTINGS_ROLES } from "@/lib/nav";
 //     action (a mistaken click must not start a countdown to erasing a booster
 //     org's records), so this is a mailto to brand.supportEmail, brand-config aware.
 
+interface ExportJobRow {
+  id: string;
+  status: string;
+  storage_path: string | null;
+  created_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+const JOB_STATUS_LABEL: Record<string, string> = {
+  queued: "Queued",
+  running: "Building…",
+  done: "Ready",
+  failed: "Failed",
+};
+
 export default async function ExportPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ program: string }>;
+  searchParams: Promise<{ requested?: string; error?: string }>;
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
   if (!SETTINGS_ROLES.includes(role)) notFound();
+  const sp = await searchParams;
+
+  // Recent async export jobs (T036). export_jobs read is director/admin (RLS).
+  const supabase = await createClient();
+  const { data: jobRows } = await supabase
+    .from("export_jobs")
+    .select("id, status, storage_path, created_at, finished_at, error")
+    .eq("program_id", program.id)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  const jobs = (jobRows as ExportJobRow[] | null) ?? [];
+
+  // Fresh signed download URLs for completed jobs (members can read the exports
+  // bucket via RLS; a short-lived signed URL is enough for a click-through).
+  const downloadUrls = new Map<string, string>();
+  for (const j of jobs) {
+    if (j.status === "done" && j.storage_path) {
+      const { data: signed } = await supabase.storage
+        .from("exports")
+        .createSignedUrl(j.storage_path, 3600);
+      if (signed?.signedUrl) downloadUrls.set(j.id, signed.signedUrl);
+    }
+  }
 
   const deletionSubject = encodeURIComponent(
     `Deletion request — ${program.name} (${slug})`,
@@ -42,24 +86,82 @@ export default async function ExportPage({
       </div>
       <h1>Export &amp; data</h1>
 
+      {sp.requested && (
+        <p className="alert-ok">
+          Export requested — we&apos;re building your zip. It appears below when
+          ready (and we&apos;ll email you a download link).
+        </p>
+      )}
+      {sp.error === "export" && (
+        <p className="alert-error">Couldn&apos;t start the export. Try again.</p>
+      )}
+
       <div className="confirm-box stack" style={{ width: "100%" }}>
         <h2>Export everything</h2>
         <p className="muted">
-          Download a single zip with your full program as spreadsheets (roster,
-          guardians, ensemble members, attendance, costume inventory and
-          assignments, ledger, budget, and results) plus every generated PDF —
-          published parent packets, bus manifests, room sheets, and board
-          snapshots. Your data is yours; this button proves it.
+          A single zip with your full program as spreadsheets (roster, guardians,
+          ensemble members, attendance, costume inventory and assignments, ledger,
+          budget, and results) plus every generated PDF — published parent packets,
+          meal counts, bus manifests, room sheets, and board snapshots. Your data
+          is yours; this proves it.
         </p>
-        {/* Anchor download (not a client fetch) so the browser streams the zip. */}
-        <a href={`/${slug}/settings/export/download`}>
-          <button type="button">Download export (.zip)</button>
-        </a>
+
+        {/* Async job: builds server-side, emails a signed link, and lists below. */}
+        <form action={requestExport}>
+          <input type="hidden" name="programId" value={program.id} />
+          <input type="hidden" name="slug" value={slug} />
+          <button type="submit">Email me the export</button>
+        </form>
         <p className="muted">
-          Large programs may take a few seconds to build. (Upgrade path: an async
-          job that emails a link — see the route comment.)
+          We build it in the background and email you a download link (also listed
+          below). Best for large programs.
+        </p>
+
+        {/* Synchronous direct download — dev/fallback path. */}
+        <p className="muted" style={{ marginTop: "0.5rem" }}>
+          Or{" "}
+          {/* Anchor download (not a client fetch) so the browser streams the zip. */}
+          <a href={`/${slug}/settings/export/download`}>download it directly now</a> —
+          large programs may take a few seconds to build.
         </p>
       </div>
+
+      {jobs.length > 0 && (
+        <div className="confirm-box stack" style={{ width: "100%" }}>
+          <h2>Recent exports</h2>
+          <table className="members">
+            <thead>
+              <tr>
+                <th>Requested</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((j) => (
+                <tr key={j.id}>
+                  <td className="muted">
+                    {formatDateTimeInTz(j.created_at, program.timezone)}
+                  </td>
+                  <td>
+                    <span className="badge">{JOB_STATUS_LABEL[j.status] ?? j.status}</span>
+                    {j.status === "failed" && j.error && (
+                      <span className="muted"> — {j.error}</span>
+                    )}
+                  </td>
+                  <td>
+                    {j.status === "done" && downloadUrls.get(j.id) ? (
+                      <a href={downloadUrls.get(j.id)}>Download (.zip)</a>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="confirm-box stack" style={{ width: "100%" }}>
         <h2>Delete this program</h2>

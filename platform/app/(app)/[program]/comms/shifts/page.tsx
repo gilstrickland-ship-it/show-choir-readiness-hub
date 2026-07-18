@@ -3,9 +3,10 @@ import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { COMMS_ROLES } from "@/lib/nav";
+import { COMMS_ROLES, SETTINGS_ROLES } from "@/lib/nav";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
+import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CommsTabs } from "../CommsTabs";
 import {
   createShift,
@@ -13,6 +14,7 @@ import {
   deleteShift,
   addStaffSignup,
   cancelSignup,
+  regenerateSignupShareLink,
 } from "./actions";
 
 // Comms — Shifts tab (§8, T024). Volunteer shift CRUD + per-shift signups with
@@ -60,6 +62,7 @@ export default async function ShiftsPage({
     signed?: string;
     cancelled?: string;
     edit?: string;
+    share?: string;
   }>;
 }) {
   const { program: slug } = await params;
@@ -68,10 +71,21 @@ export default async function ShiftsPage({
   requireFlag(program, "shifts");
   if (!COMMS_ROLES.includes(role)) notFound();
   const canWrite = SHIFT_WRITE_ROLES.includes(role);
+  const canShare = SETTINGS_ROLES.includes(role); // director/admin only (share_links RLS)
   const tz = program.timezone;
   const sp = await searchParams;
 
   const supabase = await createClient();
+
+  // Broadcast signup link (FR-002 / §8a) — read-only browse of this season's open
+  // shifts. Metadata-only once minted; the copyable URL rides ?share= once.
+  const signupShareLinks =
+    canShare && season
+      ? (await activeShareLinks(supabase, program.id)).filter(
+          (l) => l.resource === "signup_page" && l.resource_id === season.id,
+        )
+      : [];
+  const freshSignupShareUrl = sp.share ? shareLinkUrl(sp.share) : null;
 
   const shifts: ShiftRow[] = season
     ? ((
@@ -173,6 +187,45 @@ export default async function ShiftsPage({
           Have a published competition itinerary?{" "}
           <Link href={`/${slug}/comms/shifts/suggest`}>Suggest shifts from it →</Link>
         </p>
+      )}
+
+      {/* Broadcast signup link (FR-002 / §8a) — director/admin only. */}
+      {canShare && season && (
+        <div className="confirm-box stack" style={{ width: "100%" }}>
+          <h2>Broadcast signup link</h2>
+          {freshSignupShareUrl ? (
+            <>
+              <p className="muted">
+                A read-only link parents can open to see and browse open shifts for{" "}
+                {season.label}. Copy it now — for privacy the URL is shown only this
+                once (parents claim shifts from their own family link):
+              </p>
+              <code style={{ wordBreak: "break-all" }}>{freshSignupShareUrl}</code>
+            </>
+          ) : signupShareLinks.length > 0 ? (
+            <p className="muted">
+              A broadcast signup link is active for {season.label}. The URL is only
+              shown once at creation — regenerate to get a fresh copyable link (the
+              old one stops working). Active links are listed in{" "}
+              <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
+            </p>
+          ) : (
+            <p className="muted">
+              No broadcast signup link yet. Generate a read-only link so anyone can
+              browse this season&apos;s open shifts.
+            </p>
+          )}
+          <form action={regenerateSignupShareLink}>
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="seasonId" value={season.id} />
+            <button type="submit" className="secondary">
+              {signupShareLinks.length > 0
+                ? "Regenerate signup link"
+                : "Create signup link"}
+            </button>
+          </form>
+        </div>
       )}
 
       {!season && (

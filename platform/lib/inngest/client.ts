@@ -14,10 +14,35 @@ export type Events = {
       competitionId: string;
     };
   };
+  "export/all": {
+    data: {
+      jobId: string;
+      programId: string;
+    };
+  };
+  "announcement/send": {
+    data: {
+      programId: string;
+      announcementId: string;
+      seasonId: string | null;
+      ensembleId: string | null;
+      subject: string;
+      bodyMd: string;
+    };
+  };
+  "digest/send": {
+    data: {
+      programId: string;
+      digestId: string;
+      seasonId: string | null;
+    };
+  };
 };
 
+// App id is brand-neutral (Constitution IX) — the working codename lives only in
+// lib/brand.ts. Override with INNGEST_APP_ID if a deployment needs a specific id.
 export const inngest = new Inngest({
-  id: "octv-platform",
+  id: process.env.INNGEST_APP_ID ?? "platform",
   eventKey: process.env.INNGEST_EVENT_KEY,
 });
 

@@ -5,6 +5,7 @@ import { SETTINGS_ROLES } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { archiveSeason, unarchiveSeason } from "../actions";
+import { ArchivedBanner } from "../../ArchivedBanner";
 import {
   createRolloverSeason,
   confirmEnsembles,
@@ -210,6 +211,7 @@ export default async function RolloverPage({
 
       {/* --- Archive controls --- */}
       <h2>Seasons</h2>
+      {seasons.some((s) => s.archived_at) && <ArchivedBanner />}
       <table className="members">
         <thead>
           <tr>

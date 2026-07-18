@@ -8,6 +8,7 @@ export type CostumeTab =
   | "inventory"
   | "sets"
   | "assignments"
+  | "quick-change"
   | "alterations"
   | "checkout";
 
@@ -32,6 +33,7 @@ export function CostumeTabs({
       {tab("inventory", `/${slug}/costumes`, "Inventory")}
       {tab("sets", `/${slug}/costumes/sets`, "Sets")}
       {tab("assignments", `/${slug}/costumes/assignments`, "Assignments")}
+      {tab("quick-change", `/${slug}/costumes/quick-change`, "Quick change")}
       {tab("alterations", `/${slug}/costumes/alterations`, "Alterations")}
       {tab("checkout", `/${slug}/costumes/checkout`, "Checkout")}
     </div>

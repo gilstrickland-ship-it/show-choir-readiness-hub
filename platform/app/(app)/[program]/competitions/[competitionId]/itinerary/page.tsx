@@ -5,6 +5,7 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES, ITINERARY_ITEM_KINDS } from "@/lib/competitions";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
+import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CompetitionTabs } from "../CompetitionTabs";
 import {
   addItineraryItem,
@@ -12,6 +13,7 @@ import {
   deleteItineraryItem,
   publishItinerary,
   unpublishItinerary,
+  regenerateItineraryShareLink,
 } from "./actions";
 
 // Manual itinerary editor (§5, T014). One itinerary per competition, created as a
@@ -42,7 +44,7 @@ export default async function ItineraryPage({
   searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string }>;
-  searchParams: Promise<{ published?: string; confirm?: string }>;
+  searchParams: Promise<{ published?: string; confirm?: string; share?: string }>;
 }) {
   const { program: slug, competitionId } = await params;
   const { program, role } = await getTenantContext(slug);
@@ -115,6 +117,17 @@ export default async function ItineraryPage({
 
   const showPublishConfirm = sp.confirm === "publish" && canWrite && itinerary?.status === "draft";
 
+  // Broadcast share link (FR-002 / §8a). Active links are metadata-only (the raw
+  // URL is knowable only at mint time), so the copyable URL is shown once when it
+  // rides in via ?share=; otherwise we show that a link is active + a rotate button.
+  const isPublished = itinerary?.status === "published";
+  const activeItinShareLinks = isPublished
+    ? (await activeShareLinks(supabase, program.id)).filter(
+        (l) => l.resource === "itinerary" && l.resource_id === competitionId,
+      )
+    : [];
+  const freshShareUrl = sp.share ? shareLinkUrl(sp.share) : null;
+
   return (
     <section className="stack">
       <p>
@@ -124,6 +137,44 @@ export default async function ItineraryPage({
       <h1>Itinerary</h1>
 
       {sp.published && <p className="alert-ok">Itinerary published — visible to parents.</p>}
+
+      {/* Broadcast share link (FR-002 / §8a) — read-only URL anyone can open. */}
+      {canWrite && isPublished && (
+        <div className="confirm-box stack" style={{ width: "100%" }}>
+          <h2>Broadcast link</h2>
+          {freshShareUrl ? (
+            <>
+              <p className="muted">
+                A read-only link to this itinerary — copy it now (for privacy the
+                URL is shown only this once):
+              </p>
+              <code style={{ wordBreak: "break-all" }}>{freshShareUrl}</code>
+            </>
+          ) : activeItinShareLinks.length > 0 ? (
+            <p className="muted">
+              A broadcast link is active for this itinerary. For your privacy the
+              URL is only shown once at creation — regenerate to get a fresh
+              copyable link (the old one stops working). Active links are listed in{" "}
+              <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
+            </p>
+          ) : (
+            <p className="muted">
+              No broadcast link yet. Generate a read-only link to share this
+              itinerary with anyone.
+            </p>
+          )}
+          <form action={regenerateItineraryShareLink}>
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="competitionId" value={competitionId} />
+            <button type="submit" className="secondary">
+              {activeItinShareLinks.length > 0
+                ? "Regenerate broadcast link"
+                : "Create broadcast link"}
+            </button>
+          </form>
+        </div>
+      )}
 
       {!itinerary && (
         <p className="muted">No itinerary yet. A director or admin can create one here.</p>

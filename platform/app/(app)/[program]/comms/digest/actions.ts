@@ -4,14 +4,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
-import {
-  DIGEST_WRITE_ROLES,
-  computeRecipients,
-  announcementHtml,
-  currentWeekOf,
-} from "@/lib/comms";
-import { mintGuardianTokenForEmail, guardianLinks } from "@/lib/tokens";
-import { sendEmail } from "@/lib/email";
+import { DIGEST_WRITE_ROLES, currentWeekOf } from "@/lib/comms";
+import { sendDigestCore } from "@/lib/comms-send";
+import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { draftDigest } from "@/lib/ai/digest-draft";
 
 // Digest review actions (§8, T025, Constitution IV). Director/admin only. The AI
@@ -95,10 +90,13 @@ export async function approveDigest(formData: FormData): Promise<void> {
   redirect(`${digestPath(slug)}?approved=1`);
 }
 
-// Send an APPROVED digest. Recipients = guardians with email_status 'ok', deduped
-// by email (computeRecipients). Each email carries the family's three token links
-// (minted per-email, append-only) footered onto the markdown body. Records a
-// digest_sends row per recipient and flips the digest to 'sent'. Approved-only.
+// Send an APPROVED digest (§8, T038). Recipients = guardians with email_status
+// 'ok', deduped by email; each email carries the family's three token links
+// footered onto the markdown body. The fan-out runs on Inngest (retry/batching)
+// when INNGEST_EVENT_KEY is set, or inline via the SAME send core when absent
+// (packet-parse dual-path). The core is approved-only and flips the digest to
+// 'sent' — idempotent, so a retried job never double-sends. digest_sends rows are
+// unchanged either way.
 export async function sendDigest(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -108,79 +106,35 @@ export async function sendDigest(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
 
-  // Only an approved digest sends (idempotence guard: skip if already sent).
+  // Pre-check approved so a non-approved digest never enqueues (the core guards
+  // too — this is just for a clean error before the async hand-off).
   const { data: digestData } = await supabase
     .from("digests")
-    .select("id, subject, body_md, status")
+    .select("status")
     .eq("id", digestId)
     .eq("program_id", programId)
     .maybeSingle();
-  const digest = digestData as
-    | { id: string; subject: string | null; body_md: string | null; status: string }
-    | null;
-  if (!digest || digest.status !== "approved") {
+  if ((digestData as { status: string } | null)?.status !== "approved") {
     redirect(`${digestPath(slug)}?error=notapproved`);
   }
-  const subject = digest.subject ?? "";
-  const bodyMd = digest.body_md ?? "";
 
-  const recipients = await computeRecipients(supabase, {
-    programId,
-    seasonId,
-    ensembleId: null,
-  });
-
-  let sent = 0;
-  let skipped = 0;
-  let failed = 0;
-
-  for (const r of recipients) {
-    const minted = await mintGuardianTokenForEmail(supabase, {
-      programId,
-      guardianId: r.guardianId,
+  // Async path: enqueue and return; the job flips the digest to 'sent'.
+  if (inngestEnabled()) {
+    await inngest.send({
+      name: "digest/send",
+      data: { programId, digestId, seasonId },
     });
-    const links = "raw" in minted ? guardianLinks(minted.raw) : null;
-
-    let status: string;
-    let resendId: string | null = null;
-
-    if (!links) {
-      status = "failed";
-      failed++;
-    } else {
-      const result = await sendEmail({
-        to: r.email,
-        subject,
-        html: announcementHtml({ bodyMd, links }),
-      });
-      if (result.status === "sent") {
-        status = "sent";
-        resendId = result.id;
-        sent++;
-      } else if (result.status === "skipped_no_key") {
-        status = "skipped_no_key";
-        skipped++;
-      } else {
-        status = "failed";
-        failed++;
-      }
-    }
-
-    await supabase.from("digest_sends").insert({
-      program_id: programId,
-      digest_id: digest.id,
-      email: r.email,
-      resend_id: resendId,
-      status,
-    });
+    revalidatePath(digestPath(slug));
+    redirect(`${digestPath(slug)}?done=1&queued=1`);
   }
 
-  await supabase
-    .from("digests")
-    .update({ status: "sent", sent_at: new Date().toISOString() })
-    .eq("id", digest.id)
-    .eq("program_id", programId);
-
+  // Inline fallback (no Inngest): run the same core now and report counts.
+  const counts = await sendDigestCore(supabase, { programId, digestId, seasonId });
+  if (!counts) {
+    redirect(`${digestPath(slug)}?error=notapproved`);
+  }
   revalidatePath(digestPath(slug));
-  redirect(`${digestPath(slug)}?done=1&sent=${sent}&skipped=${skipped}&failed=${failed}`);
+  redirect(
+    `${digestPath(slug)}?done=1&sent=${counts.sent}&skipped=${counts.skipped}&failed=${counts.failed}`,
+  );
 }

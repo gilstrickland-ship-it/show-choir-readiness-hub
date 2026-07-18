@@ -6,8 +6,15 @@ import {
   loadTripDoc,
   loadPacketData,
   loadBoardSnapshot,
+  loadMealData,
 } from "@/lib/pdf/queries";
-import { BusManifest, RoomSheet, ParentPacket, BoardSnapshot } from "@/lib/pdf/documents";
+import {
+  BusManifest,
+  RoomSheet,
+  ParentPacket,
+  BoardSnapshot,
+  MealCount,
+} from "@/lib/pdf/documents";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ReactElement } from "react";
 
@@ -101,6 +108,19 @@ export async function GET(
       );
     }
     return pdf(<ParentPacket data={data} />, `parent-packet-${competitionId}.pdf`);
+  }
+
+  if (doc === "meal") {
+    const competitionId = url.searchParams.get("competition");
+    if (!competitionId) return text("Missing ?competition=", 400);
+    const programId = await resolveProgramId(supabase, "competitions", competitionId);
+    if (!programId) return text("Competition not found", 404);
+    const membership = await getMembership(programId, user.id);
+    if (!membership) return text("Forbidden", 403);
+
+    const data = await loadMealData(supabase, competitionId);
+    if (!data) return text("Competition not found", 404);
+    return pdf(<MealCount data={data} />, `meal-count-${competitionId}.pdf`);
   }
 
   if (doc === "board-snapshot") {

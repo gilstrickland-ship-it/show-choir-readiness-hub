@@ -4,6 +4,8 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { activeCaptions } from "@/lib/competitions";
 import { formatDateOnly } from "@/lib/treasury";
+import { formatDateTimeInTz } from "@/lib/datetime";
+import { ArchivedBanner } from "../ArchivedBanner";
 
 // Trophy case / season history (§5, T028). Visible to every staff role behind the
 // `archive` flag. Competition results grouped by season — the emotional archive
@@ -100,6 +102,12 @@ export default async function HistoryPage({
               {s.is_active && <span className="badge">Active</span>}
               {s.archived_at && <span className="chip">Archived</span>}
             </h2>
+            {s.archived_at && (
+              <ArchivedBanner
+                seasonLabel={s.label}
+                archivedAtLabel={formatDateTimeInTz(s.archived_at, program.timezone)}
+              />
+            )}
             <div className="card-grid">
               {list.map((r, i) => {
                 const caps = activeCaptions(r.captions);

@@ -1,5 +1,5 @@
 // ============================================================================
-// Octv Platform — Combined roster CSV import (T008)
+// The platform — Combined roster CSV import (T008)
 // ----------------------------------------------------------------------------
 // Pure, DB-free parsing for the "one spreadsheet the director already has":
 // students + multiple guardians in a single file. No product name, no I/O, no
