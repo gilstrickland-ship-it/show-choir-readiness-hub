@@ -19,7 +19,7 @@ export function CommsTabs({
   const base = `/${slug}/comms`;
   const tab = (key: CommsTab, href: string, label: string) =>
     active === key ? (
-      <strong key={key}>{label}</strong>
+      <strong key={key} aria-current="page">{label}</strong>
     ) : (
       <Link key={key} href={href}>
         {label}

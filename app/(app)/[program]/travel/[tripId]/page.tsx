@@ -398,7 +398,7 @@ export default async function TripPage({
                         style={{
                           flex: "1 1 15rem",
                           minWidth: "13rem",
-                          border: `1px solid ${over ? "#d97706" : "var(--border)"}`,
+                          border: `1px solid ${over ? "var(--warn)" : "var(--border)"}`,
                           background: over ? "rgba(217,119,6,0.08)" : undefined,
                           borderRadius: 8,
                           padding: "0.75rem",
