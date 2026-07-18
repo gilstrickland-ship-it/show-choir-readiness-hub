@@ -56,6 +56,8 @@ jobs:
 
     env:
       APP_BASE_URL: http://localhost:3000
+      TOKEN_IP_LIMIT_PER_MIN: '10000'
+      TOKEN_LIMIT_PER_MIN: '10000'
 
     steps:
       - uses: actions/checkout@v4

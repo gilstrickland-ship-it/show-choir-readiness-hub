@@ -58,6 +58,6 @@ test.describe("staff journey (demo director)", () => {
     await expect(
       page.getByRole("heading", { name: "Headcount by ensemble" }),
     ).toBeVisible();
-    await expect(page.getByText(/meals needed/)).toBeVisible();
+    await expect(page.getByText("Total meals needed")).toBeVisible();
   });
 });

@@ -71,8 +71,14 @@ function sweep(cutoff: number): void {
 }
 
 // Default token-surface budgets (§10): 60 req/min per IP, 30 req/min per token.
-export const IP_LIMIT = 60;
-export const TOKEN_LIMIT = 30;
+// Env-overridable so test harnesses (and unusual deployments) can widen them;
+// invalid or missing values keep the defaults.
+function envLimit(name: string, fallback: number): number {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+export const IP_LIMIT = envLimit("TOKEN_IP_LIMIT_PER_MIN", 60);
+export const TOKEN_LIMIT = envLimit("TOKEN_LIMIT_PER_MIN", 30);
 export const WINDOW_MS = 60_000;
 
 // Apply both the per-IP and per-token budgets. Over either → not ok. `ip` may be
