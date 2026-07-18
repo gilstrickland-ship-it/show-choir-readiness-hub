@@ -1,4 +1,6 @@
+import { redirect as redirectTo } from "next/navigation";
 import { brand } from "@/lib/brand";
+import { createClient } from "@/lib/supabase/server";
 import { signInWithPassword, sendMagicLink } from "./actions";
 
 // Staff sign-in. Constitution II: this is the leadership team's login surface
@@ -17,7 +19,14 @@ export default async function SignInPage({
   searchParams: Promise<{ error?: string; sent?: string; redirect?: string }>;
 }) {
   const { error, sent, redirect } = await searchParams;
-  const nextPath = redirect && redirect.startsWith("/") ? redirect : "/";
+  const nextPath = redirect && redirect.startsWith("/") ? redirect : "/launch";
+
+  // Already signed in? Skip the form and route to the right place.
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user) redirectTo(nextPath);
 
   return (
     <main className="auth">

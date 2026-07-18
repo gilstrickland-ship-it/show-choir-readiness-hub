@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 
 function safeNext(value: FormDataEntryValue | null): string {
   const v = typeof value === "string" ? value : "";
-  return v.startsWith("/") ? v : "/";
+  return v.startsWith("/") ? v : "/launch";
 }
 
 async function origin(): Promise<string> {
