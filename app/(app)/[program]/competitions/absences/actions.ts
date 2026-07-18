@@ -42,7 +42,7 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
   if (!req || req.status !== "pending") redirect(`${queuePath(slug)}?error=gone`);
 
   // Flip the attendance row to absent (idempotent upsert on the unique key).
-  await supabase.from("attendance").upsert(
+  const { error: attErr } = await supabase.from("attendance").upsert(
     {
       program_id: programId,
       competition_id: req.competition_id,
@@ -51,8 +51,12 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
     },
     { onConflict: "competition_id,student_id" },
   );
+  if (attErr) {
+    console.error("confirmAbsence attendance upsert failed", attErr);
+    redirect(`${queuePath(slug)}?error=failed`);
+  }
 
-  await supabase
+  const { error: updErr } = await supabase
     .from("absence_requests")
     .update({
       status: "confirmed",
@@ -61,6 +65,10 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
     })
     .eq("id", req.id)
     .eq("program_id", programId);
+  if (updErr) {
+    console.error("confirmAbsence request update failed", updErr);
+    redirect(`${queuePath(slug)}?error=failed`);
+  }
 
   revalidatePath(queuePath(slug));
   redirect(`${queuePath(slug)}?done=confirmed`);
@@ -73,7 +81,7 @@ export async function dismissAbsence(formData: FormData): Promise<void> {
   const { user } = await requireRole(programId, ATTENDANCE_WRITE_ROLES);
 
   const supabase = await createClient();
-  await supabase
+  const { error: disErr } = await supabase
     .from("absence_requests")
     .update({
       status: "dismissed",
@@ -83,6 +91,10 @@ export async function dismissAbsence(formData: FormData): Promise<void> {
     .eq("id", requestId)
     .eq("program_id", programId)
     .eq("status", "pending");
+  if (disErr) {
+    console.error("dismissAbsence request update failed", disErr);
+    redirect(`${queuePath(slug)}?error=failed`);
+  }
 
   revalidatePath(queuePath(slug));
   redirect(`${queuePath(slug)}?done=dismissed`);

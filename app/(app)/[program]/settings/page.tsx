@@ -90,7 +90,7 @@ export default async function SettingsPage({
       <div className="settings-tabs">
         <strong>Program</strong>
         <Link href={`/${slug}/settings/members`}>Members</Link>
-        <Link href={`/${slug}/settings/rollover`}>Rollover &amp; Archive</Link>
+        <Link href={`/${slug}/settings/rollover`}>Seasons</Link>
         <Link href={`/${slug}/settings/export`}>Export &amp; Data</Link>
       </div>
       <h1>Program settings</h1>

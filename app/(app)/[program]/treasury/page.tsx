@@ -284,7 +284,9 @@ export default async function LedgerPage({
 
       {!season && (
         <p className="alert-error">
-          No active season. Set one in Settings to record ledger entries.
+          No active season. Ledger entries are season-scoped —{" "}
+          <Link href={`/${slug}/settings/rollover`}>Start a season</Link> to record
+          them.
         </p>
       )}
 

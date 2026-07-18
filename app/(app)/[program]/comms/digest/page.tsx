@@ -136,9 +136,14 @@ export default async function DigestPage({
       {sp.drafted && <p className="alert-ok">Draft ready below for review.</p>}
       {sp.saved && <p className="alert-ok">Draft saved.</p>}
       {sp.approved && <p className="alert-ok">Approved. You can send it now.</p>}
-      {sp.done && sp.queued && (
-        <p className="alert-ok">The digest is sending in the background.</p>
-      )}
+      {sp.done && sp.queued &&
+        (emailConfigured() ? (
+          <p className="alert-ok">The digest is sending in the background.</p>
+        ) : (
+          <p style={{ color: "#b45309" }}>
+            Queued, but email isn&apos;t configured — recipients will be skipped.
+          </p>
+        ))}
       {sp.done && !sp.queued && (
         <p className="alert-ok">
           Digest sent to {sp.sent ?? 0}

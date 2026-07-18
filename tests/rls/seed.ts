@@ -30,7 +30,8 @@ insert into profiles (id, full_name) values
   ('${p.admin}',     '${prefix} Admin'),
   ('${p.treasurer}', '${prefix} Treasurer'),
   ('${p.costume}',   '${prefix} Costume Mgr'),
-  ('${p.board}',     '${prefix} Board Member');
+  ('${p.board}',     '${prefix} Board Member')
+on conflict (id) do update set full_name = excluded.full_name;
 
 insert into programs (id, name, slug, timezone) values
   ('${p.program}', '${prefix} Program', '${prefix}-program', 'America/Chicago');
@@ -199,7 +200,8 @@ insert into auth.users (id, email) values
   ('${SUPPORT_USER}', 'octv-support@example.test');
 
 insert into profiles (id, full_name, is_support) values
-  ('${SUPPORT_USER}', 'Octv Support', true);
+  ('${SUPPORT_USER}', 'Octv Support', true)
+on conflict (id) do update set full_name = excluded.full_name, is_support = excluded.is_support;
 
 -- Program A consents to support for the next day; program B leaves it null.
 update programs set support_access_until = now() + interval '1 day' where id = '${A.program}';

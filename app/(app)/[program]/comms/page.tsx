@@ -145,11 +145,16 @@ export default async function CommsPage({
         </p>
       )}
 
-      {sp.done && sp.queued && (
-        <p className="alert-ok">
-          Announcement recorded — emails are sending in the background.
-        </p>
-      )}
+      {sp.done && sp.queued &&
+        (emailConfigured() ? (
+          <p className="alert-ok">
+            Announcement recorded — emails are sending in the background.
+          </p>
+        ) : (
+          <p style={{ color: "#b45309" }}>
+            Queued, but email isn&apos;t configured — recipients will be skipped.
+          </p>
+        ))}
       {sp.done && !sp.queued && (
         <p className="alert-ok">
           Announcement recorded. Sent {sp.sent ?? 0}

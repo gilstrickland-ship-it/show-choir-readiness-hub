@@ -58,6 +58,12 @@ export default async function AbsenceQueuePage({
         <p className="alert-ok">Absence confirmed — attendance marked absent.</p>
       )}
       {done === "dismissed" && <p className="alert-ok">Request dismissed.</p>}
+      {error === "failed" && (
+        <p className="alert-error">
+          Something went wrong resolving that request — it was not updated. Try
+          again.
+        </p>
+      )}
       {error === "gone" && (
         <p className="alert-error">That request was already resolved.</p>
       )}

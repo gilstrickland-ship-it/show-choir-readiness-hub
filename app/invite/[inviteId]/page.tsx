@@ -64,6 +64,12 @@ export default async function InvitePage({
           You&apos;ve been invited as <strong>{roleLabel}</strong>. Sign in as{" "}
           <strong>{member.invited_email}</strong> to accept.
         </p>
+        <p className="muted">
+          If you&apos;ve never set a password, choose &ldquo;Email me a sign-in
+          link&rdquo; on the next screen and enter{" "}
+          <strong>{member.invited_email}</strong> — the link signs you in without a
+          password.
+        </p>
         <p>
           <Link
             href={`/sign-in?redirect=${encodeURIComponent(`/invite/${inviteId}`)}`}

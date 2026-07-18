@@ -107,11 +107,28 @@ export function verifyToken(raw: string, storedHash: string): boolean {
 
 // ---- The three canonical footer links (email + staff display) --------------
 
-// Base URL for tokenized links. APP_BASE_URL overrides; otherwise derived from
-// the brand domain (Constitution IX — no hardcoded product name).
+// Base URL for tokenized links (used in emails, so it MUST resolve to a real
+// host). Fallback chain:
+//   1. APP_BASE_URL            — explicit override (full URL).
+//   2. VERCEL_PROJECT_PRODUCTION_URL — Vercel system env (host only, no scheme).
+//   3. https://{brand.domain} — last resort; warns, because brand.domain defaults
+//      to the placeholder "octv.example" which would email broken links.
+// Constitution IX — no hardcoded product name (the brand domain flows from env).
 export function appBaseUrl(): string {
   const explicit = process.env.APP_BASE_URL?.replace(/\/+$/, "");
   if (explicit) return explicit;
+
+  const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.replace(/\/+$/, "");
+  if (vercelHost) return `https://${vercelHost}`;
+
+  if (!process.env.BRAND_DOMAIN) {
+    // No configured host anywhere — links will point at the placeholder domain.
+    console.warn(
+      "[tokens] appBaseUrl falling back to placeholder brand.domain " +
+        `("${brand.domain}"). Set APP_BASE_URL (or deploy on Vercel) so ` +
+        "tokenized parent links resolve to a real host.",
+    );
+  }
   return `https://${brand.domain}`;
 }
 

@@ -33,6 +33,25 @@ async function origin(): Promise<string> {
   return `${proto}://${host}`;
 }
 
+// Ensure a confirmed auth user exists for `email` so magic-link sign-in works
+// for a first-time invitee (F2). Checks existence first (listUsers scan) and
+// only creates when absent; createUser is itself idempotent (it errors if the
+// email already exists), so a race just no-ops. Callers wrap this in try/catch.
+type AdminClient = ReturnType<typeof createAdminClient>;
+async function ensureAuthUser(admin: AdminClient, email: string): Promise<void> {
+  const target = email.toLowerCase();
+  // Scan a bounded number of pages; a program's staff base is tiny, and this is
+  // only an optimization to avoid a redundant createUser error.
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) break;
+    const users = data?.users ?? [];
+    if (users.some((u) => (u.email ?? "").toLowerCase() === target)) return;
+    if (users.length < 200) break; // last page
+  }
+  await admin.auth.admin.createUser({ email, email_confirm: true });
+}
+
 // Count active directors so we never leave a program without one.
 async function activeDirectorCount(programId: string): Promise<number> {
   const supabase = await createClient();
@@ -108,13 +127,25 @@ export async function inviteMember(formData: FormData): Promise<void> {
 
   // Best-effort transactional invite email. Failure is non-fatal — the members
   // page shows the invite link to copy manually.
+  const admin = createAdminClient();
   try {
-    const admin = createAdminClient();
     await admin.auth.admin.inviteUserByEmail(email, {
       redirectTo: `${await origin()}/invite/${created.id}`,
     });
   } catch {
     // Ignore — link is surfaced in the UI.
+  }
+
+  // Ensure an auth user actually exists for this email. inviteUserByEmail can
+  // fail (no SMTP configured, transient error) and swallow the user creation,
+  // which strands a first-time invitee: password sign-in fails, and magic-link
+  // sign-in uses shouldCreateUser:false so it refuses an email with no account.
+  // Creating a confirmed user here makes "Email me a sign-in link" work for
+  // them. Idempotent + best-effort: if the user already exists, ignore.
+  try {
+    await ensureAuthUser(admin, email);
+  } catch {
+    // Ignore — link is surfaced in the UI regardless.
   }
 
   revalidatePath(`/${slug}/settings/members`);

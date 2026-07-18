@@ -6,7 +6,25 @@ import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { CompetitionTabs } from "../CompetitionTabs";
-import { uploadPacket, reparsePacket } from "./actions";
+import { uploadPacket, reparsePacket, runParseNow } from "./actions";
+
+// A queued/running parse older than this is treated as stuck — the inline worker
+// or Inngest never carried it to a terminal state (F7).
+const STUCK_AFTER_MS = 2 * 60 * 1000;
+
+function isStuck(createdAt: string): boolean {
+  return Date.now() - new Date(createdAt).getTime() > STUCK_AFTER_MS;
+}
+
+// Map known parse-failure strings to guidance (F8b). The AI client throws the
+// literal "ANTHROPIC_API_KEY is not set" when the deployment has no key; other
+// failures (bad JSON, download errors) pass through as-is.
+function friendlyParseError(raw: string): string {
+  if (raw.includes("ANTHROPIC_API_KEY is not set")) {
+    return "AI parsing isn't configured for this deployment — enter the itinerary manually.";
+  }
+  return raw;
+}
 
 // Packet tab (§5, T015). Upload a host packet (PDF/image); when the packet_parse
 // flag is on, an AI draft parse runs and lands in a review screen (draft-only,
@@ -144,7 +162,7 @@ export default async function PacketPage({
                     <span className="muted">no parse</span>
                   )}
                   {p?.status === "failed" && p.error ? (
-                    <div className="muted">{p.error}</div>
+                    <div className="muted">{friendlyParseError(p.error)}</div>
                   ) : null}
                 </td>
                 <td>
@@ -155,23 +173,42 @@ export default async function PacketPage({
                       {p.status === "review" ? "Review draft" : "View / re-review"}
                     </Link>
                   )}
-                  {p && p.status === "failed" && (
-                    <>
-                      <Link href={`/${slug}/competitions/${competitionId}/itinerary`}>
-                        Enter manually
-                      </Link>
-                      {canWrite && (
-                        <form action={reparsePacket} style={{ display: "inline" }}>
+                  {p && (p.status === "queued" || p.status === "running") && (
+                    isStuck(p.created_at) ? (
+                      canWrite && (
+                        <form action={runParseNow} style={{ display: "inline" }}>
                           <input type="hidden" name="programId" value={program.id} />
                           <input type="hidden" name="slug" value={slug} />
                           <input type="hidden" name="competitionId" value={competitionId} />
                           <input type="hidden" name="parseId" value={p.id} />
                           <button type="submit" className="linklike">
-                            Try again
+                            Run parse now
                           </button>
                         </form>
-                      )}
-                    </>
+                      )
+                    ) : (
+                      <span className="muted">Parsing — refresh in a moment.</span>
+                    )
+                  )}
+                  {p && p.status === "failed" && canWrite && (
+                    <form action={reparsePacket} style={{ display: "inline" }}>
+                      <input type="hidden" name="programId" value={program.id} />
+                      <input type="hidden" name="slug" value={slug} />
+                      <input type="hidden" name="competitionId" value={competitionId} />
+                      <input type="hidden" name="parseId" value={p.id} />
+                      <button type="submit" className="linklike">
+                        Try again
+                      </button>
+                    </form>
+                  )}
+                  {/* Manual fallback stays available for any not-yet-accepted parse. */}
+                  {p && p.status !== "accepted" && (
+                    <Link
+                      href={`/${slug}/competitions/${competitionId}/itinerary`}
+                      style={{ marginLeft: "0.5rem" }}
+                    >
+                      Enter manually
+                    </Link>
                   )}
                 </td>
               </tr>

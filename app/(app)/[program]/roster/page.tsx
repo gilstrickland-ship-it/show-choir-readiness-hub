@@ -4,7 +4,7 @@ import { getTenantContext } from "@/lib/tenant";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
 import { RosterTabs } from "./RosterTabs";
-import { addStudent } from "./actions";
+import { addStudent, emailAllGuardianLinks } from "./actions";
 
 // Roster directory — the one management surface that reads `students` directly
 // (it manages the hub itself). Lists all non-graduated students for the program;
@@ -30,13 +30,16 @@ export default async function RosterPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ q?: string; status?: string; error?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; error?: string; bulk?: string }>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
   if (!ROSTER_ROLES.includes(role)) notFound();
   const canWrite = ROSTER_WRITE_ROLES.includes(role);
-  const { q, status, error } = await searchParams;
+  const { q, status, error, bulk } = await searchParams;
+
+  // Bulk email result, encoded "sent.skipped.failed".
+  const bulkCounts = bulk?.match(/^(\d+)\.(\d+)\.(\d+)$/);
 
   const search = sanitizeSearch(q ?? "");
   const statusFilter = status === "inactive" || status === "active" ? status : "all";
@@ -99,6 +102,13 @@ export default async function RosterPage({
         <p className="alert-error">A student needs a first and last name.</p>
       )}
       {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
+      {bulkCounts && (
+        <p className={Number(bulkCounts[1]) > 0 ? "alert-ok" : "alert-error"}>
+          Family links: {bulkCounts[1]} emailed, {bulkCounts[2]} skipped
+          {Number(bulkCounts[2]) > 0 && " (email isn't configured — copy links per family instead)"}
+          {Number(bulkCounts[3]) > 0 && `, ${bulkCounts[3]} failed`}.
+        </p>
+      )}
 
       <form method="get" className="row-inline">
         <input
@@ -117,6 +127,18 @@ export default async function RosterPage({
           Filter
         </button>
       </form>
+
+      {canWrite && (
+        <form action={emailAllGuardianLinks}>
+          <input type="hidden" name="programId" value={program.id} />
+          <button type="submit" className="secondary">
+            Email links to all families
+          </button>
+          <span className="muted" style={{ marginLeft: "0.75rem", fontSize: "0.85rem" }}>
+            Sends each family their personal links. Existing links keep working.
+          </span>
+        </form>
+      )}
 
       <table className="members">
         <thead>

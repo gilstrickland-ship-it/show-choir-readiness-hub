@@ -124,6 +124,34 @@ export async function uploadPacket(formData: FormData): Promise<void> {
   redirect(`${packetPath(slug, competitionId)}?uploaded=1`);
 }
 
+// Run a stuck parse inline (F7). Rows can strand in queued/running when the
+// inline fallback process died or Inngest never delivered. This runs the existing
+// worker synchronously. runPacketParse re-reads the row and drives it through
+// running → review/failed; we only invoke it while the row is still queued/running
+// so a completed row (someone else finished, double-submit) is left untouched.
+export async function runParseNow(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const competitionId = String(formData.get("competitionId") ?? "");
+  const parseId = String(formData.get("parseId") ?? "");
+  await requireRole(programId, COMPETITION_WRITE_ROLES);
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("packet_parses")
+    .select("status")
+    .eq("id", parseId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  const status = (data as { status: string } | null)?.status;
+  if (status === "queued" || status === "running") {
+    await runPacketParse(parseId);
+  }
+
+  revalidatePath(packetPath(slug, competitionId));
+  redirect(`${packetPath(slug, competitionId)}?uploaded=1`);
+}
+
 // Re-run a parse (e.g. after a failure). Resets to queued and re-triggers.
 export async function reparsePacket(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");

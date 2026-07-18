@@ -90,10 +90,14 @@ export default async function RolloverPage({
       <div className="settings-tabs">
         <Link href={`/${slug}/settings`}>Program</Link>
         <Link href={`/${slug}/settings/members`}>Members</Link>
-        <strong>Rollover &amp; Archive</strong>
+        <strong>Seasons</strong>
         <Link href={`/${slug}/settings/export`}>Export &amp; Data</Link>
       </div>
-      <h1>Season rollover &amp; archive</h1>
+      <h1>Seasons</h1>
+      <p className="muted">
+        Create your first season below, roll over into next year, and archive past
+        seasons to freeze them read-only.
+      </p>
 
       {sp.error && <p className="alert-error">{ERR[sp.error] ?? "Something went wrong."}</p>}
       {sp.archived && <p className="alert-ok">Season archived — it is now read-only.</p>}
@@ -210,7 +214,7 @@ export default async function RolloverPage({
       </div>
 
       {/* --- Archive controls --- */}
-      <h2>Seasons</h2>
+      <h2>All seasons</h2>
       {seasons.some((s) => s.archived_at) && <ArchivedBanner />}
       <table className="members">
         <thead>

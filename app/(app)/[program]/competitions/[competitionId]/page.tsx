@@ -155,6 +155,9 @@ export default async function CompetitionOverviewPage({
       {sp.reseeded && <p className="alert-ok">Attendance reseeded (expected for everyone new).</p>}
       {sp.results && <p className="alert-ok">Results saved.</p>}
       {sp.error === "name" && <p className="alert-error">A competition needs a name.</p>}
+      {sp.error === "ensemble" && (
+        <p className="alert-error">Pick an ensemble for the competition.</p>
+      )}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
       {sp.error === "results" && <p className="alert-error">Couldn&apos;t save results.</p>}
 
@@ -225,7 +228,14 @@ export default async function CompetitionOverviewPage({
 
       {/* ---- Edit form ---- */}
       <h2>Details</h2>
-      {canWrite ? (
+      {canWrite && ensembles.length === 0 ? (
+        <p className="muted">
+          A competition attaches to an ensemble so it can seed attendance, meals,
+          and checkout.{" "}
+          <Link href={`/${slug}/roster/ensembles`}>Create an ensemble first</Link>,
+          then set it here.
+        </p>
+      ) : canWrite ? (
         <form action={updateCompetition} className="stack">
           <input type="hidden" name="programId" value={program.id} />
           <input type="hidden" name="slug" value={slug} />
@@ -243,8 +253,10 @@ export default async function CompetitionOverviewPage({
             </label>
             <label>
               Ensemble
-              <select name="ensemble_id" defaultValue={comp.ensemble_id ?? ""}>
-                <option value="">— (none / whole program)</option>
+              <select name="ensemble_id" defaultValue={comp.ensemble_id ?? ""} required>
+                <option value="" disabled>
+                  — choose ensemble —
+                </option>
                 {ensembles.map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.name}

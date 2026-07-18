@@ -1,14 +1,15 @@
-import { notFound } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { getResolvedToken, getClientIp, rateLimitRawToken } from "@/lib/public-token";
 import { logTokenEvent } from "@/lib/tokens";
+import { LinkExpired } from "./link-expired";
 import "@/app/globals.css";
 
 // Tokenized parent surface (§8a) — no auth, mobile-first, all times in program
 // tz. The layout is the security gate for every /t/[token] page:
 //   1. rate-limit (per-IP + per-token, §10) — over budget renders a 429 page;
 //   2. resolve the token via the service-role client (RLS does not apply here);
-//   3. 404 cleanly on invalid / revoked / expired — never reveal structure;
+//   3. on invalid / revoked / rotated, render a friendly "link no longer active"
+//      screen — never reveals whether the token ever existed or any structure;
 //   4. log a 'view' token_event (§10 audit).
 // Pages re-read the resolved token via the request-cached getResolvedToken.
 
@@ -38,7 +39,7 @@ export default async function TokenLayout({
 
   const resolved = await getResolvedToken(token);
   if (!resolved) {
-    notFound();
+    return <LinkExpired />;
   }
 
   // Audit the view (best-effort — never blocks the render).

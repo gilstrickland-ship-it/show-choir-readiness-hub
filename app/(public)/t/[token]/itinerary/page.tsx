@@ -75,6 +75,7 @@ export default async function PublicItineraryPage({
 
   // Load ONLY published itineraries for those competitions.
   const blocks: Array<{
+    competitionId: string;
     competitionName: string;
     date: string | null;
     items: ItemRow[];
@@ -90,6 +91,7 @@ export default async function PublicItineraryPage({
 
     for (const it of (itins as unknown as Array<{
       id: string;
+      competition_id: string;
       competition: { name: string; date: string | null } | null;
     }> | null) ?? []) {
       const { data: items } = await supabase
@@ -100,6 +102,7 @@ export default async function PublicItineraryPage({
         .order("sort_order", { ascending: true })
         .order("starts_at", { ascending: true });
       blocks.push({
+        competitionId: it.competition_id,
         competitionName: it.competition?.name ?? "Competition",
         date: it.competition?.date ?? null,
         items: (items as ItemRow[] | null) ?? [],
@@ -123,6 +126,13 @@ export default async function PublicItineraryPage({
               <span className="muted"> · {formatDateInTz(block.date, tz)}</span>
             )}
           </h2>
+          <p>
+            {/* Published-only (invariant §9.3) — every block here IS published, so
+                this link always resolves. The route re-checks eligibility. */}
+            <a href={`/t/${token}/packet?competition=${block.competitionId}`}>
+              Download packet (PDF)
+            </a>
+          </p>
           {block.items.length === 0 ? (
             <p className="muted">No schedule items.</p>
           ) : (

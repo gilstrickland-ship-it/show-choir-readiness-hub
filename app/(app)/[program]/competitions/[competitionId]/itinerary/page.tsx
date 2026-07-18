@@ -44,7 +44,12 @@ export default async function ItineraryPage({
   searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string }>;
-  searchParams: Promise<{ published?: string; confirm?: string; share?: string }>;
+  searchParams: Promise<{
+    published?: string;
+    confirm?: string;
+    share?: string;
+    accepted?: string;
+  }>;
 }) {
   const { program: slug, competitionId } = await params;
   const { program, role } = await getTenantContext(slug);
@@ -137,6 +142,11 @@ export default async function ItineraryPage({
       <h1>Itinerary</h1>
 
       {sp.published && <p className="alert-ok">Itinerary published — visible to parents.</p>}
+      {sp.accepted && (
+        <p className="alert-ok">
+          Parsed itinerary applied — review the items below, then publish.
+        </p>
+      )}
 
       {/* Broadcast share link (FR-002 / §8a) — read-only URL anyone can open. */}
       {canWrite && isPublished && (
