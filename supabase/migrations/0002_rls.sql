@@ -576,50 +576,74 @@ begin
     values ('receipts', 'receipts', false)
     on conflict (id) do nothing;
 
-  execute 'alter table storage.objects enable row level security';
+  -- On hosted/local Supabase the postgres role does not own storage.objects and
+  -- RLS is already enabled by the platform. Attempt and tolerate lack of
+  -- ownership; storage policies below likewise degrade to notices when the
+  -- migration role cannot manage policies on the storage tables.
+  begin
+    execute 'alter table storage.objects enable row level security';
+  exception when insufficient_privilege then
+    raise notice 'not owner of storage.objects — RLS already managed by platform';
+  end;
 
   -- Read: active members of the program that owns the folder.
-  execute $p$ drop policy if exists octv_storage_read on storage.objects $p$;
-  execute $p$
-    create policy octv_storage_read on storage.objects for select to authenticated
-    using (
-      bucket_id in ('documents','receipts')
-      and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
-    )
-  $p$;
+  begin
+    execute $p$ drop policy if exists octv_storage_read on storage.objects $p$;
+    execute $p$
+      create policy octv_storage_read on storage.objects for select to authenticated
+      using (
+        bucket_id in ('documents','receipts')
+        and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
+      )
+    $p$;
+  exception when insufficient_privilege then
+    raise notice 'insufficient privilege for octv_storage_read — skipping';
+  end;
 
   -- Insert
-  execute $p$ drop policy if exists octv_storage_insert on storage.objects $p$;
-  execute $p$
-    create policy octv_storage_insert on storage.objects for insert to authenticated
-    with check (
-      bucket_id in ('documents','receipts')
-      and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
-    )
-  $p$;
+  begin
+    execute $p$ drop policy if exists octv_storage_insert on storage.objects $p$;
+    execute $p$
+      create policy octv_storage_insert on storage.objects for insert to authenticated
+      with check (
+        bucket_id in ('documents','receipts')
+        and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
+      )
+    $p$;
+  exception when insufficient_privilege then
+    raise notice 'insufficient privilege for octv_storage_insert — skipping';
+  end;
 
   -- Update
-  execute $p$ drop policy if exists octv_storage_update on storage.objects $p$;
-  execute $p$
-    create policy octv_storage_update on storage.objects for update to authenticated
-    using (
-      bucket_id in ('documents','receipts')
-      and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
-    )
-    with check (
-      bucket_id in ('documents','receipts')
-      and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
-    )
-  $p$;
+  begin
+    execute $p$ drop policy if exists octv_storage_update on storage.objects $p$;
+    execute $p$
+      create policy octv_storage_update on storage.objects for update to authenticated
+      using (
+        bucket_id in ('documents','receipts')
+        and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
+      )
+      with check (
+        bucket_id in ('documents','receipts')
+        and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
+      )
+    $p$;
+  exception when insufficient_privilege then
+    raise notice 'insufficient privilege for octv_storage_update — skipping';
+  end;
 
   -- Delete
-  execute $p$ drop policy if exists octv_storage_delete on storage.objects $p$;
-  execute $p$
-    create policy octv_storage_delete on storage.objects for delete to authenticated
-    using (
-      bucket_id in ('documents','receipts')
-      and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
-    )
-  $p$;
+  begin
+    execute $p$ drop policy if exists octv_storage_delete on storage.objects $p$;
+    execute $p$
+      create policy octv_storage_delete on storage.objects for delete to authenticated
+      using (
+        bucket_id in ('documents','receipts')
+        and (storage.foldername(name))[1]::uuid in (select private.member_program_ids())
+      )
+    $p$;
+  exception when insufficient_privilege then
+    raise notice 'insufficient privilege for octv_storage_delete — skipping';
+  end;
 end
 $storage$;
