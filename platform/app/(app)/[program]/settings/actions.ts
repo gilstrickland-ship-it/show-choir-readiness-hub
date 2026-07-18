@@ -7,6 +7,11 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRole, type Role } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
+import { supportAccessUntilFromNow } from "@/lib/support";
+
+// Season archive/unarchive + support access are director-only (unarchive and the
+// support-consent toggle are the most consequential lifecycle switches; §10, §9.4).
+const DIRECTOR_ONLY: readonly Role[] = ["director"];
 
 // Settings mutations. Every action re-checks director/admin against
 // program_members via requireRole (Constitution I, defense in depth) even though
@@ -191,4 +196,94 @@ export async function removeMember(formData: FormData): Promise<void> {
   }
   revalidatePath(`/${slug}/settings/members`);
   redirect(`/${slug}/settings/members?saved=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Support access (§10, T030). Director grants a 7-day read-only window to Octv
+// support, or revokes it immediately. RLS (0004) is the real gate; this just
+// sets/clears programs.support_access_until.
+// ---------------------------------------------------------------------------
+
+export async function grantSupportAccess(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  await requireRole(programId, DIRECTOR_ONLY);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("programs")
+    .update({ support_access_until: supportAccessUntilFromNow() })
+    .eq("id", programId);
+
+  if (error) {
+    redirect(`/${slug}/settings?error=support`);
+  }
+  revalidatePath(`/${slug}/settings`);
+  redirect(`/${slug}/settings?saved=1`);
+}
+
+export async function revokeSupportAccess(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  await requireRole(programId, DIRECTOR_ONLY);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("programs")
+    .update({ support_access_until: null })
+    .eq("id", programId);
+
+  if (error) {
+    redirect(`/${slug}/settings?error=support`);
+  }
+  revalidatePath(`/${slug}/settings`);
+  redirect(`/${slug}/settings?saved=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Season archive / unarchive (§9.4, invariant 4). Archiving sets
+// seasons.archived_at → all season-scoped writes are frozen by RLS (the vault).
+// Archive is director/admin; unarchive is director-only. Guarded so a program
+// never loses its only active season by archiving it — you deactivate first.
+// ---------------------------------------------------------------------------
+
+export async function archiveSeason(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const seasonId = String(formData.get("seasonId") ?? "");
+  await requireRole(programId, SETTINGS_ROLES);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("seasons")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", seasonId)
+    .eq("program_id", programId)
+    .is("archived_at", null);
+
+  if (error) {
+    redirect(`/${slug}/settings/rollover?error=archive`);
+  }
+  revalidatePath(`/${slug}/settings/rollover`);
+  redirect(`/${slug}/settings/rollover?archived=1`);
+}
+
+export async function unarchiveSeason(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const seasonId = String(formData.get("seasonId") ?? "");
+  await requireRole(programId, DIRECTOR_ONLY);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("seasons")
+    .update({ archived_at: null })
+    .eq("id", seasonId)
+    .eq("program_id", programId);
+
+  if (error) {
+    redirect(`/${slug}/settings/rollover?error=unarchive`);
+  }
+  revalidatePath(`/${slug}/settings/rollover`);
+  redirect(`/${slug}/settings/rollover?unarchived=1`);
 }

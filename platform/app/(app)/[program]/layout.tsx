@@ -26,12 +26,18 @@ export default async function ProgramLayout({
   params: Promise<{ program: string }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags } = await getTenantContext(slug);
+  const { program, role, season, flags, isSupport } = await getTenantContext(slug);
 
   const items = NAV.filter((item) => isNavItemVisible(item, role, flags));
 
   return (
     <div className="shell">
+      {isSupport && (
+        <div className="support-banner" role="status">
+          {brand.name} support is viewing <strong>{program.name}</strong> in
+          read-only mode. Nothing you see here can be changed from this session.
+        </div>
+      )}
       <header className="shell-header">
         <div className="shell-brand">
           <Link href={`/${slug}/dashboard`}>{program.name}</Link>
@@ -41,7 +47,9 @@ export default async function ProgramLayout({
           </span>
         </div>
         <div className="shell-account">
-          <span className="badge">{ROLE_LABELS[role] ?? role}</span>
+          <span className="badge">
+            {isSupport ? `${brand.name} support` : (ROLE_LABELS[role] ?? role)}
+          </span>
           <form action={signOut}>
             <button type="submit" className="linklike">
               Sign out

@@ -55,10 +55,10 @@
 
 ## Phase P8 — Lifecycle (needs all)
 
-- [ ] T027 Dashboard: next-comp countdown, alterations queue, open shifts, balance, bounce chip, send-failure surfacing.
-- [ ] T028 Season rollover wizard (copy ensembles, returning-student prompts, graduate seniors, re-point costume sets) + archive (read-only via RLS) + trophy case (results history).
-- [ ] T029 Export-all (async zip: roster/guardians/ledger CSVs + generated PDFs, email link) and program deletion (30-day soft window documented).
-- [ ] T030 Support access (`profiles.is_support`, `support_access_until` consent, banner, logging), seed/demo data (`supabase/seed.sql`), Sentry wiring both app + Inngest.
+- [X] T027 Dashboard: next-comp countdown, alterations queue, open shifts, balance, bounce chip, send-failure surfacing.
+- [X] T028 Season rollover wizard (copy ensembles, returning-student prompts, graduate seniors, re-point costume sets) + archive (read-only via RLS) + trophy case (results history).
+- [X] T029 Export-all (async zip: roster/guardians/ledger CSVs + generated PDFs, email link) and program deletion (30-day soft window documented).
+- [X] T030 Support access (`profiles.is_support`, `support_access_until` consent, banner, logging), seed/demo data (`supabase/seed.sql`), Sentry wiring both app + Inngest.
 
 ## Dependencies summary
 

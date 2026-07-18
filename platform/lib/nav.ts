@@ -57,6 +57,8 @@ export const NAV: readonly NavItem[] = [
   { slot: "travel", label: "Travel", flag: "travel" },
   { slot: "treasury", label: "Treasury", flag: "treasury", roles: TREASURY_ROLES },
   { slot: "comms", label: "Comms", flag: "comms", roles: COMMS_ROLES },
+  // Trophy case / season archive — visible to every staff role (§5, T028).
+  { slot: "history", label: "History", flag: "archive" },
   { slot: "settings", label: "Settings", roles: SETTINGS_ROLES },
 ];
 

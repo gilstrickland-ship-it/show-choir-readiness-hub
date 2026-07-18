@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { inngest } from "@/lib/inngest/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { flag, type FlaggableProgram } from "@/lib/flags";
@@ -48,6 +49,9 @@ export const digestDraftCron = inngest.createFunction(
           const r = await draftDigest(p.id, weekOf);
           return r.status;
         } catch (e) {
+          // Surface the failure (§10) — a silently-failed digest draft is invisible
+          // otherwise. Sentry is a no-op without a DSN. The batch continues.
+          Sentry.captureException(e, { tags: { job: "digest-draft", programId: p.id } });
           return `error:${e instanceof Error ? e.message : String(e)}`;
         }
       });

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAnthropic, packetParseModel } from "@/lib/ai/client";
 import {
@@ -275,6 +276,12 @@ export async function runPacketParse(
 
     return "review";
   } catch (err) {
+    // Surface the failure (§10); Sentry is a no-op without a DSN. The row is left
+    // in a terminal 'failed' state either way, and the manual editor degrades
+    // gracefully (§5.6).
+    Sentry.captureException(err, {
+      tags: { job: "packet-parse", parseId, programId: parse.program_id },
+    });
     const message = err instanceof Error ? err.message : String(err);
     await supabase
       .from("packet_parses")

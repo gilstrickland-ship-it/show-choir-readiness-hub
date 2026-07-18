@@ -70,6 +70,10 @@ const SLOT = {
   budget_line_archived: 64,
   ledger_voided: 65,
   ledger_audit_extra: 66,
+  // Octv support user (is_support = true, NOT a member of any program). Slot in
+  // both A and B id-spaces resolves to the same person only via the `S` export;
+  // kept ≥ 70 so it never collides with per-program slots.
+  support_user: 70,
 } as const;
 
 type Slot = keyof typeof SLOT;
@@ -198,3 +202,8 @@ function build(prefix: 'a' | 'b'): ProgramIds {
 
 export const A: ProgramIds = build('a');
 export const B: ProgramIds = build('b');
+
+// Octv support user — a single global identity (not tied to A or B), used by the
+// support-access spec. is_support = true, no program membership. Program A grants
+// support consent (support_access_until in the future); program B does not.
+export const SUPPORT_USER = fid('a', SLOT.support_user);

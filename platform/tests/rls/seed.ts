@@ -12,7 +12,7 @@
 // ============================================================================
 
 import { Pool } from 'pg';
-import { A, B, type ProgramIds } from './fixtures';
+import { A, B, SUPPORT_USER, type ProgramIds } from './fixtures';
 
 /** Full active-season data for one program. */
 function seedProgramSql(p: ProgramIds, prefix: string): string {
@@ -185,6 +185,27 @@ insert into ledger_audit (id, program_id, entry_id, action, actor) values
 `;
 }
 
+/**
+ * Octv support user + consent state (T030). One support identity with
+ * is_support = true and NO program membership. Program A grants support consent
+ * (support_access_until in the future); program B grants none — so the spec can
+ * prove support+consent reads, support-without-consent is blocked, and support
+ * never writes. Because the support user is not a member and not is_support-less
+ * peers of A/B, the isolation sweep (which uses A's director/etc.) is unaffected.
+ */
+function seedSupportSql(): string {
+  return `
+insert into auth.users (id, email) values
+  ('${SUPPORT_USER}', 'octv-support@example.test');
+
+insert into profiles (id, full_name, is_support) values
+  ('${SUPPORT_USER}', 'Octv Support', true);
+
+-- Program A consents to support for the next day; program B leaves it null.
+update programs set support_access_until = now() + interval '1 day' where id = '${A.program}';
+`;
+}
+
 export async function seedDatabase(url: string): Promise<void> {
   const pool = new Pool({ connectionString: url, max: 1 });
   try {
@@ -194,6 +215,7 @@ export async function seedDatabase(url: string): Promise<void> {
       await c.query(seedProgramSql(A, 'A'));
       await c.query(seedProgramSql(B, 'B'));
       await c.query(seedArchivedExtrasSql(A));
+      await c.query(seedSupportSql());
       await c.query('commit');
     } catch (err) {
       await c.query('rollback').catch(() => {});
