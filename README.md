@@ -2,24 +2,23 @@
 
 The operational backbone for a school's competitive show choir program — director + booster side. Tracks money, never moves it. AI strictly backstage. Parents never need accounts.
 
-> The product is currently under the working codename "Octv"; all branding is env-driven via `platform/lib/brand.ts` (renaming is a one-file change plus DNS).
+> The product is currently under the working codename "Octv"; all branding is env-driven via `lib/brand.ts` (renaming is a one-file change plus DNS).
 
 ## What's in this repo
 
 | Path | Contents |
 |---|---|
-| `platform/` | The application: Next.js App Router + Supabase (Postgres/Auth/Storage with per-program RLS), Inngest jobs, Resend email, React-PDF documents, Claude API (packet parse + digest drafts, always draft-only) |
+| `app/`, `lib/`, `supabase/`, `tests/` | The application: Next.js App Router + Supabase (Postgres/Auth/Storage with per-program RLS), Inngest jobs, Resend email, React-PDF documents, Claude API (packet parse + digest drafts, always draft-only) |
 | `specs/001-octv-platform/` | Spec Kit artifacts: architecture spec (authoritative), feature spec, plan, data model, and the 41-task build log |
 | `.specify/memory/constitution.md` | The project constitution — ten governing principles, three non-negotiable |
 | `docs/research/` | Original problem discovery, evidence matrix, MVP spec, and UX research that preceded the platform |
 | `.github/workflows/platform-ci.yml` | CI: typecheck, build, and the RLS test suite against Postgres 16 on every platform change |
 
-An earlier front-end prototype (Vite/React) lived at the repo root; it was retired in favor of `platform/` and remains available in git history.
+An earlier front-end prototype (Vite/React) lived at the repo root; it was retired in favor of this platform and remains available in git history.
 
 ## Quick start
 
 ```bash
-cd platform
 npm install
 cp .env.example .env.local   # fill in Supabase URL + keys
 # Apply supabase/migrations/*.sql to your Supabase project (supabase db push
@@ -37,7 +36,6 @@ Optional integrations (everything degrades gracefully without them):
 ## Tests
 
 ```bash
-cd platform
 npm run typecheck
 npm run test:unit   # pure-function suites (import parsing, money, tz, tokens, flags…)
 npm run test:rls    # 169 tests: tenant isolation on every table, role gates,
@@ -50,7 +48,7 @@ The RLS suite is CI-blocking: a cross-program data leak is the existential bug f
 
 ## Deployment
 
-- **Vercel**: set the project's Root Directory to `platform/`. No root-level config is needed.
+- **Vercel**: import the repo as-is — the app lives at the repo root, so no Root Directory override is needed.
 - **Supabase**: apply migrations in order (`0001`–`0005`); storage buckets and RLS policies are created by the migrations.
 - **Email**: verify the sending domain in Resend and point the bounce + inbound webhooks at `/api/webhooks/resend` and `/api/webhooks/resend-inbound`.
 
