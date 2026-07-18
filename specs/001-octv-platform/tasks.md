@@ -63,3 +63,17 @@
 ## Dependencies summary
 
 P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. Within a phase, tasks run in listed order unless marked [P].
+
+## Phase 9: Convergence
+
+- [ ] T031 Build the meal count form — per-competition headcount (expected − absent) per ensemble with a non-health logistics note field, as a staff screen plus a React-PDF `meal` doc in `api/pdf/[doc]` per arch §9 map / §1.7 / US4 (missing)
+- [ ] T032 Add staff minting/revocation for `share_links` — broadcast read-only links minted on itinerary publish and from the shifts page (signup browse mode), listed/revocable in settings, per FR-002 / arch §8a (partial)
+- [ ] T033 Build the quick-change grid — costume set transitions in sort_order × assigned students per competition, absent students greyed, per arch §3/§4/§9 (missing)
+- [ ] T034 Implement tier→flag-bundle mapping in `lib/flags.ts` — flag resolution becomes override ?? tier-bundle default ?? code default, with Prep/Varsity/Program bundles, per FR-008 / arch §12 (partial)
+- [ ] T035 Persist support-session audit — durable queryable log of support views (who, program, when) replacing console/breadcrumb-only logging, per arch §10 (partial)
+- [ ] T036 Make export-all an async job with email-link delivery (Inngest + Storage upload + Resend link), keeping sync download as dev fallback, per T029 / arch §13.2 (partial)
+- [ ] T037 Add `season/rollover-nudge` spring reminder cron per arch §10 Inngest list (missing)
+- [ ] T038 Move announcement and digest sending onto Inngest jobs for retry/batching per arch §10, keeping the no-key graceful mode (partial)
+- [ ] T039 Return real HTTP 429 responses on rate-limited `(public)/t/` requests (route-handler or middleware layer) per arch §10 hardening (partial)
+- [ ] T040 Surface a read-only banner on pages rendering archived-season data per arch §9 invariant 4 (partial)
+- [ ] T041 Sweep codename strings from code comments so the SC-006 grep is fully clean per Constitution IX (partial)
