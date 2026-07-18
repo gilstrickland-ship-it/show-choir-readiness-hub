@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
+import { COMPETITION_WRITE_ROLES, ATTENDANCE_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateInTz } from "@/lib/datetime";
 import { createCompetition } from "./actions";
 
@@ -59,9 +59,35 @@ export default async function CompetitionsPage({
   const ensembles = (ensData as EnsembleRow[] | null) ?? [];
   for (const e of ensembles) ensembleName.set(e.id, e.name);
 
+  // Pending parent absence requests → review-queue nudge for staff who can edit
+  // attendance.
+  const canReviewAbsences = ATTENDANCE_WRITE_ROLES.includes(role);
+  let pendingAbsences = 0;
+  if (canReviewAbsences) {
+    const { count } = await supabase
+      .from("absence_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id)
+      .eq("status", "pending");
+    pendingAbsences = count ?? 0;
+  }
+
   return (
     <section className="stack">
       <h1>Competitions</h1>
+
+      {canReviewAbsences && (
+        <p>
+          <Link href={`/${slug}/competitions/absences`}>
+            Absence requests
+            {pendingAbsences > 0 && (
+              <span className="badge" style={{ marginLeft: "0.4rem" }}>
+                {pendingAbsences} pending
+              </span>
+            )}
+          </Link>
+        </p>
+      )}
 
       {error === "name" && <p className="alert-error">A competition needs a name.</p>}
       {error === "season" && (

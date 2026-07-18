@@ -46,9 +46,9 @@
 
 ## Phase P7 — Comms + token layer (needs P2+P4)
 
-- [ ] T021 Token infrastructure: `lib/tokens.ts` (mint/hash/verify, capability allow-list, revocation), `token_events` logging, per-IP + per-token rate limiting, guardian-token embed helper for emails.
-- [ ] T022 `(public)/t/` surfaces (mobile-first, no auth): published itinerary, signup page (browse + claim/cancel), absence report form → `absence_requests` review queue for staff.
-- [ ] T023 Announcements: compose + ensemble filter + immediate Resend send + history; `announcement_sends` tracking; guardian-token footer links.
+- [X] T021 Token infrastructure: `lib/tokens.ts` (mint/hash/verify, capability allow-list, revocation), `token_events` logging, per-IP + per-token rate limiting, guardian-token embed helper for emails.
+- [X] T022 `(public)/t/` surfaces (mobile-first, no auth): published itinerary, signup page (browse + claim/cancel), absence report form → `absence_requests` review queue for staff.
+- [X] T023 Announcements: compose + ensemble filter + immediate Resend send + history; `announcement_sends` tracking; guardian-token footer links.
 - [ ] T024 Shifts: CRUD, attach to competition/trip/event, "suggest shifts" draft action (from itinerary items + costume set transitions, drafts only).
 - [ ] T025 Digest pipeline: Inngest cron gather (next 7 days) → Claude draft → review/edit/approve UI → send via Resend with per-family links; reminder-never-autosend; `digests`/`digest_sends`. Prompts in `lib/ai/prompts/digest-draft/`.
 - [ ] T026 Deliverability: Resend webhook route → `guardians.email_status`, dashboard bounce chip, unsubscribe honored; inbound email-forward ingestion route → documents → parse pipeline.

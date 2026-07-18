@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { ROSTER_WRITE_ROLES } from "@/lib/nav";
+import { rotateGuardianToken } from "@/lib/tokens";
 
 // Roster mutations (students + guardians + size-field config). Writes are
 // director/admin per §2 "Roster CRUD" — every action re-checks the role via
@@ -275,6 +276,34 @@ export async function removeGuardian(formData: FormData): Promise<void> {
   }
   revalidatePath(`/${slug}/roster/${studentId}`);
   redirect(`/${slug}/roster/${studentId}?saved=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Guardian tokenized links (§8a) — "generate / resend links"
+// ---------------------------------------------------------------------------
+
+// Mint a fresh guardian token (revoking any prior one — "resend links" rotates
+// per §8a) and hand the raw token back to the page so staff can copy the three
+// canonical links. The raw token is only knowable at mint time (hash-only at
+// rest), so it rides back in the redirect for a one-time display on the staff's
+// own screen. Director/admin only (guardian_tokens write gate).
+export async function resendGuardianLinks(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const studentId = String(formData.get("studentId") ?? "");
+  const guardianId = String(formData.get("guardianId") ?? "");
+  await requireRole(programId, ROSTER_WRITE_ROLES);
+
+  const supabase = await createClient();
+  const result = await rotateGuardianToken(supabase, { programId, guardianId });
+  if ("error" in result) {
+    redirect(`/${slug}/roster/${studentId}?error=links`);
+  }
+
+  revalidatePath(`/${slug}/roster/${studentId}`);
+  redirect(
+    `/${slug}/roster/${studentId}?linked=${guardianId}&token=${encodeURIComponent(result.raw)}#guardians`,
+  );
 }
 
 // ---------------------------------------------------------------------------

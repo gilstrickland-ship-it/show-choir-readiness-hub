@@ -10,7 +10,9 @@ import {
   addGuardian,
   updateGuardian,
   removeGuardian,
+  resendGuardianLinks,
 } from "../actions";
+import { guardianLinks } from "@/lib/tokens";
 
 // Student detail — edit name/grad-year/status/sizes, manage guardians, and
 // soft-delete (deactivate) with the §9 invariant-1 cascade. board_member reads;
@@ -47,13 +49,16 @@ export default async function StudentDetailPage({
     error?: string;
     deactivated?: string;
     confirm?: string;
+    linked?: string;
+    token?: string;
   }>;
 }) {
   const { program: slug, studentId } = await params;
   const { program, role, season } = await getTenantContext(slug);
   if (!ROSTER_ROLES.includes(role)) notFound();
   const canWrite = ROSTER_WRITE_ROLES.includes(role);
-  const { saved, error, deactivated, confirm } = await searchParams;
+  const { saved, error, deactivated, confirm, linked, token } = await searchParams;
+  const freshLinks = token ? guardianLinks(token) : null;
 
   const supabase = await createClient();
   const { data: studentData } = await supabase
@@ -114,6 +119,9 @@ export default async function StudentDetailPage({
       {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
       {error === "guardian" && (
         <p className="alert-error">A guardian needs a name. Check the details and retry.</p>
+      )}
+      {error === "links" && (
+        <p className="alert-error">Couldn&apos;t generate links. Try again.</p>
       )}
       {error === "deactivate" && (
         <p className="alert-error">Couldn&apos;t deactivate the student. Try again.</p>
@@ -204,8 +212,26 @@ export default async function StudentDetailPage({
       )}
 
       {/* ---- Guardians ---- */}
-      <h2>Guardians</h2>
+      <h2 id="guardians">Guardians</h2>
       <p className="muted">{NO_HEALTH_LABEL}</p>
+      {freshLinks && (
+        <div className="confirm-box stack" style={{ width: "100%" }}>
+          <strong>Family links generated.</strong>
+          <p className="muted">
+            Copy these into a message to the family. Any previous link for this
+            guardian is now revoked — the newest link is always the live one.
+          </p>
+          <div>
+            Itinerary: <code>{freshLinks.itinerary}</code>
+          </div>
+          <div>
+            Volunteer signup: <code>{freshLinks.signup}</code>
+          </div>
+          <div>
+            Report an absence: <code>{freshLinks.absence}</code>
+          </div>
+        </div>
+      )}
       <table className="members">
         <thead>
           <tr>
@@ -260,15 +286,26 @@ export default async function StudentDetailPage({
                     </form>
                   </td>
                   <td>
-                    <form action={removeGuardian}>
-                      <input type="hidden" name="programId" value={program.id} />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="studentId" value={student.id} />
-                      <input type="hidden" name="guardianId" value={g.id} />
-                      <button type="submit" className="linklike danger">
-                        Remove
-                      </button>
-                    </form>
+                    <div className="stack">
+                      <form action={resendGuardianLinks}>
+                        <input type="hidden" name="programId" value={program.id} />
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="guardianId" value={g.id} />
+                        <button type="submit" className="secondary">
+                          {linked === g.id ? "Resend links" : "Generate links"}
+                        </button>
+                      </form>
+                      <form action={removeGuardian}>
+                        <input type="hidden" name="programId" value={program.id} />
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="studentId" value={student.id} />
+                        <input type="hidden" name="guardianId" value={g.id} />
+                        <button type="submit" className="linklike danger">
+                          Remove
+                        </button>
+                      </form>
+                    </div>
                   </td>
                 </>
               ) : (
