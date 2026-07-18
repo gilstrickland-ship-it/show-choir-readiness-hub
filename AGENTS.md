@@ -1,166 +1,30 @@
-# Project Handoff
+# Agent / AI-Tool Handoff
 
-This repo contains a working Vite + React + TypeScript prototype for **Show Choir Readiness Hub**.
+This repo contains the Season OS platform for competitive show choir programs (working codename "Octv" — brand is env-driven, never hardcoded).
 
-The goal is to keep a school show choir program aligned in one place:
-- students see what changed, what to practice, what to bring, and what is next
-- parents get logistics-only visibility
-- leaders manage updates, branding, and organization settings
+## Read these first, in order
 
-## Current Product Shape
+1. `.specify/memory/constitution.md` — ten governing principles. I, III, and IV are NON-NEGOTIABLE: per-program tenant isolation (RLS + tests), directory-tier PII only (no health/medical/emergency/DOB/address/photo data, ever), and AI as draft-producer only (nothing AI-generated reaches a parent without staff approval).
+2. `specs/001-octv-platform/architecture-spec.md` — the authoritative product/architecture spec.
+3. `specs/001-octv-platform/tasks.md` — the 41-task build log (all complete); `plan.md` and `data-model.md` explain structure and schema conventions.
 
-- `student` view:
-  - Home
-  - Queue
-  - Updates
-  - Guide
-- `parent` view:
-  - Home
-  - Updates
-  - Guide
-- `leader` view:
-  - Dashboard
-  - Publish
-  - Settings
+## The codebase (`platform/`)
 
-## Prototype Access Flow
+- Next.js App Router, TypeScript strict, server components + server actions throughout, **no client state library**; `'use client'` only where a form genuinely needs interactivity.
+- Supabase: schema + RLS live in `supabase/migrations/0001`–`0005`. Every migration pairs schema with policies. The RLS harness (`tests/rls/harness.ts`) applies all migrations in lexical order — new migrations are exercised automatically, and the isolation suite enumerates every `program_id` table at runtime.
+- Roles: director, admin, treasurer, costume_manager, board_member (matrix in arch spec §2). RLS enforces coarsely; every server action re-checks via `lib/auth.ts` `requireRole` (defense in depth).
+- Parents/students have no accounts. The parents' entire surface is `(public)/t/[token]` driven by `lib/tokens.ts` — an explicit capability allow-list over hashed-at-rest tokens. Keep that allow-list tiny.
+- Feature exposure is flag-gated server-side (`lib/flags.ts`: override ?? tier bundle ?? default). Routes 404 via `requireFlag`; Inngest jobs check the same helper.
+- Branding flows only from `lib/brand.ts` + env (Constitution IX). A codename grep over `app/ lib/ emails/` must hit only `brand.ts`.
+- Money is integer cents; ledger rows void, never delete/update (DB trigger enforces).
+- All times timestamptz UTC, rendered in `programs.timezone` via `lib/datetime.ts`.
 
-The auth flow is intentionally simplified for prototype use:
+## Working rules
 
-1. Sign-in screen accepts any text or blank input.
-2. User continues into the join screen.
-3. User can tap one of the built-in role selectors:
-   - `Student`
-   - `Parent`
-   - `Leader`
+- Verification gate for any change: `npm run typecheck && npm run build && npm run test:unit && npm run test:rls` (in `platform/`). The RLS suite provisions a throwaway Postgres; CI runs it against a postgres:16 service.
+- Follow the Spec Kit lifecycle for new work: update `specs/` first (`/speckit-specify`, `/speckit-plan`, `/speckit-tasks`), implement against task IDs, then `/speckit-converge` to audit.
+- Free-text fields that reach staff or parents carry the "Do not enter health or medical information." label — keep it on new surfaces.
 
-No real auth backend exists yet.
+## History
 
-## Leader Capabilities Implemented
-
-From leader routes:
-
-- `Dashboard`
-  - leader landing page
-  - can edit and delete all seeded:
-    - events
-    - updates
-    - tasks
-- `Publish`
-  - create new updates
-  - optionally create a linked task
-- `Settings`
-  - change program name
-  - set logo URL
-  - change primary and accent colors
-  - rename choirs
-
-## Branding / Theme Behavior
-
-Branding is stored in app state and persisted to local storage.
-
-Leaders can change:
-- `program.name`
-- `program.logoUrl`
-- `program.primaryColor`
-- `program.accentColor`
-- choir names
-
-The current UI theme uses CSS variables:
-- `--brand-primary`
-- `--brand-accent`
-
-These are applied across student, parent, and leader views.
-
-## Data Model
-
-The prototype uses a **program + multiple choirs** model:
-
-- one `program`
-- multiple `choirs`
-- students can belong to multiple choirs
-- events and updates can be:
-  - `program` scoped
-  - `choir` scoped
-
-Core types are in:
-- `/Users/gil/Documents/codex projects/show choir kids /src/types.ts`
-
-Seed data is in:
-- `/Users/gil/Documents/codex projects/show choir kids /src/data.ts`
-
-Shared state is in:
-- `/Users/gil/Documents/codex projects/show choir kids /src/context/AppContext.tsx`
-
-## Persistence
-
-This is still a front-end prototype.
-
-State is stored in browser local storage under:
-- `show-choir-readiness-hub-state`
-
-There is no real backend, database, or auth provider yet.
-
-## Main Routes
-
-- `/auth/sign-in`
-- `/join`
-- `/student/home`
-- `/student/queue`
-- `/student/updates`
-- `/student/guide`
-- `/parent/home`
-- `/parent/updates`
-- `/parent/guide`
-- `/leader/dashboard`
-- `/leader/publish`
-- `/leader/settings`
-
-## Deployment
-
-Production is deployed on Vercel:
-- [show-choir-readiness-hub.vercel.app](https://show-choir-readiness-hub.vercel.app)
-
-SPA routing is handled by:
-- `/Users/gil/Documents/codex projects/show choir kids /vercel.json`
-
-## Local Commands
-
-- install: `npm install`
-- dev: `npm run dev`
-- build: `npm run build`
-- smoke tests: `npm run test:smoke`
-- smoke tests (headed): `npm run test:smoke:headed`
-
-## Smoke Coverage
-
-Playwright smoke tests live in:
-- `/Users/gil/Documents/codex projects/show choir kids /tests/smoke`
-
-Current smoke coverage exercises:
-- auth entry and role selection
-- student navigation and task persistence
-- parent navigation
-- leader dashboard navigation
-- leader edit drawer
-- leader publish flow
-- leader settings, branding, user import, search, and remove
-
-The Playwright config is:
-- `/Users/gil/Documents/codex projects/show choir kids /playwright.config.ts`
-
-## Important Constraints
-
-- This repo is a prototype, not production-ready app infrastructure.
-- Keep the program + choir model intact.
-- Parent view is logistics-only.
-- Avoid reintroducing fake email requirements into the prototype sign-in flow.
-- Leader dashboard is the leader landing page.
-
-## Next Practical Build Steps
-
-1. Replace prompt-based edit flows with inline forms or modals.
-2. Add real backend persistence.
-3. Add real auth and role-based authorization.
-4. Add upload support for logo/media instead of URL-only branding.
-5. Add leader CRUD for creating and deleting choirs and more program settings.
+The original Vite/React prototype and its research docs preceded this platform. The prototype was removed from the working tree (recoverable in git history); the research lives in `docs/research/`.
