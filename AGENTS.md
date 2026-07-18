@@ -8,10 +8,10 @@ This repo contains the Season OS platform for competitive show choir programs (w
 2. `specs/001-octv-platform/architecture-spec.md` — the authoritative product/architecture spec.
 3. `specs/001-octv-platform/tasks.md` — the 41-task build log (all complete); `plan.md` and `data-model.md` explain structure and schema conventions.
 
-## The codebase (`platform/`)
+## The codebase (repo root)
 
-- Next.js App Router, TypeScript strict, server components + server actions throughout, **no client state library**; `'use client'` only where a form genuinely needs interactivity.
-- Supabase: schema + RLS live in `supabase/migrations/0001`–`0005`. Every migration pairs schema with policies. The RLS harness (`tests/rls/harness.ts`) applies all migrations in lexical order — new migrations are exercised automatically, and the isolation suite enumerates every `program_id` table at runtime.
+- Next.js App Router at the repo root, TypeScript strict, server components + server actions throughout, **no client state library**; `'use client'` only where a form genuinely needs interactivity.
+- Supabase: schema + RLS live in `supabase/migrations/0001`–`0006`. Every migration pairs schema with policies. The RLS harness (`tests/rls/harness.ts`) applies all migrations in lexical order — new migrations are exercised automatically, and the isolation suite enumerates every `program_id` table at runtime.
 - Roles: director, admin, treasurer, costume_manager, board_member (matrix in arch spec §2). RLS enforces coarsely; every server action re-checks via `lib/auth.ts` `requireRole` (defense in depth).
 - Parents/students have no accounts. The parents' entire surface is `(public)/t/[token]` driven by `lib/tokens.ts` — an explicit capability allow-list over hashed-at-rest tokens. Keep that allow-list tiny.
 - Feature exposure is flag-gated server-side (`lib/flags.ts`: override ?? tier bundle ?? default). Routes 404 via `requireFlag`; Inngest jobs check the same helper.
