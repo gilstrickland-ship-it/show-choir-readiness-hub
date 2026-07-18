@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
@@ -46,7 +47,7 @@ export default async function CommsPage({
   }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
   if (!COMMS_ROLES.includes(role)) notFound();
   const canSend = ANNOUNCEMENT_WRITE_ROLES.includes(role);
@@ -54,6 +55,15 @@ export default async function CommsPage({
   const tz = program.timezone;
 
   const supabase = await createClient();
+
+  // Deliverability bounce chip (§8a, T026): guardians whose email isn't 'ok'
+  // (bounced or unsubscribed). Links to the filtered guardian list in roster so
+  // the director fixes bad addresses before comp week.
+  const { count: emailIssueCount } = await supabase
+    .from("guardians")
+    .select("id", { count: "exact", head: true })
+    .eq("program_id", program.id)
+    .neq("email_status", "ok");
 
   const { data: ensData } = await supabase
     .from("ensembles")
@@ -112,8 +122,19 @@ export default async function CommsPage({
 
   return (
     <section className="stack">
-      <CommsTabs slug={slug} active="announcements" />
+      <CommsTabs slug={slug} active="announcements" shiftsEnabled={flags.shifts} />
       <h1>Announcements</h1>
+
+      {(emailIssueCount ?? 0) > 0 && (
+        <p>
+          <Link href={`/${slug}/roster/email-issues`}>
+            <span className="badge" style={{ marginRight: "0.4rem" }}>
+              {emailIssueCount} email issue{emailIssueCount === 1 ? "" : "s"}
+            </span>
+            bounced or unsubscribed — review addresses
+          </Link>
+        </p>
+      )}
 
       {!emailConfigured() && (
         <p className="alert-error">

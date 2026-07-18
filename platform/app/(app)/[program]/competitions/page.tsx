@@ -3,8 +3,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES, ATTENDANCE_WRITE_ROLES } from "@/lib/competitions";
-import { formatDateInTz } from "@/lib/datetime";
-import { createCompetition } from "./actions";
+import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
+import { createCompetition, attachPacket } from "./actions";
 
 // Competitions list + create (§5, T012). All roles read (the flag is the gate);
 // director/admin create. Dates render in the program timezone (Constitution VII).
@@ -72,6 +72,26 @@ export default async function CompetitionsPage({
     pendingAbsences = count ?? 0;
   }
 
+  // Unattached inbound packets (§14.3, T026): host-packet documents forwarded by
+  // email that landed without a competition. A director attaches each to a
+  // competition, which then runs the parse pipeline.
+  interface UnattachedDoc {
+    id: string;
+    storage_path: string;
+    created_at: string;
+  }
+  let unattached: UnattachedDoc[] = [];
+  if (canWrite) {
+    const { data: docData } = await supabase
+      .from("documents")
+      .select("id, storage_path, created_at")
+      .eq("program_id", program.id)
+      .eq("kind", "host_packet")
+      .is("competition_id", null)
+      .order("created_at", { ascending: false });
+    unattached = (docData as UnattachedDoc[] | null) ?? [];
+  }
+
   return (
     <section className="stack">
       <h1>Competitions</h1>
@@ -89,6 +109,41 @@ export default async function CompetitionsPage({
         </p>
       )}
 
+      {canWrite && unattached.length > 0 && (
+        <div className="stack confirm-box" style={{ width: "100%" }}>
+          <h2>Unattached packets</h2>
+          <p className="muted">
+            {unattached.length} host packet{unattached.length === 1 ? "" : "s"}{" "}
+            arrived by email forward. Attach each to a competition to parse it.
+          </p>
+          {unattached.map((doc) => (
+            <form key={doc.id} action={attachPacket} className="row-inline">
+              <input type="hidden" name="programId" value={program.id} />
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="documentId" value={doc.id} />
+              <span className="muted">
+                {doc.storage_path.split("/").pop()} ·{" "}
+                {formatDateTimeInTz(doc.created_at, program.timezone)}
+              </span>
+              <select name="competitionId" defaultValue="" required aria-label="Attach to competition">
+                <option value="">— choose competition —</option>
+                {competitions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <button type="submit" className="secondary">
+                Attach &amp; parse
+              </button>
+            </form>
+          ))}
+        </div>
+      )}
+
+      {error === "attach" && (
+        <p className="alert-error">Couldn&apos;t attach the packet. Pick a competition and try again.</p>
+      )}
       {error === "name" && <p className="alert-error">A competition needs a name.</p>}
       {error === "season" && (
         <p className="alert-error">Activate a season before adding competitions.</p>

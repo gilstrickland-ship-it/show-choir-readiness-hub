@@ -11,6 +11,9 @@ import {
   seedAttendance,
   type CompetitionStatus,
 } from "@/lib/competitions";
+import { flag, type FlaggableProgram } from "@/lib/flags";
+import { inngest, inngestEnabled } from "@/lib/inngest/client";
+import { runPacketParse } from "@/lib/ai/packet-parse";
 
 // Competitions CRUD + attendance seed + results (§5, T012). Writes are
 // director/admin (§2 "Competitions / itineraries"); every action re-checks the
@@ -182,4 +185,75 @@ export async function saveResults(formData: FormData): Promise<void> {
 
   revalidatePath(`/${slug}/competitions/${competitionId}`);
   redirect(`/${slug}/competitions/${competitionId}?results=1`);
+}
+
+// Attach an inbound (email-forwarded) packet document to a competition, then
+// enqueue the AI parse when the packet_parse flag is on (§14.3, T026). Inbound
+// packets land with competition_id null because the parse/review screen needs
+// competition context; this is the director's "which competition is this for?"
+// step, after which the existing parse pipeline runs (Inngest or inline fallback).
+export async function attachPacket(formData: FormData): Promise<void> {
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const documentId = str(formData, "documentId");
+  const competitionId = str(formData, "competitionId");
+  await requireRole(programId, COMPETITION_WRITE_ROLES);
+  if (!competitionId) redirect(`/${slug}/competitions?error=attach`);
+
+  const supabase = await createClient();
+
+  // Scope the document + competition to this program before mutating.
+  const { data: docData } = await supabase
+    .from("documents")
+    .select("id, competition_id")
+    .eq("id", documentId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  const doc = docData as { id: string; competition_id: string | null } | null;
+  if (!doc) redirect(`/${slug}/competitions?error=attach`);
+
+  await supabase
+    .from("documents")
+    .update({ competition_id: competitionId })
+    .eq("id", documentId)
+    .eq("program_id", programId);
+
+  // Parse only when the flag is on (Constitution VIII, server-side gate).
+  const { data: prog } = await supabase
+    .from("programs")
+    .select("feature_overrides")
+    .eq("id", programId)
+    .maybeSingle();
+  const parseOn = flag(
+    (prog as FlaggableProgram | null) ?? { feature_overrides: null },
+    "packet_parse",
+  );
+
+  if (parseOn) {
+    const { data: parse } = await supabase
+      .from("packet_parses")
+      .insert({
+        program_id: programId,
+        competition_id: competitionId,
+        document_id: documentId,
+        status: "queued",
+      })
+      .select("id")
+      .single();
+    if (parse) {
+      const args = { parseId: (parse as { id: string }).id, programId, competitionId };
+      if (inngestEnabled()) {
+        try {
+          await inngest.send({ name: "packet/parse", data: args });
+        } catch {
+          await runPacketParse(args.parseId);
+        }
+      } else {
+        await runPacketParse(args.parseId);
+      }
+    }
+  }
+
+  revalidatePath(`/${slug}/competitions`);
+  redirect(`/${slug}/competitions/${competitionId}/packet?uploaded=1`);
 }

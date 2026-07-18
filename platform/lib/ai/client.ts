@@ -15,6 +15,16 @@ export function packetParseModel(): string {
   return process.env.PACKET_PARSE_MODEL || DEFAULT_PACKET_PARSE_MODEL;
 }
 
+// Weekly digest draft model (Constitution IV — the second and only other prompt
+// family). DIGEST_MODEL env override, else claude-opus-4-8. Like packet parse: no
+// temperature/top_p (rejected on Opus 4.8); determinism steered by prompt + low
+// effort.
+export const DEFAULT_DIGEST_MODEL = "claude-opus-4-8";
+
+export function digestModel(): string {
+  return process.env.DIGEST_MODEL || DEFAULT_DIGEST_MODEL;
+}
+
 let cached: Anthropic | null = null;
 
 export function getAnthropic(): Anthropic {

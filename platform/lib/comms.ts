@@ -1,12 +1,24 @@
 import type { Role } from "@/lib/auth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GuardianLinks } from "@/lib/tokens";
+import { zonedDateKey } from "@/lib/datetime";
 
 // Shared constants + helpers for the comms surface (§8). Announcements are the
 // "right now" channel: compose → immediate send. No AI, no approval queue — the
 // human writing it IS the approval. Approve/send is director/admin (§2 matrix).
 
 export const ANNOUNCEMENT_WRITE_ROLES: readonly Role[] = ["director", "admin"];
+
+// Weekly digest draft/approve/send — director/admin only (§2 matrix; matches the
+// digests_write RLS policy).
+export const DIGEST_WRITE_ROLES: readonly Role[] = ["director", "admin"];
+
+// The "week_of" key for a digest: the program-local calendar day the 7-day
+// window starts on ("YYYY-MM-DD"). Both the cron and "Draft now" use this so a
+// re-draft targets the same digests row.
+export function currentWeekOf(timezone: string, now: Date = new Date()): string {
+  return zonedDateKey(now, timezone);
+}
 
 export interface Recipient {
   guardianId: string;

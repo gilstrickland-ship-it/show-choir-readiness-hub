@@ -57,7 +57,7 @@ export default async function CompetitionOverviewPage({
   }>;
 }) {
   const { program: slug, competitionId } = await params;
-  const { program, role } = await getTenantContext(slug);
+  const { program, role, flags } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const sp = await searchParams;
@@ -98,6 +98,45 @@ export default async function CompetitionOverviewPage({
   const counts = { expected: 0, absent: 0, partial: 0 } as Record<string, number>;
   for (const a of att) counts[a.status] = (counts[a.status] ?? 0) + 1;
 
+  // Open volunteer shifts for this competition (§8, T024) — surfaced here so the
+  // director sees staffing gaps alongside the competition, and to route parents
+  // to the tokenized signup page.
+  interface OpenShift {
+    id: string;
+    title: string;
+    starts_at: string | null;
+    needed_count: number;
+  }
+  let openShifts: Array<{ shift: OpenShift; open: number }> = [];
+  if (flags.shifts) {
+    const { data: shiftData } = await supabase
+      .from("shifts")
+      .select("id, title, starts_at, needed_count")
+      .eq("program_id", program.id)
+      .eq("competition_id", competitionId)
+      .order("starts_at", { ascending: true, nullsFirst: false });
+    const shiftRows = (shiftData as OpenShift[] | null) ?? [];
+    if (shiftRows.length > 0) {
+      const { data: suData } = await supabase
+        .from("shift_signups")
+        .select("shift_id")
+        .eq("program_id", program.id)
+        .in(
+          "shift_id",
+          shiftRows.map((s) => s.id),
+        )
+        .eq("status", "confirmed");
+      const filled = new Map<string, number>();
+      for (const su of (suData as { shift_id: string }[] | null) ?? []) {
+        filled.set(su.shift_id, (filled.get(su.shift_id) ?? 0) + 1);
+      }
+      openShifts = shiftRows.map((s) => ({
+        shift: s,
+        open: Math.max(0, s.needed_count - (filled.get(s.id) ?? 0)),
+      }));
+    }
+  }
+
   const confirmEnsemble = sp.confirm === "ensemble" && canWrite;
   const pendingEnsemble = sp.pending_ensemble ?? "";
   const pendingName = ensembles.find((e) => e.id === pendingEnsemble)?.name ?? "none";
@@ -125,6 +164,34 @@ export default async function CompetitionOverviewPage({
         {counts.partial ?? 0} partial ·{" "}
         <Link href={`/${slug}/competitions/${competitionId}/attendance`}>Edit attendance</Link>
       </p>
+
+      {/* ---- Open volunteer shifts (§8, T024) ---- */}
+      {flags.shifts && openShifts.length > 0 && (
+        <div className="stack">
+          <h2>Volunteer shifts</h2>
+          <ul>
+            {openShifts.map(({ shift, open }) => (
+              <li key={shift.id}>
+                {shift.title}
+                {shift.starts_at
+                  ? ` · ${formatDateInTz(shift.starts_at, program.timezone)}`
+                  : ""}{" "}
+                —{" "}
+                {open > 0 ? (
+                  <strong>
+                    {open} of {shift.needed_count} open
+                  </strong>
+                ) : (
+                  <span className="muted">full</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="muted">
+            <Link href={`/${slug}/comms/shifts`}>Manage shifts &amp; signups →</Link>
+          </p>
+        </div>
+      )}
 
       {/* ---- Ensemble-change confirmation (invariant §9.2) ---- */}
       {confirmEnsemble && (
