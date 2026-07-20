@@ -37,11 +37,14 @@ export type SendResult =
   | { status: "failed"; error: string };
 
 // Send one email. Never throws — returns a status the caller records on the
-// per-send row so a single bad address never aborts a batch.
+// per-send row so a single bad address never aborts a batch. Optional `headers`
+// pass straight through to Resend — used for RFC 8058 List-Unsubscribe /
+// List-Unsubscribe-Post one-click headers on every guardian-facing message.
 export async function sendEmail(args: {
   to: string;
   subject: string;
   html: string;
+  headers?: Record<string, string>;
 }): Promise<SendResult> {
   const client = await getClient();
   if (!client) return { status: "skipped_no_key" };
@@ -52,6 +55,7 @@ export async function sendEmail(args: {
       to: args.to,
       subject: args.subject,
       html: args.html,
+      ...(args.headers ? { headers: args.headers } : {}),
     });
     if (error) {
       return { status: "failed", error: String((error as { message?: string })?.message ?? error) };

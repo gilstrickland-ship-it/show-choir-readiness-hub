@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { ATTENDANCE_WRITE_ROLES } from "@/lib/competitions";
+import { notifyAbsenceOutcome } from "@/lib/comms-send";
 
 // Staff review queue for parent-submitted absence requests (§5, §8a). Confirm
 // flips the student's attendance row to 'absent' and stamps the request
@@ -70,6 +71,9 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
     redirect(`${queuePath(slug)}?error=failed`);
   }
 
+  // Let the reporting guardian know the outcome (best-effort; never blocks).
+  await notifyAbsenceOutcome({ programId, requestId: req.id, outcome: "confirmed" });
+
   revalidatePath(queuePath(slug));
   redirect(`${queuePath(slug)}?done=confirmed`);
 }
@@ -81,7 +85,7 @@ export async function dismissAbsence(formData: FormData): Promise<void> {
   const { user } = await requireRole(programId, ATTENDANCE_WRITE_ROLES);
 
   const supabase = await createClient();
-  const { error: disErr } = await supabase
+  const { data: disData, error: disErr } = await supabase
     .from("absence_requests")
     .update({
       status: "dismissed",
@@ -90,10 +94,17 @@ export async function dismissAbsence(formData: FormData): Promise<void> {
     })
     .eq("id", requestId)
     .eq("program_id", programId)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .select("id");
   if (disErr) {
     console.error("dismissAbsence request update failed", disErr);
     redirect(`${queuePath(slug)}?error=failed`);
+  }
+
+  // Only notify when this call actually transitioned the request (not a re-submit
+  // of an already-resolved one). Best-effort; never blocks the staff action.
+  if (((disData as { id: string }[] | null) ?? []).length > 0) {
+    await notifyAbsenceOutcome({ programId, requestId, outcome: "dismissed" });
   }
 
   revalidatePath(queuePath(slug));

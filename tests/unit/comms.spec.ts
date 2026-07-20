@@ -105,18 +105,20 @@ describe("bodyToHtml + announcementHtml", () => {
     expect(html.match(/<p>/g)).toHaveLength(2);
   });
 
-  test("footer carries the three family links, body has no injected raw HTML", () => {
+  test("footer carries the three family links + unsubscribe, body has no injected raw HTML", () => {
     const html = announcementHtml({
       bodyMd: "Weekly note",
       links: {
         itinerary: "https://x/t/tok/itinerary",
         signup: "https://x/t/tok/signup",
         absence: "https://x/t/tok/absence",
+        unsubscribe: "https://x/t/tok/unsubscribe",
       },
     });
     expect(html).toContain('href="https://x/t/tok/itinerary"');
     expect(html).toContain('href="https://x/t/tok/signup"');
     expect(html).toContain('href="https://x/t/tok/absence"');
+    expect(html).toContain('href="https://x/t/tok/unsubscribe"');
     expect(html).toContain("<p>Weekly note</p>");
   });
 });

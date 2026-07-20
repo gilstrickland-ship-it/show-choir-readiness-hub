@@ -3,9 +3,12 @@ import { computeRecipients, announcementHtml } from "@/lib/comms";
 import {
   mintGuardianTokenForEmail,
   guardianLinks,
+  listUnsubscribeHeaders,
   type GuardianLinks,
 } from "@/lib/tokens";
 import { sendEmail, type SendResult } from "@/lib/email";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { formatDateTimeInTz, formatDateInTz } from "@/lib/datetime";
 
 // Shared send cores (§8, T038). The announcement and digest send loops live here
 // ONCE so both the inline server-action path (no Inngest) and the Inngest jobs
@@ -49,12 +52,13 @@ async function sendToRecipients(
       programId: args.programId,
       guardianId: r.guardianId,
     });
-    const links = "raw" in minted ? guardianLinks(minted.raw) : null;
+    const raw = "raw" in minted ? minted.raw : null;
+    const links = raw ? guardianLinks(raw) : null;
 
     let status: string;
     let resendId: string | null = null;
 
-    if (!links) {
+    if (!links || !raw) {
       status = "failed";
       failed++;
     } else {
@@ -62,6 +66,7 @@ async function sendToRecipients(
         to: r.email,
         subject: args.subject,
         html: announcementHtml({ bodyMd: args.bodyMd, links }),
+        headers: listUnsubscribeHeaders(raw),
       });
       if (result.status === "sent") {
         status = "sent";
@@ -128,6 +133,7 @@ export async function sendGuardianLinksEmail(
     to: args.email,
     subject: `Your ${args.programName} family links`,
     html: guardianLinksEmailHtml({ programName: args.programName, links }),
+    headers: listUnsubscribeHeaders(minted.raw),
   });
   return { send, raw: minted.raw };
 }
@@ -206,4 +212,248 @@ export async function sendDigestCore(
     .eq("program_id", args.programId);
 
   return counts;
+}
+
+// ---- Per-recipient transactional notifications (§8a, C1) -------------------
+// Absence outcomes, shift-signup confirmations, and day-before shift reminders
+// are plain transactional emails to ONE guardian (no AI, Constitution IV). They
+// reuse the announcement footer (three family links + Unsubscribe) and carry the
+// RFC 8058 one-click List-Unsubscribe headers, exactly like broadcast sends. All
+// are BEST-EFFORT: they never throw and never block the staff action or claim
+// that triggered them.
+
+// Send one plain notification to a single guardian: mint a fresh per-email token
+// (append-only — earlier links keep working), render body + standard footer, and
+// attach the List-Unsubscribe headers. Returns the send status. Never throws.
+export async function sendGuardianNotification(
+  supabase: SupabaseClient,
+  args: {
+    programId: string;
+    guardianId: string;
+    email: string;
+    subject: string;
+    bodyMd: string;
+  },
+): Promise<SendResult> {
+  const minted = await mintGuardianTokenForEmail(supabase, {
+    programId: args.programId,
+    guardianId: args.guardianId,
+  });
+  if (!("raw" in minted)) return { status: "failed", error: minted.error };
+  const links = guardianLinks(minted.raw);
+  return sendEmail({
+    to: args.email,
+    subject: args.subject,
+    html: announcementHtml({ bodyMd: args.bodyMd, links }),
+    headers: listUnsubscribeHeaders(minted.raw),
+  });
+}
+
+// The parent-facing name of whatever a shift is attached to (competition / trip /
+// event), or null for a free-standing shift. Used to give confirmation and
+// reminder emails a "what it's for" line.
+export async function shiftAttachmentName(
+  supabase: SupabaseClient,
+  args: {
+    programId: string;
+    competitionId: string | null;
+    tripId: string | null;
+    eventId: string | null;
+  },
+): Promise<string | null> {
+  const { programId, competitionId, tripId, eventId } = args;
+  if (competitionId) {
+    const { data } = await supabase
+      .from("competitions")
+      .select("name")
+      .eq("id", competitionId)
+      .eq("program_id", programId)
+      .maybeSingle();
+    return (data as { name: string } | null)?.name ?? null;
+  }
+  if (tripId) {
+    const { data } = await supabase
+      .from("trips")
+      .select("name")
+      .eq("id", tripId)
+      .eq("program_id", programId)
+      .maybeSingle();
+    return (data as { name: string } | null)?.name ?? null;
+  }
+  if (eventId) {
+    const { data } = await supabase
+      .from("events")
+      .select("title")
+      .eq("id", eventId)
+      .eq("program_id", programId)
+      .maybeSingle();
+    return (data as { title: string } | null)?.title ?? null;
+  }
+  return null;
+}
+
+// Render a date-only field (e.g. competitions.date, "YYYY-MM-DD") as a friendly
+// calendar day WITHOUT the timezone rollover a bare midnight-UTC parse would
+// cause: anchor at noon UTC so every US/most IANA zones land on the same day.
+function formatDateOnlyInTz(date: string | null, tz: string): string {
+  if (!date) return "—";
+  return formatDateInTz(`${date}T12:00:00Z`, tz);
+}
+
+// C1-1. Notify the reporting guardian when staff Confirm or Dismiss their absence
+// request. Address-scoped to the request's own guardian; sends only when that
+// guardian's email_status is 'ok'. Best-effort — swallows everything.
+export async function notifyAbsenceOutcome(args: {
+  programId: string;
+  requestId: string;
+  outcome: "confirmed" | "dismissed";
+}): Promise<void> {
+  try {
+    const supabase = createAdminClient();
+
+    const { data: reqData } = await supabase
+      .from("absence_requests")
+      .select("id, guardian_id, student_id, competition_id")
+      .eq("id", args.requestId)
+      .eq("program_id", args.programId)
+      .maybeSingle();
+    const req = reqData as {
+      guardian_id: string | null;
+      student_id: string;
+      competition_id: string;
+    } | null;
+    if (!req?.guardian_id) return; // staff-entered request → no guardian to notify.
+
+    const { data: gData } = await supabase
+      .from("guardians")
+      .select("email, email_status")
+      .eq("id", req.guardian_id)
+      .eq("program_id", args.programId)
+      .maybeSingle();
+    const guardian = gData as { email: string | null; email_status: string } | null;
+    if (!guardian?.email || guardian.email_status !== "ok") return;
+
+    const [{ data: sData }, { data: cData }, { data: pData }] = await Promise.all([
+      supabase
+        .from("students")
+        .select("first_name")
+        .eq("id", req.student_id)
+        .eq("program_id", args.programId)
+        .maybeSingle(),
+      supabase
+        .from("competitions")
+        .select("name, date")
+        .eq("id", req.competition_id)
+        .eq("program_id", args.programId)
+        .maybeSingle(),
+      supabase
+        .from("programs")
+        .select("name, timezone")
+        .eq("id", args.programId)
+        .maybeSingle(),
+    ]);
+    const first = (sData as { first_name: string } | null)?.first_name ?? "your student";
+    const comp = cData as { name: string; date: string | null } | null;
+    const compName = comp?.name ?? "the competition";
+    const program = pData as { name: string; timezone: string } | null;
+    const tz = program?.timezone ?? "America/Chicago";
+    const dateStr = formatDateOnlyInTz(comp?.date ?? null, tz);
+
+    const { subject, bodyMd } =
+      args.outcome === "confirmed"
+        ? {
+            subject: `Absence confirmed — ${first}, ${compName}`,
+            bodyMd:
+              `Thank you — staff at ${program?.name ?? "the program"} have recorded ` +
+              `${first}'s absence from ${compName} on ${dateStr}. ` +
+              `There's nothing more you need to do.`,
+          }
+        : {
+            subject: `About your absence report — ${first}`,
+            bodyMd:
+              `Staff at ${program?.name ?? "the program"} reviewed your absence report ` +
+              `for ${first} and did not mark ${first} absent, so ${first} is still ` +
+              `expected at ${compName}. If that isn't right, please contact the ` +
+              `program and we'll sort it out.`,
+          };
+
+    await sendGuardianNotification(supabase, {
+      programId: args.programId,
+      guardianId: req.guardian_id,
+      email: guardian.email,
+      subject,
+      bodyMd,
+    });
+  } catch {
+    // best-effort — a failed notification never affects the staff action.
+  }
+}
+
+// C1-2. Confirm a successful token-link shift claim to the claiming guardian.
+// Sends only when the guardian's email_status is 'ok'. Best-effort.
+export async function notifyShiftSignup(args: {
+  programId: string;
+  guardianId: string;
+  shiftId: string;
+}): Promise<void> {
+  try {
+    const supabase = createAdminClient();
+
+    const { data: gData } = await supabase
+      .from("guardians")
+      .select("email, email_status")
+      .eq("id", args.guardianId)
+      .eq("program_id", args.programId)
+      .maybeSingle();
+    const guardian = gData as { email: string | null; email_status: string } | null;
+    if (!guardian?.email || guardian.email_status !== "ok") return;
+
+    const { data: shData } = await supabase
+      .from("shifts")
+      .select("title, starts_at, competition_id, trip_id, event_id")
+      .eq("id", args.shiftId)
+      .eq("program_id", args.programId)
+      .maybeSingle();
+    const shift = shData as {
+      title: string;
+      starts_at: string | null;
+      competition_id: string | null;
+      trip_id: string | null;
+      event_id: string | null;
+    } | null;
+    if (!shift) return;
+
+    const { data: pData } = await supabase
+      .from("programs")
+      .select("timezone")
+      .eq("id", args.programId)
+      .maybeSingle();
+    const tz = (pData as { timezone: string } | null)?.timezone ?? "America/Chicago";
+
+    const attachedTo = await shiftAttachmentName(supabase, {
+      programId: args.programId,
+      competitionId: shift.competition_id,
+      tripId: shift.trip_id,
+      eventId: shift.event_id,
+    });
+
+    const whenLine = shift.starts_at
+      ? `When: ${formatDateTimeInTz(shift.starts_at, tz)}`
+      : "When: to be scheduled";
+    const forLine = attachedTo ? `\n\nThis is for ${attachedTo}.` : "";
+    const bodyMd =
+      `You're signed up to volunteer for "${shift.title}". Thank you!\n\n` +
+      `${whenLine}${forLine}\n\n` +
+      `Need to cancel? Use the volunteer signup link below.`;
+
+    await sendGuardianNotification(supabase, {
+      programId: args.programId,
+      guardianId: args.guardianId,
+      email: guardian.email,
+      subject: `You're signed up — ${shift.title}`,
+      bodyMd,
+    });
+  } catch {
+    // best-effort — the claim itself already succeeded.
+  }
 }

@@ -29,7 +29,7 @@ interface RequestRow {
 const STATUS_LABEL: Record<RequestRow["status"], string> = {
   pending: "Pending review",
   confirmed: "Confirmed",
-  dismissed: "Not approved",
+  dismissed: "Not confirmed — student still expected",
 };
 
 export default async function PublicAbsencePage({

@@ -13,6 +13,7 @@ import {
   removeGuardian,
   resendGuardianLinks,
   emailGuardianLinks,
+  resetGuardianEmailStatus,
 } from "../actions";
 import { guardianLinks } from "@/lib/tokens";
 
@@ -373,6 +374,21 @@ export default async function StudentDetailPage({
                           Reset this family&apos;s links
                         </button>
                       </form>
+                      {g.email_status !== "ok" && (
+                        <form action={resetGuardianEmailStatus}>
+                          <input type="hidden" name="programId" value={program.id} />
+                          <input type="hidden" name="slug" value={slug} />
+                          <input type="hidden" name="studentId" value={student.id} />
+                          <input type="hidden" name="guardianId" value={g.id} />
+                          <button
+                            type="submit"
+                            className="secondary"
+                            title="Turn this address back on for announcements and weekly digests. Use it after fixing a bounced address, or if the family asked to resubscribe."
+                          >
+                            Mark deliverable again
+                          </button>
+                        </form>
+                      )}
                       <form action={removeGuardian}>
                         <input type="hidden" name="programId" value={program.id} />
                         <input type="hidden" name="slug" value={slug} />

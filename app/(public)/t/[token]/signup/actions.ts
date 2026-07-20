@@ -10,6 +10,7 @@ import {
 } from "@/lib/tokens";
 import { checkTokenSurfaceLimit } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/tokens";
+import { notifyShiftSignup } from "@/lib/comms-send";
 
 // Guardian-token shift actions (§8a). Anonymous, service-role — the capability
 // allow-list + program scoping are the security boundary. Every write:
@@ -113,6 +114,15 @@ export async function claimShift(formData: FormData): Promise<void> {
     action: "shift:claim",
     ip,
     supabase,
+  });
+
+  // Confirm the signup to the family by email (best-effort — the claim already
+  // succeeded; only guardians with email_status='ok' are mailed). Staff-entered
+  // signups don't reach here, so they're never emailed.
+  await notifyShiftSignup({
+    programId: resolved.program.id,
+    guardianId,
+    shiftId: shift.id,
   });
 
   redirect(signupPath(token, "claimed"));

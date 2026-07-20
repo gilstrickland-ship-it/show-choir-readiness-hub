@@ -64,10 +64,15 @@ describe("verify (constant-time)", () => {
 
 describe("capability allow-list (exhaustive — §8a)", () => {
   test("guardian capabilities are EXACTLY the documented set", () => {
+    // email:unsubscribe is a deliberate, justified addition (CAN-SPAM + RFC 8058
+    // one-click): a preference write on the recipient's own address, added to the
+    // allow-list so the token unsubscribe surfaces are gated by it. The list
+    // stays tiny — this test guards against any further creep.
     expect([...GUARDIAN_CAPABILITIES].sort()).toEqual(
       [
         "absence:submit",
         "costume:view",
+        "email:unsubscribe",
         "itinerary:view",
         "shift:cancel",
         "shift:claim",
@@ -77,6 +82,8 @@ describe("capability allow-list (exhaustive — §8a)", () => {
   });
 
   test("guardian WRITES are exactly the three operational writes", () => {
+    // Unsubscribe is a PREFERENCE write, not an operational one — it stays OUT of
+    // this set (which gates the shift/absence writes that touch operations).
     expect([...GUARDIAN_WRITE_CAPABILITIES].sort()).toEqual(
       ["absence:submit", "shift:cancel", "shift:claim"].sort(),
     );
@@ -100,10 +107,11 @@ describe("capability allow-list (exhaustive — §8a)", () => {
 });
 
 describe("guardianLinks (three canonical footer URLs)", () => {
-  test("builds itinerary / signup / absence links off the raw token", () => {
+  test("builds itinerary / signup / absence / unsubscribe links off the raw token", () => {
     const links = guardianLinks("RAWTOKEN");
     expect(links.itinerary).toMatch(/\/t\/RAWTOKEN\/itinerary$/);
     expect(links.signup).toMatch(/\/t\/RAWTOKEN\/signup$/);
     expect(links.absence).toMatch(/\/t\/RAWTOKEN\/absence$/);
+    expect(links.unsubscribe).toMatch(/\/t\/RAWTOKEN\/unsubscribe$/);
   });
 });

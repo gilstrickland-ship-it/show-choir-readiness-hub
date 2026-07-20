@@ -26,8 +26,13 @@ import { brand } from "@/lib/brand";
 // ---- Capability allow-list (exhaustive) ------------------------------------
 // Guardian tokens allow EXACTLY: view own students' costume assignment +
 // alteration status; view published itineraries + open shifts for their family;
-// claim/cancel own shift signups; submit an absence request for own student(s).
+// claim/cancel own shift signups; submit an absence request for own student(s);
+// unsubscribe this family's email address from announcements + digests.
 // The one write that touches operations (absence) lands in a staff review queue.
+// `email:unsubscribe` is a deliberate, justified addition (CAN-SPAM + one-click
+// deliverability, RFC 8058): it is a *preference* write on the recipient's own
+// address, NOT an operational write — so it is not in GUARDIAN_WRITE_CAPABILITIES
+// below (which stays the three operational writes). The list stays tiny.
 export const GUARDIAN_CAPABILITIES = [
   "costume:view",
   "itinerary:view",
@@ -35,6 +40,7 @@ export const GUARDIAN_CAPABILITIES = [
   "shift:claim",
   "shift:cancel",
   "absence:submit",
+  "email:unsubscribe",
 ] as const;
 
 // Share links are read-only views of their one resource. Nothing else.
@@ -138,6 +144,9 @@ export interface GuardianLinks {
   itinerary: string;
   signup: string;
   absence: string;
+  // Per-recipient unsubscribe page (CAN-SPAM footer link; §8a). Populated off the
+  // same raw token so a leaked footer link still exposes one family only.
+  unsubscribe: string;
 }
 
 export function guardianLinks(rawToken: string): GuardianLinks {
@@ -146,6 +155,24 @@ export function guardianLinks(rawToken: string): GuardianLinks {
     itinerary: `${base}/itinerary`,
     signup: `${base}/signup`,
     absence: `${base}/absence`,
+    unsubscribe: `${base}/unsubscribe`,
+  };
+}
+
+// The RFC 8058 one-click POST target for a raw token (a route handler, distinct
+// from the human unsubscribe PAGE — Next.js can't host a page and a route at the
+// same path). Used only as the List-Unsubscribe header URL.
+export function unsubscribeOneClickUrl(rawToken: string): string {
+  return `${appBaseUrl()}/t/${rawToken}/unsubscribe/one-click`;
+}
+
+// List-Unsubscribe + List-Unsubscribe-Post headers (RFC 8058 one-click). Every
+// guardian-facing send passes these so mailbox providers show a native
+// "Unsubscribe" affordance and can POST the one-click route directly.
+export function listUnsubscribeHeaders(rawToken: string): Record<string, string> {
+  return {
+    "List-Unsubscribe": `<${unsubscribeOneClickUrl(rawToken)}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
   };
 }
 
