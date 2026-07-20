@@ -2326,6 +2326,460 @@
     color: var(--ink-2) !important;
   }
 
+  /* ================= Shared task-landing primitives (Wave C) ================= */
+  /* Page header (eyebrow / display H1 / actions over a 3px rule) + display-type
+     underline sub-tabs + "+ Add" drawer + metric strip. Shared by People, Money,
+     and Wardrobe; built as reusable primitives for later screens (Wave D). */
+
+  .page-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+    width: 100%;
+    border-bottom: 3px solid var(--line-strong);
+    padding-bottom: 0.85rem;
+  }
+
+  .page-head-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .page-h1 {
+    margin: 0;
+    font-family: var(--font-display-stack);
+    font-size: 3.25rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    line-height: 0.95;
+    letter-spacing: 0.01em;
+    border-bottom: none;
+    padding: 0;
+    width: auto;
+  }
+
+  .page-head-actions {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .page-head-actions form {
+    margin: 0;
+  }
+
+  .page-foot {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  /* Display-type underline sub-tabs (replaces .settings-tabs on redesigned
+     surfaces — Directory/Ledger/Alterations strips). */
+  .subtabs {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 1.4rem;
+    border-bottom: 1px solid var(--line);
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .subtabs a,
+  .subtabs strong {
+    display: inline-block;
+    font-family: var(--font-display-stack);
+    font-size: 0.95rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted-ink);
+    text-decoration: none;
+    white-space: nowrap;
+    padding: 0.4rem 0.05rem calc(0.4rem - 3px);
+    border-bottom: 3px solid transparent;
+    margin-bottom: -1px;
+  }
+
+  .subtabs a:hover {
+    color: var(--ink);
+  }
+
+  .subtabs strong,
+  .subtabs [aria-current="page"] {
+    color: var(--ink);
+    font-weight: 750;
+    border-bottom-color: var(--accent);
+  }
+
+  /* "+ Add" disclosure drawer — a native <details> popover anchored under its
+     summary button; server-first, no client JS. */
+  .drawer {
+    position: relative;
+  }
+
+  .drawer > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .drawer > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .drawer > summary::marker {
+    content: "";
+  }
+
+  .drawer-panel {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    width: min(34rem, 88vw);
+    padding: 1rem 1.15rem 1.15rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--line-strong);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-2);
+  }
+
+  .drawer-title {
+    margin: 0 0 0.6rem;
+    font-family: var(--font-display-stack);
+    font-size: 1.2rem;
+    font-weight: 750;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    border-bottom: none;
+    padding: 0;
+    width: auto;
+  }
+
+  /* Metric strip — 1px-gap grid on --line, cells --paper (Money). */
+  .metric-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
+    gap: 1px;
+    width: 100%;
+    background: var(--line);
+    border: 1px solid var(--line);
+  }
+
+  .metric-cell {
+    background: var(--paper);
+    padding: 0.9rem 1.05rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .metric-cell.warn {
+    background: var(--warn-soft);
+  }
+
+  .metric-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted-ink);
+  }
+
+  .metric-cell.warn .metric-label {
+    color: var(--warn-text);
+  }
+
+  .metric-value {
+    font-family: var(--font-display-stack);
+    font-size: 2.25rem;
+    font-weight: 800;
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .metric-value.ok {
+    color: var(--ok-text);
+  }
+
+  .metric-value.alert {
+    color: var(--alert-text);
+  }
+
+  .metric-cell.warn .metric-value {
+    color: var(--warn-text);
+  }
+
+  .metric-sub {
+    font-size: 0.78rem;
+    color: var(--muted-ink);
+  }
+
+  .metric-cell.warn .metric-sub {
+    color: var(--warn-text);
+  }
+
+  .metric-link {
+    color: var(--warn-text);
+    font-weight: 600;
+  }
+
+  /* ===================== People ===================== */
+
+  .people-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.7rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line));
+    border-radius: var(--radius-m);
+    background: var(--warn-soft);
+    font-size: 0.9rem;
+  }
+
+  .people-banner-text {
+    flex: 1;
+  }
+
+  .people-banner-link {
+    font-weight: 600;
+    font-size: 0.86rem;
+    color: var(--warn-text);
+  }
+
+  .people-filters {
+    width: 100%;
+  }
+
+  .family-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  .family-link.delivering {
+    color: var(--ok-text);
+  }
+
+  .family-link.bouncing {
+    color: var(--alert-text);
+  }
+
+  /* ===================== Money ===================== */
+
+  .money-filters {
+    width: 100%;
+    font-size: 0.85rem;
+  }
+
+  .money-ledger td.right,
+  .money-ledger th.right {
+    text-align: right;
+  }
+
+  .money-amt {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .money-amt.in {
+    color: var(--ok-text);
+  }
+
+  .money-amt.out {
+    color: var(--alert-text);
+  }
+
+  .ledger-uncat td {
+    background: var(--warn-soft);
+  }
+
+  .ledger-voided {
+    text-decoration: line-through;
+    opacity: 0.55;
+  }
+
+  .money-uncat {
+    color: var(--warn-text);
+    font-weight: 600;
+  }
+
+  .money-fix {
+    color: var(--warn-text);
+    font-weight: 600;
+    font-size: 0.82rem;
+  }
+
+  /* ===================== Wardrobe ===================== */
+
+  .wardrobe-urgency {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line));
+    border-radius: var(--radius-m);
+    background: var(--warn-soft);
+    font-size: 0.9rem;
+  }
+
+  .wardrobe-urgency-num {
+    flex: none;
+    font-family: var(--font-display-stack);
+    font-size: 1.75rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--warn-text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wardrobe-urgency-text {
+    flex: 1;
+  }
+
+  .alt-queue {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .alt-queue > *:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .alt-row {
+    display: flex;
+    gap: 0.85rem;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 0.8rem 0;
+    border-top: 1px solid var(--line);
+    font-size: 0.9rem;
+  }
+
+  .alt-pill {
+    flex: none;
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.18rem 0.55rem;
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  .alt-pill.needed {
+    background: var(--alert-soft);
+    color: var(--alert-text);
+  }
+
+  .alt-pill.in_progress {
+    background: var(--warn-soft);
+    color: var(--warn-text);
+  }
+
+  .alt-body {
+    flex: 1;
+    min-width: 14rem;
+  }
+
+  .alt-body strong {
+    font-weight: 650;
+  }
+
+  .alt-kind {
+    color: var(--muted-ink);
+    font-size: 0.82rem;
+  }
+
+  .alt-meta {
+    flex: none;
+    color: var(--muted-ink);
+    font-size: 0.82rem;
+  }
+
+  .alt-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex: none;
+  }
+
+  .alt-actions button {
+    font-size: 0.82rem;
+    padding: 0.35rem 0.85rem;
+  }
+
+  .alt-notes {
+    display: flex;
+    gap: 0.4rem;
+    flex-basis: 100%;
+    align-items: center;
+  }
+
+  .alt-notes input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .wardrobe-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.9rem;
+    width: 100%;
+  }
+
+  .wardrobe-card {
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--line-strong);
+    border-radius: var(--radius-m);
+    background: var(--paper);
+    box-shadow: var(--shadow-1);
+    padding: 1rem 1.15rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .wardrobe-card h3 {
+    margin: 0;
+    font-size: 0.7rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted-ink);
+  }
+
+  .wardrobe-card-num {
+    font-family: var(--font-display-stack);
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wardrobe-card-sub {
+    font-size: 0.8rem;
+    color: var(--muted-ink);
+  }
+
+  .wardrobe-card a {
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+    margin-top: 0.15rem;
+  }
+
   /* ---------------- Mobile bottom nav + responsive Today ---------------- */
 
   .mobile-nav {
@@ -2597,6 +3051,43 @@
 
     .comp-meal-figures {
       gap: 1rem 1.5rem;
+    }
+
+    /* Wave C task landings on phones: metric strip 2-col, header + filters
+       stack, drawer stays on-screen, queue rows break. */
+    .page-h1 {
+      font-size: 2.4rem;
+    }
+
+    .page-head {
+      align-items: flex-start;
+    }
+
+    .page-head-actions {
+      width: 100%;
+    }
+
+    .metric-strip {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .people-filters,
+    .money-filters {
+      width: 100%;
+    }
+
+    .drawer-panel {
+      right: auto;
+      left: 0;
+      width: min(34rem, 92vw);
+    }
+
+    .alt-row {
+      align-items: flex-start;
+    }
+
+    .alt-meta {
+      flex-basis: 100%;
     }
   }
 }

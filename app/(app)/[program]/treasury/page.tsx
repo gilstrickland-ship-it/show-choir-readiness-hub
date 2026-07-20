@@ -10,9 +10,11 @@ import {
   formatCents,
   formatDateOnly,
   todayDateKey,
+  sumActuals,
   NO_HEALTH_LABEL,
   type CategoryDirection,
   type LedgerDirection,
+  type LedgerAmountRow,
 } from "@/lib/treasury";
 import { TreasuryTabs } from "./TreasuryTabs";
 import { addEntry, voidEntry, categorizeEntry } from "./actions";
@@ -215,23 +217,26 @@ export default async function LedgerPage({
     balanceById.set(e.id, running);
   }
 
-  // ---- Uncategorized nudge (always over the season's live entries) ----------
+  // ---- Season metric strip + uncategorized nudge ----------------------------
+  // One season-wide fetch drives Balance/In/Out (via sumActuals, which excludes
+  // voids) and the Uncategorized cell (live rows with no budget line).
+  let metrics = { inCents: 0, outCents: 0, netCents: 0 };
   let unCount = 0;
   let unTotal = 0;
   {
-    let nq = supabase
+    let mq = supabase
       .from("ledger_entries")
-      .select("amount_cents, direction")
-      .eq("program_id", program.id)
-      .is("voided_at", null)
-      .is("budget_line_id", null);
-    if (season) nq = nq.eq("season_id", season.id);
-    const { data: unData } = await nq;
-    const un =
-      (unData as { amount_cents: number; direction: LedgerDirection }[] | null) ??
-      [];
-    unCount = un.length;
-    unTotal = un.reduce((s, r) => s + r.amount_cents, 0);
+      .select("amount_cents, direction, voided_at, budget_line_id")
+      .eq("program_id", program.id);
+    if (season) mq = mq.eq("season_id", season.id);
+    const { data: mData } = await mq;
+    const rows = (mData as LedgerAmountRow[] | null) ?? [];
+    metrics = sumActuals(rows);
+    for (const r of rows) {
+      if (r.voided_at || r.budget_line_id) continue;
+      unCount += 1;
+      unTotal += r.amount_cents;
+    }
   }
 
   // ---- Re-enter prefill (from a just-voided entry) --------------------------
@@ -269,13 +274,120 @@ export default async function LedgerPage({
   );
 
   return (
-    <section className="stack">
+    <section className="stack money">
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">Tracked, never touched — entries void, never delete</p>
+          <h1 className="page-h1">Money</h1>
+        </div>
+        {canWrite && season && (
+          <div className="page-head-actions">
+            <details className="drawer" open={!!prefill}>
+              <summary className="button-link accent">+ Add entry</summary>
+              <div className="drawer-panel" id="add-entry">
+                <h2 className="drawer-title">
+                  {prefill ? "Re-enter (from voided entry)" : "Add an entry"}
+                </h2>
+                <form action={addEntry} className="stack" encType="multipart/form-data">
+                  <input type="hidden" name="programId" value={program.id} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="seasonId" value={season.id} />
+                  <div className="row-inline">
+                    <label>
+                      Date
+                      <input
+                        type="date"
+                        name="entry_date"
+                        required
+                        defaultValue={prefill?.entry_date ?? todayDateKey()}
+                      />
+                    </label>
+                    <label>
+                      Direction
+                      <select
+                        name="direction"
+                        required
+                        defaultValue={prefill?.direction ?? "out"}
+                      >
+                        {LEDGER_DIRECTIONS.map((d) => (
+                          <option key={d} value={d}>
+                            {d === "in" ? "In (income)" : "Out (expense)"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Amount $
+                      <input
+                        type="text"
+                        name="amount"
+                        inputMode="decimal"
+                        required
+                        placeholder="1,234.56"
+                        defaultValue={prefill ? dollarsValue(prefill.amount_cents) : ""}
+                      />
+                    </label>
+                    <label>
+                      Counterparty
+                      <input
+                        type="text"
+                        name="counterparty"
+                        placeholder="Payee or source"
+                        defaultValue={prefill?.counterparty ?? ""}
+                      />
+                    </label>
+                  </div>
+                  <div className="row-inline">
+                    <label>
+                      Budget line
+                      {lineSelect("budget_line_id", prefill?.budget_line_id ?? "")}
+                    </label>
+                    <label>
+                      Competition tag
+                      <select
+                        name="competition_id"
+                        defaultValue={prefill?.competition_id ?? ""}
+                      >
+                        <option value="">(none)</option>
+                        {comps.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Trip tag
+                      <select name="trip_id" defaultValue={prefill?.trip_id ?? ""}>
+                        <option value="">(none)</option>
+                        {trips.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label style={{ width: "100%" }}>
+                    Memo
+                    <input type="text" name="memo" defaultValue={prefill?.memo ?? ""} />
+                  </label>
+                  <label>
+                    Receipt (PDF or image)
+                    <input type="file" name="receipt" accept="application/pdf,image/*" />
+                  </label>
+                  <p className="muted">{NO_HEALTH_LABEL}</p>
+                  <button type="submit">
+                    {prefill ? "Save re-entry" : "Add entry"}
+                  </button>
+                </form>
+              </div>
+            </details>
+          </div>
+        )}
+      </div>
+
       <TreasuryTabs slug={slug} active="ledger" />
-      <h1>Ledger</h1>
-      <p className="muted">
-        Every dollar tracked, never touched. Entries void — never delete;
-        corrections are void + re-enter, and the audit log keeps everything.
-      </p>
 
       {sp.saved && <p className="alert-ok">Saved.</p>}
       {sp.error && (
@@ -290,22 +402,43 @@ export default async function LedgerPage({
         </p>
       )}
 
-      {/* Uncategorized nudge */}
-      {unCount > 0 && (
-        <div className="confirm-box row-inline">
-          <span>
-            <strong>{unCount}</strong> uncategorized{" "}
-            {unCount === 1 ? "entry" : "entries"} totaling{" "}
-            <span className="num">{formatCents(unTotal)}</span>.
-          </span>
-          <Link href={`/${slug}/treasury?uncategorized=1`} className="secondary">
-            Show uncategorized
-          </Link>
+      {/* Metric strip */}
+      <div className="metric-strip">
+        <div className="metric-cell">
+          <div className="metric-label">Balance</div>
+          <div className="metric-value">{formatCents(metrics.netCents)}</div>
+          <div className="metric-sub">this season · voids excluded</div>
         </div>
-      )}
+        <div className="metric-cell">
+          <div className="metric-label">In</div>
+          <div className="metric-value ok">{formatCents(metrics.inCents)}</div>
+          <div className="metric-sub">income received</div>
+        </div>
+        <div className="metric-cell">
+          <div className="metric-label">Out</div>
+          <div className="metric-value alert">{formatCents(metrics.outCents)}</div>
+          <div className="metric-sub">expenses paid</div>
+        </div>
+        <div className={`metric-cell${unCount > 0 ? " warn" : ""}`}>
+          <div className="metric-label">Uncategorized</div>
+          <div className="metric-value">{unCount}</div>
+          <div className="metric-sub">
+            {unCount > 0 ? (
+              <>
+                {formatCents(unTotal)} ·{" "}
+                <Link href={`/${slug}/treasury?uncategorized=1`} className="metric-link">
+                  categorize now
+                </Link>
+              </>
+            ) : (
+              "all categorized"
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Filters */}
-      <form method="get" className="row-inline">
+      <form method="get" className="row-inline money-filters">
         <label>
           From
           <input type="date" name="from" defaultValue={sp.from ?? ""} />
@@ -383,18 +516,15 @@ export default async function LedgerPage({
       </form>
 
       {/* Ledger table */}
-      <table className="members">
+      <table className="members money-ledger">
         <thead>
           <tr>
             <th>Date</th>
-            <th>Dir</th>
-            <th className="num">Amount</th>
+            <th className="right">Amount</th>
             <th>Line</th>
-            <th>Tag</th>
-            <th>Counterparty</th>
-            <th>Memo</th>
+            <th>Counterparty · memo</th>
             <th>Receipt</th>
-            <th className="num">Balance</th>
+            <th className="right">Balance</th>
             {canWrite && <th></th>}
           </tr>
         </thead>
@@ -406,32 +536,51 @@ export default async function LedgerPage({
               : e.trip_id
                 ? (tripName.get(e.trip_id) ?? "trip")
                 : "";
-            const rowStyle = voided
-              ? { textDecoration: "line-through", opacity: 0.6 }
-              : undefined;
+            const uncategorized = !e.budget_line_id;
+            const party = [e.counterparty, e.memo].filter(Boolean).join(" · ");
+            const rowClass = voided
+              ? "ledger-voided"
+              : uncategorized
+                ? "ledger-uncat"
+                : undefined;
             return (
-              <tr key={e.id} style={rowStyle}>
+              <tr key={e.id} className={rowClass}>
                 <td>{formatDateOnly(e.entry_date)}</td>
-                <td>
-                  <span
-                    className={`badge ${e.direction === "in" ? "" : "danger"}`}
-                  >
-                    {e.direction === "in" ? "In" : "Out"}
-                  </span>
-                </td>
-                <td className="num">{formatCents(e.amount_cents)}</td>
-                <td>
-                  {e.budget_line_id ? (
-                    (lineName.get(e.budget_line_id) ?? "—")
+                <td className="right">
+                  {voided ? (
+                    <span className="money-amt">
+                      {e.direction === "in" ? "+ " : "− "}
+                      {formatCents(e.amount_cents)}
+                    </span>
                   ) : (
-                    <span className="muted">uncategorized</span>
+                    <span className={`money-amt ${e.direction === "in" ? "in" : "out"}`}>
+                      {e.direction === "in" ? "+ " : "− "}
+                      {formatCents(e.amount_cents)}
+                    </span>
                   )}
                 </td>
-                <td>{tag || <span className="muted">—</span>}</td>
-                <td>{e.counterparty ?? "—"}</td>
-                <td>{e.memo ?? "—"}</td>
-                <td>{e.receipt_path ? "📎" : "—"}</td>
-                <td className="num">
+                <td>
+                  {uncategorized ? (
+                    <>
+                      <span className="money-uncat">uncategorized</span>
+                      {" · "}
+                      <Link
+                        href={`/${slug}/treasury?uncategorized=1`}
+                        className="money-fix"
+                      >
+                        fix
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      {lineName.get(e.budget_line_id!) ?? "—"}
+                      {tag && <span className="muted"> · {tag}</span>}
+                    </>
+                  )}
+                </td>
+                <td>{party || <span className="muted">—</span>}</td>
+                <td>{e.receipt_path ? "📎" : <span className="muted">—</span>}</td>
+                <td className="right">
                   {voided ? (
                     <span className="muted">—</span>
                   ) : (
@@ -441,32 +590,18 @@ export default async function LedgerPage({
                 {canWrite && (
                   <td>
                     {voided ? (
-                      <span
-                        className="muted"
-                        title={e.void_reason ?? undefined}
-                      >
+                      <span className="muted" title={e.void_reason ?? undefined}>
                         voided
                       </span>
                     ) : (
                       <details>
                         <summary>Correct</summary>
                         <div className="stack">
-                          {!e.budget_line_id && cats.length > 0 && (
-                            <form
-                              action={categorizeEntry}
-                              className="row-inline"
-                            >
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
+                          {uncategorized && cats.length > 0 && (
+                            <form action={categorizeEntry} className="row-inline">
+                              <input type="hidden" name="programId" value={program.id} />
                               <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="entryId"
-                                value={e.id}
-                              />
+                              <input type="hidden" name="entryId" value={e.id} />
                               {lineSelect("budget_line_id", "")}
                               <button type="submit" className="secondary">
                                 Categorize
@@ -474,11 +609,7 @@ export default async function LedgerPage({
                             </form>
                           )}
                           <form action={voidEntry} className="row-inline">
-                            <input
-                              type="hidden"
-                              name="programId"
-                              value={program.id}
-                            />
+                            <input type="hidden" name="programId" value={program.id} />
                             <input type="hidden" name="slug" value={slug} />
                             <input type="hidden" name="entryId" value={e.id} />
                             <input
@@ -510,7 +641,7 @@ export default async function LedgerPage({
           })}
           {entries.length === 0 && (
             <tr>
-              <td colSpan={canWrite ? 10 : 9} className="muted">
+              <td colSpan={canWrite ? 7 : 6} className="muted">
                 No entries match.
               </td>
             </tr>
@@ -518,113 +649,10 @@ export default async function LedgerPage({
         </tbody>
       </table>
 
-      {/* Add entry */}
-      {canWrite && season && (
-        <div id="add-entry" className="stack">
-          <h2>{prefill ? "Re-enter (from voided entry)" : "Add an entry"}</h2>
-          <form
-            action={addEntry}
-            className="stack"
-            encType="multipart/form-data"
-          >
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="seasonId" value={season.id} />
-            <div className="row-inline">
-              <label>
-                Date
-                <input
-                  type="date"
-                  name="entry_date"
-                  required
-                  defaultValue={prefill?.entry_date ?? todayDateKey()}
-                />
-              </label>
-              <label>
-                Direction
-                <select
-                  name="direction"
-                  required
-                  defaultValue={prefill?.direction ?? "out"}
-                >
-                  {LEDGER_DIRECTIONS.map((d) => (
-                    <option key={d} value={d}>
-                      {d === "in" ? "In (income)" : "Out (expense)"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Amount $
-                <input
-                  type="text"
-                  name="amount"
-                  inputMode="decimal"
-                  required
-                  placeholder="1,234.56"
-                  defaultValue={prefill ? dollarsValue(prefill.amount_cents) : ""}
-                />
-              </label>
-              <label>
-                Counterparty
-                <input
-                  type="text"
-                  name="counterparty"
-                  placeholder="Payee or source"
-                  defaultValue={prefill?.counterparty ?? ""}
-                />
-              </label>
-            </div>
-            <div className="row-inline">
-              <label>
-                Budget line
-                {lineSelect("budget_line_id", prefill?.budget_line_id ?? "")}
-              </label>
-              <label>
-                Competition tag
-                <select
-                  name="competition_id"
-                  defaultValue={prefill?.competition_id ?? ""}
-                >
-                  <option value="">(none)</option>
-                  {comps.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Trip tag
-                <select name="trip_id" defaultValue={prefill?.trip_id ?? ""}>
-                  <option value="">(none)</option>
-                  {trips.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label style={{ width: "100%" }}>
-              Memo
-              <input type="text" name="memo" defaultValue={prefill?.memo ?? ""} />
-            </label>
-            <label>
-              Receipt (PDF or image)
-              <input
-                type="file"
-                name="receipt"
-                accept="application/pdf,image/*"
-              />
-            </label>
-            <p className="muted">{NO_HEALTH_LABEL}</p>
-            <button type="submit">
-              {prefill ? "Save re-entry" : "Add entry"}
-            </button>
-          </form>
-        </div>
-      )}
+      <p className="page-foot">
+        Corrections are void + re-enter with a required reason — the audit log keeps
+        everything. Voided rows never count toward balances.
+      </p>
     </section>
   );
 }

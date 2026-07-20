@@ -15,9 +15,9 @@ test.describe("staff journey (demo director)", () => {
     await signIn(page, USERS.director.email, USERS.director.password);
     await page.waitForURL("**/demo/dashboard");
 
-    // --- Roster: the 12 seeded students -----------------------------------
+    // --- People: the 12 seeded students -----------------------------------
     await page.goto("/demo/roster");
-    await expect(page.getByRole("heading", { name: "Roster" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "People" })).toBeVisible();
     await expect(page.locator("table.members tbody tr")).toHaveCount(12);
     await expect(
       page.getByRole("link", { name: "Bennett, Ava" }),

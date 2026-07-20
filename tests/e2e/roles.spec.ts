@@ -20,9 +20,9 @@ test.describe("board member role gating", () => {
     await expect(nav.getByRole("link", { name: "Money" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Comms" })).toHaveCount(0);
 
-    // Treasury is readable but read-only — no add-entry affordance.
+    // Money is readable but read-only — no add-entry affordance.
     await page.goto("/demo/treasury");
-    await expect(page.getByRole("heading", { name: "Ledger" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Money" })).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Add an entry" }),
     ).toHaveCount(0);

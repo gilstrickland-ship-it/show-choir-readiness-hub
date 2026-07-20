@@ -25,7 +25,7 @@ export function RosterTabs({
     );
 
   return (
-    <div className="settings-tabs">
+    <div className="subtabs">
       {tab("directory", `/${slug}/roster`, "Directory")}
       {tab("ensembles", `/${slug}/roster/ensembles`, "Ensembles")}
       {canWrite && tab("import", `/${slug}/roster/import`, "Import")}
