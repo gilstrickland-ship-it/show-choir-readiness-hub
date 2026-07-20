@@ -135,9 +135,6 @@ export default async function ItineraryPage({
 
   return (
     <section className="stack">
-      <p>
-        <Link href={`/${slug}/competitions/${competitionId}`}>← {comp.name}</Link>
-      </p>
       <CompetitionTabs slug={slug} competitionId={competitionId} active="itinerary" />
       <h1>Itinerary</h1>
 

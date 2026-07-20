@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
@@ -63,9 +62,6 @@ export default async function AttendancePage({
 
   return (
     <section className="stack">
-      <p>
-        <Link href={`/${slug}/competitions/${competitionId}`}>← {comp.name}</Link>
-      </p>
       <CompetitionTabs slug={slug} competitionId={competitionId} active="attendance" />
       <h1>Attendance</h1>
 

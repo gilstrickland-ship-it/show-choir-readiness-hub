@@ -100,9 +100,6 @@ export default async function PacketPage({
 
   return (
     <section className="stack">
-      <p>
-        <Link href={`/${slug}/competitions/${competitionId}`}>← {comp.name}</Link>
-      </p>
       <CompetitionTabs slug={slug} competitionId={competitionId} active="packet" />
       <h1>Host packet</h1>
 
