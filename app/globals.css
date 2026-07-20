@@ -438,9 +438,18 @@
     gap: 0 1.4rem;
     flex: 1;
     min-width: 0;
-    justify-content: center;
     overflow-x: auto;
     scrollbar-width: thin;
+  }
+
+  /* Center the tab row when it fits; unlike justify-content: center, auto
+     margins collapse under overflow so the first tab stays reachable. */
+  .shell-nav a:first-child {
+    margin-left: auto;
+  }
+
+  .shell-nav a:last-child {
+    margin-right: auto;
   }
 
   .shell-nav a {
