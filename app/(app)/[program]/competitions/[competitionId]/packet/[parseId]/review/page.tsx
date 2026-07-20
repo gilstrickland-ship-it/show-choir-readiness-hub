@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES, ITINERARY_ITEM_KINDS } from "@/lib/competitions";
 import { CompetitionTabs } from "../../../CompetitionTabs";
 import { acceptParse } from "./actions";
+import { formatTimeZoneLabel } from "@/lib/datetime";
 
 // Packet parse review screen (§5 step 5, T015). Source document on the left,
 // editable parsed items + ambiguities/issues on the right. Accept materializes
@@ -93,7 +94,7 @@ export default async function ReviewPage({
       <p className="muted">
         AI-drafted from the host packet. Nothing here reaches a parent until you
         accept it here and then publish the itinerary. Times are shown in{" "}
-        {tz}.
+        {formatTimeZoneLabel(tz)}.
       </p>
 
       {parsed?.competition && (

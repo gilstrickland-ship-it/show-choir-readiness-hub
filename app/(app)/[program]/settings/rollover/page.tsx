@@ -3,7 +3,7 @@ import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/server";
-import { formatDateTimeInTz } from "@/lib/datetime";
+import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import { archiveSeason, unarchiveSeason } from "../actions";
 import { ArchivedBanner } from "../../ArchivedBanner";
 import { SettingsTabs } from "../SettingsTabs";
@@ -236,7 +236,8 @@ export default async function RolloverPage({
             <tr key={s.id}>
               <td>{s.label}</td>
               <td className="muted">
-                {s.starts_on ?? "—"} → {s.ends_on ?? "—"}
+                {s.starts_on ? formatDateInTz(`${s.starts_on}T12:00:00Z`, program.timezone) : "—"} →{" "}
+                {s.ends_on ? formatDateInTz(`${s.ends_on}T12:00:00Z`, program.timezone) : "—"}
               </td>
               <td>
                 {s.is_active && <span className="badge">Active</span>}

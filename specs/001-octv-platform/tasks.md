@@ -77,3 +77,7 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 - [X] T039 Return real HTTP 429 responses on rate-limited `(public)/t/` requests (route-handler or middleware layer) per arch §10 hardening (partial)
 - [X] T040 Surface a read-only banner on pages rendering archived-season data per arch §9 invariant 4 (partial)
 - [X] T041 Sweep codename strings from code comments so the SC-006 grep is fully clean per Constitution IX (partial)
+
+## Phase 10 — Product review polish (July 2026)
+
+- [X] T042 Bug sweep from July 2026 product review: absences date anchor, stale Overview-tab copy, raw ISO dates (comp board view, checkout picker, events week heading, rollover seasons), calendar-day countdown on Today, honest magic-link copy, friendly timezone label helper.

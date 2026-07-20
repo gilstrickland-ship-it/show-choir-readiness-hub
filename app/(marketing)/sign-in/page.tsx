@@ -36,7 +36,8 @@ export default async function SignInPage({
       {error && ERRORS[error] && <p className="alert-error">{ERRORS[error]}</p>}
       {sent && (
         <p className="alert-ok">
-          Check your email for a sign-in link. It opens {brand.name} on this device.
+          If that address belongs to a staff account, a sign-in link is on its way.
+          Check your spam folder if you don&apos;t see it in a couple of minutes.
         </p>
       )}
 

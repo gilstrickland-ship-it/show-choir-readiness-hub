@@ -15,6 +15,7 @@ import {
   zonedWallToUtc,
   formatDateInTz,
   formatTimeInTz,
+  calendarDaysBetween,
 } from "@/lib/datetime";
 
 // Today (season-workflow redesign, "Today"/"Today Mobile" design refs) — the
@@ -26,13 +27,6 @@ import {
 // under the inbox on mobile (media queries in globals.css).
 
 export const dynamic = "force-dynamic";
-
-// Whole days from `now` to `target` (target in the future). Negative clamps to
-// zero — a comp that started is "now", not "-2 days".
-function countdownDays(target: Date, now: Date): number {
-  const ms = target.getTime() - now.getTime();
-  return ms <= 0 ? 0 : Math.floor(ms / 86_400_000);
-}
 
 // Weekday abbreviation ("TUE") in the program's timezone.
 function weekdayAbbr(iso: string, timeZone: string): string {
@@ -130,7 +124,7 @@ export default async function DashboardPage({
         ? zonedWallToUtc(`${nextComp.date}T00:00`, tz)
         : null;
     if (target && !Number.isNaN(target.getTime())) {
-      daysOut = countdownDays(target, now);
+      daysOut = calendarDaysBetween(now, target, tz);
     }
   }
 

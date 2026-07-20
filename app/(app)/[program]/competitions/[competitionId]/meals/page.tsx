@@ -90,7 +90,7 @@ export default async function MealsPage({
           {data.ensembles.length === 0 && (
             <tr>
               <td colSpan={3} className="muted">
-                No attendance recorded yet. Seed attendance from the Overview tab.
+                No attendance recorded yet. Seed attendance from the competition page.
               </td>
             </tr>
           )}

@@ -91,7 +91,7 @@ export default async function AbsenceQueuePage({
                 <td>
                   {r.competition?.name ?? "—"}
                   {r.competition?.date && (
-                    <div className="muted">{formatDateInTz(r.competition.date, tz)}</div>
+                    <div className="muted">{formatDateInTz(`${r.competition.date}T12:00:00Z`, tz)}</div>
                   )}
                 </td>
                 <td>

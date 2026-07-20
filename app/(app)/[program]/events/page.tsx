@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { formatTimeInTz, zonedDateKey } from "@/lib/datetime";
+import { formatDateInTz, formatTimeInTz, zonedDateKey } from "@/lib/datetime";
 import { createEvent } from "./actions";
 import { EVENTS_WRITE_ROLES, EVENT_KINDS } from "@/lib/events";
 
@@ -117,7 +117,7 @@ export default async function EventsPage({
 
   const heading =
     view === "week"
-      ? `Week of ${civilKey(gridStart)}`
+      ? `Week of ${formatDateInTz(`${civilKey(gridStart)}T12:00:00Z`, tz)}`
       : new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(ref);
 
   const monthOf = ref.getUTCMonth();
