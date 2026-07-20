@@ -673,6 +673,24 @@
     border: 1px solid color-mix(in srgb, var(--alert) 30%, var(--line));
   }
 
+  /* Calm informational notice (not ok/error) — e.g. the staff "times changed
+     since publishing" nudge. Accent-tinted, never alarming. */
+  .alert-info {
+    width: 100%;
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--radius-s);
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--ink-2);
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  }
+
+  .alert-info a {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
   /* ---------------- Cards ---------------- */
 
   .card-grid {
@@ -3234,6 +3252,88 @@
   .token-footer-cap {
     flex-basis: 100%;
     margin-top: 0.4rem;
+  }
+
+  /* Gentle "living itinerary" banner (C2-2): the schedule changed after publish;
+     this page is always live. Accent-tinted, calm — a heads-up, not an alarm. */
+  .token-notice {
+    width: 100%;
+    margin: 0 0 0.4rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: var(--radius-s);
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: var(--ink-2);
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+    border-left: 4px solid var(--accent);
+  }
+
+  /* Itinerary per-competition action links (packet + add-to-calendar). Stacked
+     with room to breathe so each is an easy phone tap. */
+  .itinerary-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.1rem;
+  }
+
+  /* Absence history as stacked cards (C2-4) — a 4-column table is unreadable on
+     a 375px phone. Same card idiom as the costume/share cards. */
+  .token-report-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 100%;
+  }
+
+  .token-report-card {
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .token-report-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.6rem;
+  }
+
+  .token-report-head strong {
+    font-size: 1rem;
+  }
+
+  .token-report-meta {
+    font-size: 0.8rem;
+    color: var(--muted-ink);
+  }
+
+  .token-report-note {
+    margin: 0.15rem 0 0;
+    font-size: 0.9rem;
+    color: var(--ink-2);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* Mobile ergonomics (C2-4): parent-surface submit buttons inherit the ~36px
+     base button, too small for a reliable thumb tap. Within the token frame ONLY
+     (staff-app button sizing is untouched), give them a ≥44px tap target,
+     consistent with the .token-btn poster buttons. */
+  .token-frame form button,
+  .token-frame button[type="submit"] {
+    min-height: 44px;
+    padding-top: 0.65rem;
+    padding-bottom: 0.65rem;
   }
 
   /* ---------------- Restricted (role-gated) ---------------- */

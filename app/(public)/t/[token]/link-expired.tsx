@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { brand } from "@/lib/brand";
 
 // Shown by the token layout (F4b) when a /t/[token] link can't be resolved —
@@ -20,8 +21,12 @@ export function LinkExpired() {
         </p>
         <p>
           Open the link in your <strong>most recent email</strong> from the
-          program. If you can&apos;t find it, contact the program directly and ask
-          them to resend it.
+          program. Can&apos;t find it? We can email your family links to you:
+        </p>
+        <p>
+          <Link href="/link-help" className="token-btn dark" style={{ display: "inline-block" }}>
+            Email me my links
+          </Link>
         </p>
         <p className="muted">
           Powered by {brand.name}. We can&apos;t look up personal information from

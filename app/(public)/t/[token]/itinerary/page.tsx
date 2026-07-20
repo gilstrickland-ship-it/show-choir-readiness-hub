@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { formatDateInTz, formatTimeInTz } from "@/lib/datetime";
+import { formatDateInTz, formatTimeInTz, formatDateTimeInTz } from "@/lib/datetime";
 import { TokenFooter } from "../parts";
 
 // Published itineraries on the tokenized surface (§8a, invariant §9.3). Guardian
@@ -17,6 +17,35 @@ interface ItemRow {
   location: string | null;
   details: string | null;
   sort_order: number;
+  updated_at: string | null;
+}
+
+// Ignore edits within this window of publish so the publish write itself (and
+// any near-simultaneous last-second tidy) never trips the "updated" banner
+// (C2-2). Anything edited more than a minute after publish is a real change.
+const PUBLISH_JITTER_MS = 60_000;
+
+// The latest genuine post-publish change to a block's items, if any — the signal
+// for the "living itinerary" banner.
+function lastChangedAfterPublish(
+  items: ItemRow[],
+  publishedAt: string | null,
+): { at: string; count: number } | null {
+  if (!publishedAt) return null;
+  const threshold = new Date(publishedAt).getTime() + PUBLISH_JITTER_MS;
+  if (Number.isNaN(threshold)) return null;
+
+  let latest = 0;
+  let count = 0;
+  for (const item of items) {
+    if (!item.updated_at) continue;
+    const t = new Date(item.updated_at).getTime();
+    if (!Number.isNaN(t) && t > threshold) {
+      count += 1;
+      if (t > latest) latest = t;
+    }
+  }
+  return count > 0 ? { at: new Date(latest).toISOString(), count } : null;
 }
 
 export default async function PublicItineraryPage({
@@ -79,12 +108,13 @@ export default async function PublicItineraryPage({
     competitionName: string;
     date: string | null;
     items: ItemRow[];
+    changed: { at: string; count: number } | null;
   }> = [];
 
   if (competitionIds.length > 0) {
     const { data: itins } = await supabase
       .from("itineraries")
-      .select("id, competition_id, status, competition:competitions(name, date)")
+      .select("id, competition_id, status, published_at, competition:competitions(name, date)")
       .eq("program_id", program.id)
       .eq("status", "published")
       .in("competition_id", competitionIds);
@@ -92,20 +122,23 @@ export default async function PublicItineraryPage({
     for (const it of (itins as unknown as Array<{
       id: string;
       competition_id: string;
+      published_at: string | null;
       competition: { name: string; date: string | null } | null;
     }> | null) ?? []) {
       const { data: items } = await supabase
         .from("itinerary_items")
-        .select("starts_at, ends_at, kind, title, location, details, sort_order")
+        .select("starts_at, ends_at, kind, title, location, details, sort_order, updated_at")
         .eq("program_id", program.id)
         .eq("itinerary_id", it.id)
         .order("sort_order", { ascending: true })
         .order("starts_at", { ascending: true });
+      const itemRows = (items as ItemRow[] | null) ?? [];
       blocks.push({
         competitionId: it.competition_id,
         competitionName: it.competition?.name ?? "Competition",
         date: it.competition?.date ?? null,
-        items: (items as ItemRow[] | null) ?? [],
+        items: itemRows,
+        changed: lastChangedAfterPublish(itemRows, it.published_at),
       });
     }
   }
@@ -126,11 +159,23 @@ export default async function PublicItineraryPage({
               <span className="muted"> · {formatDateInTz(block.date, tz)}</span>
             )}
           </h2>
-          <p>
+          {block.changed && (
+            /* Living itinerary (C2-2): hosts compress schedules day-of, so a
+               parent must be able to trust that what they see is current. This
+               page always reads live data; the banner just points at the change. */
+            <p className="token-notice" role="status">
+              Updated {formatDateTimeInTz(block.changed.at, tz)} — times can shift
+              on competition day; this page always shows the latest.
+            </p>
+          )}
+          <p className="itinerary-links">
             {/* Published-only (invariant §9.3) — every block here IS published, so
-                this link always resolves. The route re-checks eligibility. */}
+                these links always resolve. The routes re-check eligibility. */}
             <a href={`/t/${token}/packet?competition=${block.competitionId}`}>
               Download packet (PDF)
+            </a>
+            <a href={`/t/${token}/itinerary/ics/${block.competitionId}`}>
+              Add to calendar
             </a>
           </p>
           {block.items.length === 0 ? (
