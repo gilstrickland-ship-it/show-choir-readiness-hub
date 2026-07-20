@@ -23,7 +23,7 @@ test.describe("invite acceptance (F3)", () => {
     await accept.click();
 
     await page.waitForURL("**/demo/dashboard");
-    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /today/i })).toBeVisible();
 
     // Demo Show Choir data: the seeded upcoming competition + its countdown card.
     await expect(page.getByText("Next competition")).toBeVisible();

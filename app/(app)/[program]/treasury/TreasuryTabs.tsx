@@ -23,7 +23,7 @@ export function TreasuryTabs({
     );
 
   return (
-    <div className="settings-tabs">
+    <div className="subtabs">
       {tab("ledger", `/${slug}/treasury`, "Ledger")}
       {tab("budget", `/${slug}/treasury/budget`, "Budget")}
       {tab("bva", `/${slug}/treasury/budget-vs-actual`, "Budget vs Actual")}

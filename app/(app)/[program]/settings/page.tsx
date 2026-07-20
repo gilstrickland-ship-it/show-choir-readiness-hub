@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
+import { SettingsTabs } from "./SettingsTabs";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { formatDateTimeInTz } from "@/lib/datetime";
@@ -87,13 +87,14 @@ export default async function SettingsPage({
 
   return (
     <section className="stack">
-      <div className="settings-tabs">
-        <strong>Program</strong>
-        <Link href={`/${slug}/settings/members`}>Members</Link>
-        <Link href={`/${slug}/settings/rollover`}>Seasons</Link>
-        <Link href={`/${slug}/settings/export`}>Export &amp; Data</Link>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">Program · Members · Seasons · Export &amp; data</p>
+          <h1 className="page-h1">Settings</h1>
+        </div>
       </div>
-      <h1>Program settings</h1>
+
+      <SettingsTabs slug={slug} active="program" />
 
       {saved && <p className="alert-ok">Saved.</p>}
       {error === "missing" && (
@@ -106,7 +107,7 @@ export default async function SettingsPage({
         <p className="alert-error">Couldn&apos;t update support access. Try again.</p>
       )}
 
-      <form action={updateProgram} className="stack">
+      <form action={updateProgram} className="stack settings-form">
         <input type="hidden" name="programId" value={program.id} />
         <input type="hidden" name="slug" value={slug} />
 
@@ -152,7 +153,7 @@ export default async function SettingsPage({
       </form>
 
       {/* Support access (§10) — director-only consent toggle. */}
-      <div className="confirm-box stack" style={{ width: "100%" }}>
+      <div className="panel stack">
         <h2>{brand.name} support access</h2>
         <p className="muted">
           Grant {brand.name} support a read-only view of your program for{" "}
@@ -220,7 +221,7 @@ export default async function SettingsPage({
       </div>
 
       {/* Share links (FR-002 / §8a) — active broadcast links + revoke. */}
-      <div className="confirm-box stack" style={{ width: "100%" }}>
+      <div className="panel stack">
         <h2>Share links</h2>
         <p className="muted">
           Read-only broadcast links you have handed out (an itinerary, a season&apos;s

@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { archiveSeason, unarchiveSeason } from "../actions";
 import { ArchivedBanner } from "../../ArchivedBanner";
+import { SettingsTabs } from "../SettingsTabs";
 import {
   createRolloverSeason,
   confirmEnsembles,
@@ -87,13 +88,14 @@ export default async function RolloverPage({
 
   return (
     <section className="stack">
-      <div className="settings-tabs">
-        <Link href={`/${slug}/settings`}>Program</Link>
-        <Link href={`/${slug}/settings/members`}>Members</Link>
-        <strong>Seasons</strong>
-        <Link href={`/${slug}/settings/export`}>Export &amp; Data</Link>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">Settings</p>
+          <h1 className="page-h1">Seasons</h1>
+        </div>
       </div>
-      <h1>Seasons</h1>
+
+      <SettingsTabs slug={slug} active="seasons" />
       <p className="muted">
         Create your first season below, roll over into next year, and archive past
         seasons to freeze them read-only.

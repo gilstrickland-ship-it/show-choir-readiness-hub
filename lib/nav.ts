@@ -44,31 +44,43 @@ export const COMMS_ROLES: readonly Role[] = [
 export interface NavItem {
   slot: string;
   label: string;
-  flag?: FlagKey; // undefined = always exposed (not flag-gated)
+  flag?: FlagKey; // single-flag gate: hidden unless this flag is on
+  // Any-of flag gate: visible when ANY listed flag is on (union surfaces like
+  // Season, which absorbs competitions + events + travel + archive). Mutually
+  // exclusive with `flag` in practice — an item uses one or the other.
+  flagsAny?: readonly FlagKey[];
   roles?: readonly Role[]; // undefined = visible to every role
 }
 
+// Task-oriented IA (season-workflow redesign): six slots, each mapping to a
+// staff job-to-be-done rather than a data module. Settings leaves the nav for
+// the header's right cluster (SETTINGS_ROLES-gated there). Season is a real
+// slot that absorbs the old Competitions/Events/Travel/History lists behind an
+// any-of flag gate; the old routes stay live (still flag/role-gated) but drop
+// out of the nav.
 export const NAV: readonly NavItem[] = [
-  { slot: "dashboard", label: "Dashboard" },
-  { slot: "roster", label: "Roster", roles: ROSTER_ROLES },
-  { slot: "costumes", label: "Costumes", flag: "costumes", roles: COSTUMES_ROLES },
-  { slot: "competitions", label: "Competitions", flag: "competitions" },
-  { slot: "events", label: "Events", flag: "events" },
-  { slot: "travel", label: "Travel", flag: "travel" },
-  { slot: "treasury", label: "Treasury", flag: "treasury", roles: TREASURY_ROLES },
+  { slot: "dashboard", label: "Today" },
+  {
+    slot: "season",
+    label: "Season",
+    flagsAny: ["competitions", "events", "travel", "archive"],
+  },
+  { slot: "roster", label: "People", roles: ROSTER_ROLES },
+  { slot: "treasury", label: "Money", flag: "treasury", roles: TREASURY_ROLES },
+  { slot: "costumes", label: "Wardrobe", flag: "costumes", roles: COSTUMES_ROLES },
   { slot: "comms", label: "Comms", flag: "comms", roles: COMMS_ROLES },
-  // Trophy case / season archive — visible to every staff role (§5, T028).
-  { slot: "history", label: "History", flag: "archive" },
-  { slot: "settings", label: "Settings", roles: SETTINGS_ROLES },
 ];
 
-// A nav item is visible when its flag (if any) is on AND the role is allowed.
+// A nav item is visible when its flag gate passes (single `flag` on, OR any of
+// `flagsAny` on) AND the role is allowed. An item with neither flag field is
+// always flag-visible.
 export function isNavItemVisible(
   item: NavItem,
   role: Role,
   flags: Record<FlagKey, boolean>,
 ): boolean {
   if (item.flag && !flags[item.flag]) return false;
+  if (item.flagsAny && !item.flagsAny.some((f) => flags[f])) return false;
   if (item.roles && !item.roles.includes(role)) return false;
   return true;
 }

@@ -1,11 +1,13 @@
 import Link from "next/link";
 
-// Sub-navigation for the comms surface (§8): Announcements (immediate sends),
-// Shifts (volunteer signups — T024), and Digest (weekly AI draft/review — T025).
-// Mirrors the settings/competition tabbed idiom; the active tab renders as
-// <strong>. The Shifts tab shows only when the `shifts` flag is on for the
-// program (`shiftsEnabled`), so a hidden feature never offers a dead link.
-export type CommsTab = "announcements" | "shifts" | "digest";
+// Sub-navigation for the comms surface (§7 redesign). Digest is the landing
+// (/comms) — the AI draft awaiting approval plus recently-sent history and the
+// staffing/deliverability asides. Announcements (/comms/announcements) is the
+// immediate-send composer + full history. Shifts (/comms/shifts) is the
+// volunteer roster, shown only when the `shifts` flag is on so a hidden feature
+// never offers a dead link. Rendered with the shared `.subtabs` display-type
+// underline strip (matches People/Money/Wardrobe/Settings).
+export type CommsTab = "digest" | "announcements" | "shifts";
 
 export function CommsTabs({
   slug,
@@ -27,10 +29,10 @@ export function CommsTabs({
     );
 
   return (
-    <div className="settings-tabs">
-      {tab("announcements", base, "Announcements")}
+    <div className="subtabs">
+      {tab("digest", base, "Digest")}
+      {tab("announcements", `${base}/announcements`, "Announcements")}
       {shiftsEnabled && tab("shifts", `${base}/shifts`, "Shifts")}
-      {tab("digest", `${base}/digest`, "Digest")}
     </div>
   );
 }

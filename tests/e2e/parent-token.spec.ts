@@ -23,9 +23,11 @@ test.describe("parent token journeys (F13/F15/F16)", () => {
     const token = readState().guardianRawToken;
     const base = `/t/${token}`;
 
-    // --- Family home lists the Bennett student -----------------------------
+    // --- Family home (poster) lists the Bennett student --------------------
     await page.goto(base);
-    await expect(page.getByRole("heading", { name: "Your family" })).toBeVisible();
+    // The redesigned family home leads with the "Next competition" hero and a
+    // per-student costume card (no "Your family" heading) — assert the student
+    // card, which is the stable anchor for the family surface.
     await expect(
       page.getByRole("heading", { name: "Ava Bennett" }),
     ).toBeVisible();

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
@@ -6,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { requestExport } from "./actions";
+import { SettingsTabs } from "../SettingsTabs";
 
 // Settings → Export & Data (§13.2, §13.3, T029). director/admin. Two halves:
 //   • Export everything — a real button producing one zip of CSVs + generated
@@ -78,13 +78,14 @@ export default async function ExportPage({
 
   return (
     <section className="stack">
-      <div className="settings-tabs">
-        <Link href={`/${slug}/settings`}>Program</Link>
-        <Link href={`/${slug}/settings/members`}>Members</Link>
-        <Link href={`/${slug}/settings/rollover`}>Rollover &amp; Archive</Link>
-        <strong>Export &amp; Data</strong>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">Settings</p>
+          <h1 className="page-h1">Export &amp; data</h1>
+        </div>
       </div>
-      <h1>Export &amp; data</h1>
+
+      <SettingsTabs slug={slug} active="export" />
 
       {sp.requested && (
         <p className="alert-ok">

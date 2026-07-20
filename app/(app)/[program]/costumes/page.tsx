@@ -4,273 +4,337 @@ import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
+import { zonedWallToUtc, zonedDateKey } from "@/lib/datetime";
 import {
   COSTUME_WRITE_ROLES,
-  PIECE_KINDS,
-  PIECE_CONDITIONS,
+  OPEN_ALTERATION_STATUSES,
+  ALTERATION_STATUS_LABELS,
   PIECE_KIND_LABELS,
   NO_HEALTH_LABEL,
   type PieceKind,
-  type PieceCondition,
+  type AlterationStatus,
 } from "@/lib/costumes";
 import { CostumeTabs } from "./CostumeTabs";
-import { addPiece, retirePiece } from "./actions";
+import { setAlterationStatus, updateAlterationNotes } from "./alterations/actions";
 
-// Inventory — the costumes landing page (T009). Program-level piece inventory
-// (persists across seasons), filterable by kind / set / condition. Props and set
-// pieces are just kinds here — one inventory, no extra screens (§4).
+// Wardrobe landing (season-workflow redesign, "Wardrobe" design ref) — the
+// Alterations queue is the landing content (Inventory moved to /costumes/
+// inventory). Urgency banner counts down to the next competition; the queue is
+// urgency-sorted (soonest ensemble comp first) with the existing Start/Done
+// status transitions; summary cards glance at Assignments / Checkout / Condition
+// flags. Read-only for board_member; writers get the Start/Done + notes controls.
 
-interface PieceRow {
+interface RawAssignment {
   id: string;
-  kind: PieceKind;
-  label: string;
-  size_label: string | null;
-  color: string | null;
-  condition: PieceCondition;
-  storage_location: string | null;
-  set_id: string | null;
+  alteration_status: AlterationStatus;
+  alteration_notes: string | null;
+  student: { first_name: string; last_name: string } | null;
+  piece: {
+    label: string;
+    kind: PieceKind;
+    size_label: string | null;
+    storage_location: string | null;
+    set: { name: string; ensemble_id: string | null } | null;
+  } | null;
 }
 
-interface SetOption {
+interface QueueItem {
   id: string;
-  name: string;
+  status: AlterationStatus;
+  notes: string | null;
+  studentName: string;
+  pieceLabel: string;
+  pieceKind: PieceKind;
+  location: string | null;
+  size: string | null;
+  ensembleId: string | null;
+  sortDate: string; // YYYY-MM-DD urgency key ("9999-…" when no upcoming comp)
 }
 
-export default async function CostumesInventoryPage({
+// Whole days from `now` to `target` (future). Past clamps to 0.
+function countdownDays(target: Date, now: Date): number {
+  const ms = target.getTime() - now.getTime();
+  return ms <= 0 ? 0 : Math.floor(ms / 86_400_000);
+}
+
+export default async function WardrobePage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    kind?: string;
-    set?: string;
-    condition?: string;
-    saved?: string;
-    error?: string;
-  }>;
+  searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
   const { program: slug } = await params;
-  const { program, role } = await getTenantContext(slug);
+  const { program, role, season } = await getTenantContext(slug);
   requireFlag(program, "costumes");
   if (!COSTUMES_ROLES.includes(role)) notFound();
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
-  const { kind, set, condition, saved, error } = await searchParams;
+  const { saved, error } = await searchParams;
 
-  const kindFilter = (PIECE_KINDS as readonly string[]).includes(kind ?? "")
-    ? (kind as PieceKind)
-    : "all";
-  const conditionFilter = (PIECE_CONDITIONS as readonly string[]).includes(
-    condition ?? "",
-  )
-    ? (condition as PieceCondition)
-    : "all";
+  const tz = program.timezone;
+  const now = new Date();
+  const todayKey = zonedDateKey(now, tz);
 
   const supabase = await createClient();
 
-  // Sets for the filter dropdown + resolving each piece's current set name.
-  const { data: setData } = await supabase
-    .from("costume_sets")
-    .select("id, name")
-    .eq("program_id", program.id)
-    .order("sort_order", { ascending: true })
-    .order("name", { ascending: true });
-  const sets = (setData as SetOption[] | null) ?? [];
-  const setName = new Map(sets.map((s) => [s.id, s.name]));
-  const setFilter = set && setName.has(set) ? set : "all";
+  let items: QueueItem[] = [];
+  const nextCompDate = new Map<string, string>(); // ensemble_id → soonest comp date
+  let nextComp: { name: string; date: string } | null = null;
 
-  let query = supabase
-    .from("costume_pieces")
-    .select("id, kind, label, size_label, color, condition, storage_location, set_id")
-    .eq("program_id", program.id)
-    .order("label", { ascending: true });
+  if (season) {
+    // Each ensemble's next competition date (this season), plus the program-wide
+    // next competition for the urgency banner.
+    const { data: compData } = await supabase
+      .from("competitions")
+      .select("name, date, ensemble_id")
+      .eq("program_id", program.id)
+      .eq("season_id", season.id)
+      .gte("date", todayKey)
+      .order("date", { ascending: true });
+    for (const c of (compData as
+      | { name: string; date: string | null; ensemble_id: string | null }[]
+      | null) ?? []) {
+      if (!c.date) continue;
+      if (!nextComp) nextComp = { name: c.name, date: c.date };
+      if (c.ensemble_id && !nextCompDate.has(c.ensemble_id)) {
+        nextCompDate.set(c.ensemble_id, c.date);
+      }
+    }
 
-  if (kindFilter !== "all") query = query.eq("kind", kindFilter);
-  if (conditionFilter !== "all") query = query.eq("condition", conditionFilter);
-  if (setFilter !== "all") query = query.eq("set_id", setFilter);
+    const { data } = await supabase
+      .from("costume_assignments")
+      .select(
+        "id, alteration_status, alteration_notes, student:students(first_name, last_name), piece:costume_pieces(label, kind, size_label, storage_location, set:costume_sets(name, ensemble_id))",
+      )
+      .eq("program_id", program.id)
+      .eq("season_id", season.id)
+      .in("alteration_status", OPEN_ALTERATION_STATUSES as unknown as string[]);
 
-  const { data: pieceData } = await query;
-  const pieces = (pieceData as PieceRow[] | null) ?? [];
+    items = ((data as RawAssignment[] | null) ?? []).map((a) => {
+      const ensembleId = a.piece?.set?.ensemble_id ?? null;
+      const compDate = ensembleId ? nextCompDate.get(ensembleId) ?? null : null;
+      return {
+        id: a.id,
+        status: a.alteration_status,
+        notes: a.alteration_notes,
+        studentName: a.student
+          ? `${a.student.last_name}, ${a.student.first_name}`
+          : "—",
+        pieceLabel: a.piece?.label ?? "—",
+        pieceKind: (a.piece?.kind ?? "accessory") as PieceKind,
+        location: a.piece?.storage_location ?? null,
+        size: a.piece?.size_label ?? null,
+        ensembleId,
+        sortDate: compDate ?? "9999-12-31",
+      };
+    });
+
+    // Urgency order: soonest ensemble competition first, then needed before
+    // in-progress, then piece label.
+    items.sort(
+      (a, b) =>
+        a.sortDate.localeCompare(b.sortDate) ||
+        OPEN_ALTERATION_STATUSES.indexOf(a.status) -
+          OPEN_ALTERATION_STATUSES.indexOf(b.status) ||
+        a.pieceLabel.localeCompare(b.pieceLabel),
+    );
+  }
+
+  const openCount = items.length;
+
+  // Days until the next competition (banner).
+  let daysToComp: number | null = null;
+  if (nextComp) {
+    const target = zonedWallToUtc(`${nextComp.date}T00:00`, tz);
+    if (target && !Number.isNaN(target.getTime())) {
+      daysToComp = countdownDays(target, now);
+    }
+  }
+
+  // ---- Summary-card counts (cheap) ------------------------------------------
+  const [
+    piecesCountRes,
+    setsCountRes,
+    flaggedCountRes,
+    studentsCountRes,
+    checkoutOutRes,
+    assignedRes,
+  ] = await Promise.all([
+    supabase
+      .from("costume_pieces")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id),
+    supabase
+      .from("costume_sets")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id),
+    supabase
+      .from("costume_pieces")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id)
+      .eq("condition", "fair"),
+    supabase
+      .from("students")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id)
+      .neq("status", "graduated"),
+    supabase
+      .from("costume_checkouts")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id)
+      .not("checked_out_at", "is", null)
+      .is("checked_in_at", null),
+    season
+      ? supabase
+          .from("costume_assignments")
+          .select("student_id")
+          .eq("program_id", program.id)
+          .eq("season_id", season.id)
+          .not("student_id", "is", null)
+      : Promise.resolve({ data: [] as { student_id: string }[] }),
+  ]);
+
+  const piecesCount = piecesCountRes.count ?? 0;
+  const setsCount = setsCountRes.count ?? 0;
+  const flaggedCount = flaggedCountRes.count ?? 0;
+  const studentsCount = studentsCountRes.count ?? 0;
+  const outCount = checkoutOutRes.count ?? 0;
+  const assignedStudents = new Set(
+    ((assignedRes.data as { student_id: string | null }[] | null) ?? [])
+      .map((r) => r.student_id)
+      .filter((id): id is string => id != null),
+  ).size;
+
+  const eyebrow = [
+    `${piecesCount} piece${piecesCount === 1 ? "" : "s"}`,
+    `${setsCount} set${setsCount === 1 ? "" : "s"}`,
+    `${assignedStudents} assigned this season`,
+  ].join(" · ");
 
   return (
-    <section className="stack">
-      <CostumeTabs slug={slug} active="inventory" />
-      <h1>Inventory</h1>
-      <p className="muted">
-        Program inventory — pieces persist across seasons. Props and set pieces
-        live here too; group them into sets and they flow through checkout like
-        any costume.
-      </p>
+    <section className="stack wardrobe">
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">{eyebrow}</p>
+          <h1 className="page-h1">Wardrobe</h1>
+        </div>
+      </div>
 
+      <CostumeTabs slug={slug} active="alterations" />
+
+      {!season && <p className="muted">No active season — nothing to alter yet.</p>}
       {saved && <p className="alert-ok">Saved.</p>}
-      {error === "piece" && (
-        <p className="alert-error">A piece needs a kind and a label.</p>
+      {error === "alteration" && (
+        <p className="alert-error">Couldn&apos;t update the alteration. Try again.</p>
       )}
 
-      <form method="get" className="row-inline">
-        <label>
-          Kind
-          <select name="kind" defaultValue={kindFilter}>
-            <option value="all">All kinds</option>
-            {PIECE_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {PIECE_KIND_LABELS[k]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Set
-          <select name="set" defaultValue={setFilter}>
-            <option value="all">All sets</option>
-            <option value="">(no set)</option>
-            {sets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Condition
-          <select name="condition" defaultValue={conditionFilter}>
-            <option value="all">All conditions</option>
-            {PIECE_CONDITIONS.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit" className="secondary">
-          Filter
-        </button>
-      </form>
+      {nextComp && openCount > 0 && (
+        <div className="wardrobe-urgency">
+          <span className="wardrobe-urgency-num">{daysToComp ?? 0}</span>
+          <span className="wardrobe-urgency-text">
+            <strong>
+              day{daysToComp === 1 ? "" : "s"} until {nextComp.name}
+            </strong>{" "}
+            — {openCount} alteration{openCount === 1 ? "" : "s"} still open. Sorted by
+            urgency below.
+          </span>
+        </div>
+      )}
 
-      <table className="members">
-        <thead>
-          <tr>
-            <th>Label</th>
-            <th>Kind</th>
-            <th>Size</th>
-            <th>Color</th>
-            <th>Condition</th>
-            <th>Storage</th>
-            <th>Set</th>
-            {canWrite && <th></th>}
-          </tr>
-        </thead>
-        <tbody>
-          {pieces.map((p) => (
-            <tr key={p.id}>
-              <td>
-                {canWrite ? (
-                  <Link href={`/${slug}/costumes/pieces/${p.id}`}>{p.label}</Link>
-                ) : (
-                  p.label
-                )}
-              </td>
-              <td>{PIECE_KIND_LABELS[p.kind]}</td>
-              <td>{p.size_label ?? "—"}</td>
-              <td>{p.color ?? "—"}</td>
-              <td>
-                {p.condition === "retire" ? (
-                  <span className="muted">retired</span>
-                ) : (
-                  p.condition
-                )}
-              </td>
-              <td>{p.storage_location ?? "—"}</td>
-              <td>{p.set_id ? (setName.get(p.set_id) ?? "—") : <span className="muted">—</span>}</td>
-              {canWrite && (
-                <td>
-                  {p.condition !== "retire" && (
-                    <form action={retirePiece}>
+      {season && openCount === 0 && (
+        <p className="muted">No open alterations. Everything is fitted.</p>
+      )}
+
+      {openCount > 0 && (
+        <>
+          {canWrite && <p className="muted">{NO_HEALTH_LABEL}</p>}
+          <div className="alt-queue">
+            {items.map((it) => {
+              const meta = [it.location, it.size].filter(Boolean).join(" · ");
+              return (
+                <div key={it.id} className="alt-row">
+                  <span className={`alt-pill ${it.status}`}>
+                    {ALTERATION_STATUS_LABELS[it.status]}
+                  </span>
+                  <div className="alt-body">
+                    <strong>{it.pieceLabel}</strong>{" "}
+                    <span className="alt-kind">{PIECE_KIND_LABELS[it.pieceKind]}</span>
+                    {" — "}
+                    {it.studentName}
+                    {it.notes && <span className="muted"> · {it.notes}</span>}
+                  </div>
+                  {meta && <span className="alt-meta">{meta}</span>}
+                  {canWrite && (
+                    <div className="alt-actions">
+                      {it.status === "needed" && (
+                        <form action={setAlterationStatus}>
+                          <input type="hidden" name="programId" value={program.id} />
+                          <input type="hidden" name="slug" value={slug} />
+                          <input type="hidden" name="assignmentId" value={it.id} />
+                          <input type="hidden" name="status" value="in_progress" />
+                          <button type="submit" className="secondary">
+                            Start
+                          </button>
+                        </form>
+                      )}
+                      <form action={setAlterationStatus}>
+                        <input type="hidden" name="programId" value={program.id} />
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="assignmentId" value={it.id} />
+                        <input type="hidden" name="status" value="done" />
+                        <button type="submit">Done</button>
+                      </form>
+                    </div>
+                  )}
+                  {canWrite && (
+                    <form action={updateAlterationNotes} className="alt-notes">
                       <input type="hidden" name="programId" value={program.id} />
                       <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="pieceId" value={p.id} />
-                      <button type="submit" className="linklike danger">
-                        Retire
+                      <input type="hidden" name="assignmentId" value={it.id} />
+                      <input
+                        type="text"
+                        name="alteration_notes"
+                        defaultValue={it.notes ?? ""}
+                        aria-label="Alteration notes"
+                        placeholder="Hem, take in waist…"
+                      />
+                      <button type="submit" className="secondary">
+                        Save note
                       </button>
                     </form>
                   )}
-                </td>
-              )}
-            </tr>
-          ))}
-          {pieces.length === 0 && (
-            <tr>
-              <td colSpan={canWrite ? 8 : 7} className="muted">
-                No pieces match.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      {canWrite && (
-        <>
-          <h2>Add a piece</h2>
-          <form action={addPiece} className="stack">
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <div className="row-inline">
-              <label>
-                Kind
-                <select name="kind" required defaultValue="dress">
-                  {PIECE_KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {PIECE_KIND_LABELS[k]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Label
-                <input type="text" name="label" required placeholder="Dress #14, Riser 3" />
-              </label>
-              <label>
-                Size label
-                <input type="text" name="size_label" placeholder="M, 10, 32W" />
-              </label>
-              <label>
-                Color
-                <input type="text" name="color" />
-              </label>
-              <label>
-                Condition
-                <select name="condition" defaultValue="good">
-                  {PIECE_CONDITIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Storage location
-                <input type="text" name="storage_location" placeholder="Bin 3, Rack A" />
-              </label>
-              <label>
-                Set
-                <select name="set_id" defaultValue="">
-                  <option value="">(no set)</option>
-                  {sets.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label style={{ width: "100%" }}>
-              Notes
-              <input type="text" name="notes" />
-            </label>
-            <p className="muted">{NO_HEALTH_LABEL}</p>
-            <button type="submit">Add piece</button>
-          </form>
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
+
+      {/* Summary cards */}
+      <div className="wardrobe-cards">
+        <div className="wardrobe-card">
+          <h3>Assignments</h3>
+          <div className="wardrobe-card-num">
+            {assignedStudents} / {studentsCount}
+          </div>
+          <div className="wardrobe-card-sub">students with a costume assigned</div>
+          <Link href={`/${slug}/costumes/assignments`}>Open assignments →</Link>
+        </div>
+        <div className="wardrobe-card">
+          <h3>Checkout</h3>
+          <div className="wardrobe-card-num">{outCount} out</div>
+          <div className="wardrobe-card-sub">pieces currently checked out</div>
+          <Link href={`/${slug}/costumes/checkout`}>Checkout board →</Link>
+        </div>
+        <div className="wardrobe-card">
+          <h3>Condition flags</h3>
+          <div className="wardrobe-card-num">{flaggedCount} fair</div>
+          <div className="wardrobe-card-sub">pieces marked fair — review or retire</div>
+          <Link href={`/${slug}/costumes/inventory?condition=fair`}>
+            Filter inventory →
+          </Link>
+        </div>
+      </div>
     </section>
   );
 }

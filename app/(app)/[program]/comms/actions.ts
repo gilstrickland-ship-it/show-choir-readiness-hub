@@ -32,7 +32,7 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
   const bodyMd = str(formData, "body_md");
   const ensembleId = str(formData, "ensemble_id") || null;
 
-  if (!subject || !bodyMd) redirect(`/${slug}/comms?error=empty`);
+  if (!subject || !bodyMd) redirect(`/${slug}/comms/announcements?error=empty`);
 
   const supabase = await createClient();
 
@@ -50,7 +50,7 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     })
     .select("id")
     .maybeSingle();
-  if (annErr || !annData) redirect(`/${slug}/comms?error=save`);
+  if (annErr || !annData) redirect(`/${slug}/comms/announcements?error=save`);
   const announcementId = (annData as { id: string }).id;
 
   // Async path: enqueue the fan-out and return immediately (the announcement is
@@ -60,8 +60,8 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
       name: "announcement/send",
       data: { programId, announcementId, seasonId, ensembleId, subject, bodyMd },
     });
-    revalidatePath(`/${slug}/comms`);
-    redirect(`/${slug}/comms?done=1&queued=1`);
+    revalidatePath(`/${slug}/comms/announcements`);
+    redirect(`/${slug}/comms/announcements?done=1&queued=1`);
   }
 
   // Inline fallback (no Inngest): run the same core now and report counts.
@@ -74,8 +74,8 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     bodyMd,
   });
 
-  revalidatePath(`/${slug}/comms`);
+  revalidatePath(`/${slug}/comms/announcements`);
   redirect(
-    `/${slug}/comms?done=1&sent=${sent}&skipped=${skipped}&failed=${failed}`,
+    `/${slug}/comms/announcements?done=1&sent=${sent}&skipped=${skipped}&failed=${failed}`,
   );
 }

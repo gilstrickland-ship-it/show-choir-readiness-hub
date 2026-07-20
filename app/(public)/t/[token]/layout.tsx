@@ -67,7 +67,9 @@ function TokenFrame({
     <div className="token-frame">
       <header className="token-header">
         <strong>{programName ?? brand.name}</strong>
-        {programName && <div className="muted">{brand.name}</div>}
+        {programName && (
+          <div className="token-header-cap">Your link · no account needed</div>
+        )}
       </header>
       <main>{children}</main>
     </div>

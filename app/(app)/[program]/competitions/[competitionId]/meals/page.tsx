@@ -46,9 +46,6 @@ export default async function MealsPage({
 
   return (
     <section className="stack">
-      <p>
-        <Link href={`/${slug}/competitions/${competitionId}`}>← {comp.name}</Link>
-      </p>
       <CompetitionTabs slug={slug} competitionId={competitionId} active="meals" />
       <h1>Meal count</h1>
 

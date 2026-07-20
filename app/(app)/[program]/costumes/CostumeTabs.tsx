@@ -1,9 +1,10 @@
 import Link from "next/link";
 
-// Sub-navigation for the costume surface (Inventory / Sets / Assignments /
-// Alterations / Checkout). Active tab renders as <strong> (no link), mirroring
-// the RosterTabs idiom. All five tabs are read-visible to every costume role
-// (board_member reads); write controls inside each page gate on canWrite.
+// Sub-navigation for the Wardrobe surface (Alterations / Inventory / Sets /
+// Assignments / Quick change / Checkout). Alterations is the landing tab (lives
+// at /costumes); Inventory moved to /costumes/inventory. Active tab renders as
+// <strong> (no link), mirroring the RosterTabs idiom. All tabs are read-visible
+// to every costume role (board_member reads); write controls gate on canWrite.
 export type CostumeTab =
   | "inventory"
   | "sets"
@@ -29,12 +30,12 @@ export function CostumeTabs({
     );
 
   return (
-    <div className="settings-tabs">
-      {tab("inventory", `/${slug}/costumes`, "Inventory")}
+    <div className="subtabs">
+      {tab("alterations", `/${slug}/costumes`, "Alterations")}
+      {tab("inventory", `/${slug}/costumes/inventory`, "Inventory")}
       {tab("sets", `/${slug}/costumes/sets`, "Sets")}
       {tab("assignments", `/${slug}/costumes/assignments`, "Assignments")}
       {tab("quick-change", `/${slug}/costumes/quick-change`, "Quick change")}
-      {tab("alterations", `/${slug}/costumes/alterations`, "Alterations")}
       {tab("checkout", `/${slug}/costumes/checkout`, "Checkout")}
     </div>
   );
