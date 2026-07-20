@@ -12,7 +12,7 @@ test.describe("board member role gating", () => {
   test("board member sees read-only treasury and no comms", async ({ page }) => {
     await signIn(page, USERS.board.email, USERS.board.password);
     await page.waitForURL("**/demo/dashboard");
-    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /today/i })).toBeVisible();
 
     const nav = page.getByRole("navigation", { name: "Program navigation" });
     await expect(nav.getByRole("link", { name: "Treasury" })).toBeVisible();

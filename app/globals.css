@@ -1002,4 +1002,586 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+
+  /* ---------------- Today (action-driven home) ---------------- */
+
+  /* The Today composition runs wider than the default admin column
+     (redesign spec: 1120px, 24px side padding). */
+  main:has(> .today) {
+    max-width: 70rem;
+    padding: 1.75rem 1.5rem 4.5rem;
+  }
+
+  .today {
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+    width: 100%;
+  }
+
+  .today-topline {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* The eyebrow doubles as the page h1 — reset the base h1 treatment. */
+  .today-topline h1.eyebrow {
+    font-family: var(--font-ui-stack);
+    font-size: 0.78rem;
+    font-weight: 650;
+    line-height: 1.55;
+    border-bottom: none;
+    padding-bottom: 0;
+    width: auto;
+    margin: 0;
+  }
+
+  .today-topline .muted {
+    font-size: 0.84rem;
+  }
+
+  .today-hero {
+    border-top: 3px solid var(--line-strong);
+    border-bottom: 3px solid var(--line-strong);
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 0;
+  }
+
+  .today-hero-main {
+    padding: 1.6rem 1.75rem 1.9rem 0;
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .today-hero-main.today-hero-empty {
+    border-right: none;
+    grid-column: 1 / -1;
+    padding-right: 0;
+  }
+
+  .today-hero-aside {
+    padding: 1.6rem 0 1.9rem 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .today-kicker {
+    margin: 0;
+    font-size: 0.72rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--muted-ink);
+  }
+
+  .today-count-row {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .today-count {
+    font-family: var(--font-display-stack);
+    font-size: 6.5rem;
+    font-weight: 800;
+    line-height: 0.9;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .today-count-unit {
+    font-family: var(--font-display-stack);
+    font-size: 2.5rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+
+  .today-comp-name {
+    font-family: var(--font-display-stack);
+    font-size: 1.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    line-height: 1.05;
+  }
+
+  .today-comp-name a {
+    text-decoration: none;
+  }
+
+  .today-hero-meta {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--ink-2);
+  }
+
+  .today-hero-actions {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .today-hero-actions .button-link {
+    font-size: 0.88rem;
+    padding: 0.55rem 1.1rem;
+  }
+
+  .readiness-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+
+  .readiness-score {
+    font-family: var(--font-display-stack);
+    font-size: 1.4rem;
+    font-weight: 750;
+    color: var(--accent);
+  }
+
+  .readiness-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--line);
+    font-size: 0.88rem;
+  }
+
+  .readiness-row .readiness-label {
+    flex: 1;
+  }
+
+  .readiness-row a {
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  .readiness-row.warn {
+    font-weight: 600;
+  }
+
+  .readiness-row.warn a {
+    color: var(--warn-text);
+    font-weight: 600;
+  }
+
+  .readiness-row.alert {
+    font-weight: 600;
+  }
+
+  .readiness-row.alert a {
+    color: var(--alert-text);
+    font-weight: 600;
+  }
+
+  .status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--muted-ink);
+  }
+
+  .status-dot.ok {
+    background: var(--ok);
+  }
+
+  .status-dot.warn {
+    background: var(--warn);
+  }
+
+  .status-dot.alert {
+    background: var(--alert);
+  }
+
+  .today-body {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 2.25rem;
+    align-items: start;
+  }
+
+  .inbox h2,
+  .today-body h2 {
+    font-size: 1.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin: 0 0 0.25rem;
+  }
+
+  .all-clear {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    background: var(--ok-soft);
+    color: var(--ok-text);
+    padding: 1.1rem 1.25rem;
+    font-weight: 550;
+  }
+
+  .inbox-rows {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .inbox-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .inbox-row:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .inbox-count {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-s);
+    display: grid;
+    place-items: center;
+    font-family: var(--font-display-stack);
+    font-size: 1.5rem;
+    font-weight: 800;
+    flex: none;
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  .inbox-count.accent {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+
+  .inbox-count.warn {
+    background: var(--warn-soft);
+    color: var(--warn-text);
+  }
+
+  .inbox-count.alert {
+    background: var(--alert-soft);
+    color: var(--alert-text);
+  }
+
+  .inbox-copy {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .inbox-title {
+    font-weight: 650;
+    font-size: 0.94rem;
+  }
+
+  .inbox-desc {
+    font-size: 0.84rem;
+    color: var(--muted-ink);
+  }
+
+  .inbox-row .button-link {
+    flex: none;
+    font-size: 0.84rem;
+    padding: 0.5rem 0.95rem;
+  }
+
+  .today-aside {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .aside-card {
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--line-strong);
+    border-radius: var(--radius-m);
+    background: var(--paper);
+    box-shadow: var(--shadow-1);
+    padding: 1rem 1.1rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .aside-card.accent-top {
+    border-top-color: var(--accent);
+  }
+
+  .aside-card h3 {
+    margin: 0;
+    font-size: 0.72rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted-ink);
+  }
+
+  .aside-metric {
+    font-family: var(--font-display-stack);
+    font-size: 2.25rem;
+    font-weight: 800;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .aside-card.accent-top .aside-metric {
+    font-size: 1.75rem;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .aside-note {
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  .aside-more {
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  .week-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    font-size: 0.88rem;
+  }
+
+  .week-row + .week-row {
+    border-top: 1px solid var(--line);
+    padding-top: 0.6rem;
+  }
+
+  .week-day {
+    font-family: var(--font-display-stack);
+    font-weight: 750;
+    font-size: 1rem;
+    width: 44px;
+    flex: none;
+    color: var(--accent);
+  }
+
+  .week-title {
+    flex: 1;
+  }
+
+  .week-time {
+    color: var(--muted-ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Accent primary button (hero CTA) + warn chip (money glance). */
+  .button-link.accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  .button-link.accent:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-ink);
+  }
+
+  .chip.warn {
+    border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+    background: var(--warn-soft);
+    color: var(--warn-text);
+  }
+
+  /* ---------------- Mobile bottom nav + responsive Today ---------------- */
+
+  .mobile-nav {
+    display: none;
+  }
+
+  @media (max-width: 760px) {
+    /* The bottom tab bar replaces the horizontal top nav on phones. */
+    .shell-nav {
+      display: none;
+    }
+
+    .shell-header {
+      padding: 0.5rem 1.1rem;
+    }
+
+    .shell-brand > a {
+      font-size: 1.1rem;
+    }
+
+    main {
+      padding-bottom: 7rem; /* clearance for the fixed tab bar */
+    }
+
+    main:has(> .today) {
+      padding: 1rem 1.1rem 7rem;
+    }
+
+    .mobile-nav {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 10px 8px 14px;
+      background: color-mix(in srgb, var(--paper) 94%, transparent);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid var(--line);
+    }
+
+    .mobile-nav a,
+    .mobile-nav .mobile-nav-more {
+      font-family: var(--font-display-stack);
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted-ink);
+      text-decoration: none;
+      border: none;
+      border-top: 3px solid transparent;
+      border-radius: 0;
+      background: none;
+      padding: 5px 0 0;
+      line-height: 1.4;
+      transition: color var(--dur) var(--ease),
+        border-color var(--dur) var(--ease);
+    }
+
+    .mobile-nav a:hover,
+    .mobile-nav .mobile-nav-more:hover {
+      color: var(--ink);
+      background: none;
+    }
+
+    .mobile-nav a[aria-current="page"],
+    .mobile-nav .mobile-nav-more[aria-current="true"] {
+      color: var(--accent);
+      border-top-color: var(--accent);
+      font-weight: 800;
+    }
+
+    .mobile-nav-sheet {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 68px;
+      z-index: 41;
+      display: flex;
+      flex-direction: column;
+      padding: 0.4rem 0.9rem;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      box-shadow: var(--shadow-2);
+    }
+
+    .mobile-nav-sheet a {
+      padding: 0.7rem 0.1rem;
+      border-top: none;
+      font-size: 14px;
+    }
+
+    .mobile-nav-sheet a + a {
+      border-top: 1px solid var(--line);
+    }
+
+    /* Today stacks single-column (design ref: "Today — Mobile"). */
+    .today {
+      gap: 1.1rem;
+    }
+
+    .today-hero {
+      grid-template-columns: 1fr;
+    }
+
+    .today-hero-main {
+      border-right: none;
+      padding: 1rem 0 0.5rem;
+    }
+
+    .today-hero-aside {
+      padding: 0.5rem 0 1.1rem;
+    }
+
+    .today-count {
+      font-size: 4rem;
+    }
+
+    .today-count-unit {
+      font-size: 1.65rem;
+    }
+
+    .today-comp-name {
+      font-size: 1.25rem;
+    }
+
+    .today-hero-meta {
+      font-size: 0.82rem;
+    }
+
+    .today-hero-actions .button-link {
+      flex: 1;
+      text-align: center;
+      padding: 0.75rem 1.1rem;
+    }
+
+    .today-body {
+      grid-template-columns: 1fr;
+      gap: 1.1rem;
+    }
+
+    .inbox h2,
+    .today-body h2 {
+      font-size: 1.2rem;
+    }
+
+    .inbox-row {
+      gap: 0.75rem;
+      padding: 0.75rem 0;
+    }
+
+    .inbox-count {
+      width: 38px;
+      height: 38px;
+      font-size: 1.25rem;
+    }
+
+    .inbox-title {
+      font-size: 0.85rem;
+    }
+
+    .inbox-desc {
+      font-size: 0.75rem;
+    }
+
+    /* Row actions read as quiet links on phones, buttons on desktop. */
+    .inbox-row .button-link {
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--accent);
+      font-size: 0.8rem;
+    }
+
+    .inbox-row .button-link:hover {
+      background: none;
+      color: var(--accent-strong);
+    }
+  }
 }

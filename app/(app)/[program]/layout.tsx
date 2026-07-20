@@ -4,6 +4,7 @@ import { getTenantContext } from "@/lib/tenant";
 import { NAV, isNavItemVisible } from "@/lib/nav";
 import { signOut } from "@/app/auth/actions";
 import { ShellNav } from "./ShellNav";
+import { MobileNav } from "./MobileNav";
 
 // Tenant shell (server layout). Resolves program + active membership + role +
 // active season and evaluates flags once via getTenantContext() (cached — pages
@@ -63,6 +64,10 @@ export default async function ProgramLayout({
         items={items.map(({ slot, label }) => ({ slot, label }))}
       />
       <main>{children}</main>
+      <MobileNav
+        slug={slug}
+        items={items.map(({ slot, label }) => ({ slot, label }))}
+      />
     </div>
   );
 }
