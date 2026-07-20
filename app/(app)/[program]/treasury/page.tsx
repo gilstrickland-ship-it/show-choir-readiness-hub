@@ -332,7 +332,7 @@ export default async function LedgerPage({
                       />
                     </label>
                     <label>
-                      Counterparty
+                      Paid to / received from
                       <input
                         type="text"
                         name="counterparty"
@@ -526,7 +526,7 @@ export default async function LedgerPage({
             <th>Date</th>
             <th className="right">Amount</th>
             <th>Line</th>
-            <th>Counterparty · memo</th>
+            <th>Paid to / from · memo</th>
             <th>Receipt</th>
             <th className="right">Balance</th>
             {canWrite && <th></th>}

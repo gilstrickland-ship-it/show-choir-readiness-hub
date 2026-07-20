@@ -6,6 +6,7 @@ import { TREASURY_ROLES } from "@/lib/nav";
 import {
   TREASURY_WRITE_ROLES,
   CATEGORY_DIRECTIONS,
+  CATEGORY_DIRECTION_LABELS,
   formatCents,
   NO_HEALTH_LABEL,
   type CategoryDirection,
@@ -382,7 +383,7 @@ export default async function BudgetPage({
                                 >
                                   {CATEGORY_DIRECTIONS.map((d) => (
                                     <option key={d} value={d}>
-                                      {d}
+                                      {CATEGORY_DIRECTION_LABELS[d]}
                                     </option>
                                   ))}
                                 </select>
@@ -443,7 +444,7 @@ export default async function BudgetPage({
                   <select name="direction" defaultValue="expense">
                     {CATEGORY_DIRECTIONS.map((d) => (
                       <option key={d} value={d}>
-                        {d}
+                        {CATEGORY_DIRECTION_LABELS[d]}
                       </option>
                     ))}
                   </select>

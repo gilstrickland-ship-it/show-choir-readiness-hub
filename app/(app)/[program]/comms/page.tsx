@@ -226,9 +226,10 @@ export default async function CommsPage({
 
       {!emailConfigured() && (
         <p className="alert-error">
-          Email sending is not configured (no RESEND_API_KEY). Digests can be
-          drafted and approved, but sends are marked &ldquo;skipped&rdquo; until
-          email is set up.
+          Email sending isn&apos;t set up for this deployment yet, so nothing can
+          be emailed from here. Digests can still be drafted and approved — sends
+          are marked &ldquo;skipped&rdquo; until email setup is finished. (Whoever
+          hosts your program&apos;s site can finish email setup.)
         </p>
       )}
 

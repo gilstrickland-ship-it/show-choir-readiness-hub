@@ -34,6 +34,20 @@ export const ITINERARY_ITEM_KINDS = [
 ] as const;
 export type ItineraryItemKind = (typeof ITINERARY_ITEM_KINDS)[number];
 
+// Friendly labels for the itinerary-item kind dropdown. The stored enum value is
+// unchanged; only the displayed text differs.
+export const ITINERARY_ITEM_KIND_LABELS: Record<ItineraryItemKind, string> = {
+  depart: "Depart",
+  arrive: "Arrive",
+  homeroom: "Homeroom",
+  warmup: "Warm-up",
+  perform: "Perform",
+  meal: "Meal",
+  awards: "Awards",
+  load: "Load",
+  other: "Other",
+};
+
 // Common caption awards, offered as checkboxes on the results form; the program
 // can free-add anything not listed. Stored in competition_results.captions jsonb
 // as { "Best Vocals": true, ... }.

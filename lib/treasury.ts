@@ -29,6 +29,12 @@ export type BudgetStatus = (typeof BUDGET_STATUSES)[number];
 export const CATEGORY_DIRECTIONS = ["income", "expense"] as const;
 export type CategoryDirection = (typeof CATEGORY_DIRECTIONS)[number];
 
+// Friendly labels for the budget-category direction dropdown. Stored value unchanged.
+export const CATEGORY_DIRECTION_LABELS: Record<CategoryDirection, string> = {
+  income: "Income",
+  expense: "Expense",
+};
+
 export const LEDGER_DIRECTIONS = ["in", "out"] as const;
 export type LedgerDirection = (typeof LEDGER_DIRECTIONS)[number];
 

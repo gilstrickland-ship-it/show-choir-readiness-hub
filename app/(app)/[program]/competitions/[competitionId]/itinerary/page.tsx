@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { COMPETITION_WRITE_ROLES, ITINERARY_ITEM_KINDS } from "@/lib/competitions";
+import {
+  COMPETITION_WRITE_ROLES,
+  ITINERARY_ITEM_KINDS,
+  ITINERARY_ITEM_KIND_LABELS,
+  type ItineraryItemKind,
+} from "@/lib/competitions";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CompetitionTabs } from "../CompetitionTabs";
@@ -252,7 +257,7 @@ export default async function ItineraryPage({
                         <select name="kind" defaultValue={item.kind} aria-label="Kind">
                           {ITINERARY_ITEM_KINDS.map((k) => (
                             <option key={k} value={k}>
-                              {k}
+                              {ITINERARY_ITEM_KIND_LABELS[k]}
                             </option>
                           ))}
                         </select>
@@ -299,7 +304,7 @@ export default async function ItineraryPage({
                   <tr key={item.id}>
                     <td>{item.sort_order}</td>
                     <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
-                    <td>{item.kind}</td>
+                    <td>{ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ?? item.kind}</td>
                     <td>
                       {item.title}
                       {item.location ? <span className="muted"> · {item.location}</span> : null}
@@ -337,7 +342,7 @@ export default async function ItineraryPage({
                     <select name="kind" defaultValue="other">
                       {ITINERARY_ITEM_KINDS.map((k) => (
                         <option key={k} value={k}>
-                          {k}
+                          {ITINERARY_ITEM_KIND_LABELS[k]}
                         </option>
                       ))}
                     </select>

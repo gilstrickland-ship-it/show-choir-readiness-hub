@@ -467,8 +467,9 @@ export default async function ShiftsPage({
               <input type="text" name="notes" placeholder="Bring a cash box" />
             </label>
             <p className="muted">
-              Pick an attach kind and the matching item; the other selections are
-              ignored.
+              Choose what this shift is for — a competition, a trip, an event, or
+              standalone — then pick the matching one. The selections that
+              don&apos;t match are ignored.
             </p>
             <button type="submit">Add shift</button>
           </form>

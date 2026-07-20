@@ -19,6 +19,13 @@ const ROLE_LABEL: Record<string, string> = Object.fromEntries(
   ROLE_OPTIONS.map((r) => [r.value, r.label]),
 );
 
+// Friendly labels for the member status column (stored value unchanged).
+const STATUS_LABEL: Record<string, string> = {
+  invited: "Invited",
+  active: "Active",
+  removed: "Removed",
+};
+
 interface MemberRow {
   id: string;
   role: Role;
@@ -141,7 +148,7 @@ export default async function MembersPage({
                   <span className="muted"> (invited)</span>
                 )}
               </td>
-              <td>{m.status}</td>
+              <td>{STATUS_LABEL[m.status] ?? m.status}</td>
               <td>
                 <form action={reRoleMember} className="row-inline">
                   <input type="hidden" name="programId" value={program.id} />

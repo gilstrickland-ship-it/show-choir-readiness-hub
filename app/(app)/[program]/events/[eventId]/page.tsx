@@ -5,7 +5,7 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
 import { updateEvent, deleteEvent } from "../actions";
-import { EVENTS_WRITE_ROLES, EVENT_KINDS } from "@/lib/events";
+import { EVENTS_WRITE_ROLES, EVENT_KINDS, EVENT_KIND_LABELS } from "@/lib/events";
 
 // Single event edit/delete (§5a, T013). Each materialized repeat occurrence is
 // independently editable/deletable here. Times in program tz (Constitution VII).
@@ -69,7 +69,7 @@ export default async function EventDetailPage({
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
 
       <p className="muted">
-        {event.starts_at ? formatDateTimeInTz(event.starts_at, tz) : "No time set"} · {event.kind}
+        {event.starts_at ? formatDateTimeInTz(event.starts_at, tz) : "No time set"} · {EVENT_KIND_LABELS[event.kind as keyof typeof EVENT_KIND_LABELS] ?? event.kind}
       </p>
 
       {canWrite ? (
@@ -89,7 +89,7 @@ export default async function EventDetailPage({
                 <select name="kind" defaultValue={event.kind}>
                   {EVENT_KINDS.map((k) => (
                     <option key={k} value={k}>
-                      {k}
+                      {EVENT_KIND_LABELS[k]}
                     </option>
                   ))}
                 </select>

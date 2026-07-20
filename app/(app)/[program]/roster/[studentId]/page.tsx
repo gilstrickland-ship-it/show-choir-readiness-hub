@@ -135,8 +135,8 @@ export default async function StudentDetailPage({
       )}
       {error === "email_missing" && (
         <p className="alert-error">
-          That guardian has no email on file. Add an email, or rotate the links
-          and copy them into a message instead.
+          That guardian has no email on file. Add an email, or reset this
+          family&apos;s links and copy them into a message instead.
         </p>
       )}
       {emailed === "ok" && (
@@ -241,30 +241,54 @@ export default async function StudentDetailPage({
       <p className="muted">{NO_HEALTH_LABEL}</p>
       {canWrite && (
         <p className="muted">
-          <strong>Email links to this family</strong> sends the parent links to a
-          guardian&apos;s email without disturbing any links they already have.{" "}
-          <strong>Rotate links (show once)</strong> mints a new link and{" "}
-          <em>revokes every link previously sent to this guardian</em> — only use
-          it when a link may have leaked or you need to copy the URLs by hand.
+          Each family uses private links instead of accounts — the links in the
+          newest email always work. <strong>Email links to this family</strong>{" "}
+          sends those links to a guardian&apos;s email without disturbing any
+          links they already have. <strong>Reset this family&apos;s links</strong>{" "}
+          creates a fresh set and turns off every link previously emailed to this
+          family — use it if an email was forwarded outside the family or a link
+          ended up in the wrong hands.
         </p>
       )}
       {freshLinks && (
         <div className="confirm-box stack" style={{ width: "100%" }}>
-          <strong>Family links{emailed === "nokey" ? " (email not sent)" : " generated"}.</strong>
+          <strong>
+            {emailed === "nokey"
+              ? "Family links ready (email not sent)."
+              : "Family links ready."}
+          </strong>
           <p className="muted">
             {emailed === "nokey"
-              ? "Email isn't configured, so nothing was sent. Copy these links into a message to the family — they work now, and any earlier links this family has still work too."
-              : "Copy these into a message to the family. Rotating just revoked every previous link for this guardian — the newest link is always the live one."}
+              ? "Email isn't set up for this deployment, so nothing was sent. Copy each link below into a message to the family — they work now, and any links the family already had still work too."
+              : "These new links appear once. Copy each one into a message to the family — they work now, and replace every link previously emailed to this family."}
           </p>
-          <div>
-            Itinerary: <code>{freshLinks.itinerary}</code>
-          </div>
-          <div>
-            Volunteer signup: <code>{freshLinks.signup}</code>
-          </div>
-          <div>
-            Report an absence: <code>{freshLinks.absence}</code>
-          </div>
+          <label className="stack">
+            Itinerary link
+            <input
+              type="text"
+              readOnly
+              value={freshLinks.itinerary}
+              aria-label="Itinerary link"
+            />
+          </label>
+          <label className="stack">
+            Volunteer signup link
+            <input
+              type="text"
+              readOnly
+              value={freshLinks.signup}
+              aria-label="Volunteer signup link"
+            />
+          </label>
+          <label className="stack">
+            Report-an-absence link
+            <input
+              type="text"
+              readOnly
+              value={freshLinks.absence}
+              aria-label="Report-an-absence link"
+            />
+          </label>
         </div>
       )}
       <table className="members">
@@ -341,8 +365,12 @@ export default async function StudentDetailPage({
                         <input type="hidden" name="slug" value={slug} />
                         <input type="hidden" name="studentId" value={student.id} />
                         <input type="hidden" name="guardianId" value={g.id} />
-                        <button type="submit" className="linklike">
-                          Rotate links (show once)
+                        <button
+                          type="submit"
+                          className="linklike"
+                          title="This creates a fresh set of links and turns off every link previously emailed to this family. Use it if an email was forwarded outside the family or a link ended up in the wrong hands. The new links appear once, below — email them to the family afterward."
+                        >
+                          Reset this family&apos;s links
                         </button>
                       </form>
                       <form action={removeGuardian}>

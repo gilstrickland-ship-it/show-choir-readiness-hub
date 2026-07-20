@@ -4,7 +4,7 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateInTz, formatTimeInTz, zonedDateKey } from "@/lib/datetime";
 import { createEvent } from "./actions";
-import { EVENTS_WRITE_ROLES, EVENT_KINDS } from "@/lib/events";
+import { EVENTS_WRITE_ROLES, EVENT_KINDS, EVENT_KIND_LABELS } from "@/lib/events";
 
 // Events calendar (§5a, T013) — week + month views, server-rendered, all times in
 // programs.timezone (Constitution VII). Events are deliberately thin (no
@@ -207,7 +207,7 @@ export default async function EventsPage({
                 <select name="kind" defaultValue="rehearsal">
                   {EVENT_KINDS.map((k) => (
                     <option key={k} value={k}>
-                      {k}
+                      {EVENT_KIND_LABELS[k]}
                     </option>
                   ))}
                 </select>

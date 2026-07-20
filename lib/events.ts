@@ -16,3 +16,12 @@ export const EVENT_KINDS = [
   "other",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
+
+// Friendly labels for the event-kind dropdown. Stored enum value is unchanged.
+export const EVENT_KIND_LABELS: Record<EventKind, string> = {
+  rehearsal: "Rehearsal",
+  fitting: "Fitting",
+  fundraiser: "Fundraiser",
+  banquet: "Banquet",
+  other: "Other",
+};

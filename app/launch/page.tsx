@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { signOut } from "@/app/auth/actions";
 import { brand } from "@/lib/brand";
+import { formatTimeZoneLabel } from "@/lib/datetime";
+import { ROLE_LABELS, type Role } from "@/lib/auth";
 import { createProgram } from "./actions";
 
 // Post-sign-in router. The sign-in flow lands here by default and this page
@@ -108,11 +110,11 @@ export default async function LaunchPage({
         </label>
       </div>
       <label>
-        Timezone (IANA)
+        Time zone
         <select name="timezone" defaultValue="America/Chicago" required>
           {TIMEZONES.map((tz) => (
             <option key={tz} value={tz}>
-              {tz}
+              {formatTimeZoneLabel(tz)}
             </option>
           ))}
         </select>
@@ -158,7 +160,7 @@ export default async function LaunchPage({
                   <Link href={`/${m.program.slug}/dashboard`}>
                     {m.program.name}
                   </Link>{" "}
-                  <span className="muted">({m.role})</span>
+                  <span className="muted">({ROLE_LABELS[m.role as Role] ?? m.role})</span>
                 </li>
               ),
           )}
@@ -178,7 +180,7 @@ export default async function LaunchPage({
                 <Link href={`/invite/${m.id}`}>
                   {m.program?.name ?? "A program"}
                 </Link>{" "}
-                <span className="muted">({m.role})</span>
+                <span className="muted">({ROLE_LABELS[m.role as Role] ?? m.role})</span>
               </li>
             ))}
           </ul>

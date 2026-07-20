@@ -436,12 +436,13 @@ export default async function DashboardPage({
               <h3>Money glance</h3>
               <div className="aside-metric">{formatCents(balanceCents)}</div>
               <div className="aside-note">
-                In minus out this season · voids excluded
+                Money in minus money out this season (corrected entries excluded)
               </div>
               {uncatCount > 0 && (
                 <div>
                   <span className="chip warn">
-                    {uncatCount} uncategorized · {formatCents(uncatCents)}
+                    {uncatCount} {uncatCount === 1 ? "entry needs" : "entries need"} a
+                    category · {formatCents(uncatCents)}
                   </span>
                 </div>
               )}

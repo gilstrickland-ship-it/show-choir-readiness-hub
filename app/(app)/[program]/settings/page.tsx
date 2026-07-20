@@ -4,7 +4,7 @@ import { Restricted } from "../Restricted";
 import { SettingsTabs } from "./SettingsTabs";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
-import { formatDateTimeInTz } from "@/lib/datetime";
+import { formatDateTimeInTz, formatTimeZoneLabel } from "@/lib/datetime";
 import {
   supportAccessActive,
   SUPPORT_ACCESS_DAYS,
@@ -121,14 +121,14 @@ export default async function SettingsPage({
         </label>
 
         <label>
-          Timezone (IANA)
+          Time zone
           <select name="timezone" defaultValue={program.timezone} required>
             {(TIMEZONES.includes(program.timezone)
               ? TIMEZONES
               : [program.timezone, ...TIMEZONES]
             ).map((tz) => (
               <option key={tz} value={tz}>
-                {tz}
+                {formatTimeZoneLabel(tz)}
               </option>
             ))}
           </select>

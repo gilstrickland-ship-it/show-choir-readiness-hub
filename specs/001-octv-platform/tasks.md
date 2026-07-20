@@ -81,3 +81,4 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 ## Phase 10 — Product review polish (July 2026)
 
 - [X] T042 Bug sweep from July 2026 product review: absences date anchor, stale Overview-tab copy, raw ISO dates (comp board view, checkout picker, events week heading, rollover seasons), calendar-day countdown on Today, honest magic-link copy, friendly timezone label helper.
+- [X] T043 Plain-language sweep from July 2026 review: friendly time-zone labels, enum label maps (itinerary/event kinds, piece condition, budget direction, member status, launch roles), no raw env/flag/model strings in UI, treasury label softening, guardian-link management rewritten without token jargon, import and shift-form wording.
