@@ -59,8 +59,20 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
     newSeasonId = (created as { id: string }).id;
   }
 
+  // First-season shortcut: with no prior season to roll from, the ensembles /
+  // returning-students / costume carry-forward steps have no source data. Skip
+  // them and go straight to activate. Counting seasons other than the one we
+  // just created keeps this idempotent — a re-run reuses the same season and
+  // still lands on activate.
+  const { count: priorCount } = await supabase
+    .from("seasons")
+    .select("id", { count: "exact", head: true })
+    .eq("program_id", programId)
+    .neq("id", newSeasonId);
+  const nextStep = (priorCount ?? 0) === 0 ? "activate" : "ensembles";
+
   revalidatePath(`/${slug}/settings/rollover`);
-  redirect(wizardPath(slug, "ensembles", newSeasonId));
+  redirect(wizardPath(slug, nextStep, newSeasonId));
 }
 
 // Step 2 — ensembles carry forward automatically (program-level). This is a

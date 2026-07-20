@@ -218,7 +218,7 @@ export default async function TokenHomePage({
           )}
           <div className="token-hero-name">{nextComp.name}</div>
           <p className="token-hero-meta">
-            {nextComp.date && formatDateInTz(nextComp.date, tz)}
+            {nextComp.date && formatDateInTz(`${nextComp.date}T12:00:00Z`, tz)}
             {nextComp.itineraryPublished && nextComp.callTime && (
               <> · call {formatTimeInTz(nextComp.callTime, tz)}</>
             )}

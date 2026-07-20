@@ -156,7 +156,7 @@ export default async function PublicItineraryPage({
           <h2>
             {block.competitionName}
             {block.date && (
-              <span className="muted"> · {formatDateInTz(block.date, tz)}</span>
+              <span className="muted"> · {formatDateInTz(`${block.date}T12:00:00Z`, tz)}</span>
             )}
           </h2>
           {block.changed && (

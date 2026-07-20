@@ -58,6 +58,10 @@ export const styles = StyleSheet.create({
     color: "#6b7280",
   },
   checkboxCol: { width: 42, textAlign: "center" },
+  // Slightly wider so the "Released" header word fits without wrapping; the
+  // body checkbox still centers within it. Three narrow columns (Out/Back/
+  // Released) stay well inside the letter-page text width.
+  releasedCol: { width: 52, textAlign: "center" },
   checkbox: {
     width: 14,
     height: 14,

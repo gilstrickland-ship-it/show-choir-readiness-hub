@@ -134,6 +134,33 @@ export default async function BudgetPage({
   const expenseCats = categories.filter((c) => c.direction === "expense");
   const isEmpty = categories.length === 0;
 
+  // Fair-share guide (display-only): planned expenses ÷ students in the active
+  // season. Derived purely — no inputs, no persistence. The student count is one
+  // extra query, run only when there's an active budget to attach it to. Distinct
+  // students (a performer can sit in more than one ensemble). Per-student cents
+  // round UP so the share never under-collects by a rounding penny.
+  const plannedExpenseCents = (() => {
+    const expenseCatIds = new Set(expenseCats.map((c) => c.id));
+    return lines
+      .filter((l) => expenseCatIds.has(l.category_id))
+      .reduce((s, l) => s + l.planned_cents, 0);
+  })();
+  let fairShareStudents = 0;
+  if (budget?.status === "active" && season) {
+    const { data: memRows } = await supabase
+      .from("ensemble_members")
+      .select("student_id")
+      .eq("program_id", program.id)
+      .eq("season_id", season.id);
+    fairShareStudents = new Set(
+      ((memRows as { student_id: string }[] | null) ?? []).map((m) => m.student_id),
+    ).size;
+  }
+  const showFairShare = budget?.status === "active" && fairShareStudents > 0;
+  const perStudentCents = showFairShare
+    ? Math.ceil(plannedExpenseCents / fairShareStudents)
+    : 0;
+
   return (
     <section className="stack">
       <TreasuryTabs slug={slug} active="budget" />
@@ -197,6 +224,22 @@ export default async function BudgetPage({
               </form>
             )}
           </div>
+
+          {showFairShare && (
+            <div className="fair-share-card">
+              <p className="fair-share-line">
+                Fair share: planned expenses{" "}
+                <strong>{formatCents(plannedExpenseCents)}</strong> ÷{" "}
+                {fairShareStudents} student{fairShareStudents === 1 ? "" : "s"} ={" "}
+                <strong>{formatCents(perStudentCents)}</strong> per student
+              </p>
+              <p className="muted fair-share-note">
+                A per-student share is a budgeting guide. IRS rules for booster
+                nonprofits: fundraising must benefit the group, not track to
+                individual students&apos; accounts.
+              </p>
+            </div>
+          )}
 
           {canWrite && isEmpty && (
             <div className="confirm-box stack">

@@ -167,7 +167,7 @@ export default async function PublicAbsencePage({
                 <div className="muted">
                   {r.competition?.name ?? "—"}
                   {r.competition?.date
-                    ? ` · ${formatDateInTz(r.competition.date, tz)}`
+                    ? ` · ${formatDateInTz(`${r.competition.date}T12:00:00Z`, tz)}`
                     : ""}
                 </div>
                 <div className="token-report-meta">
@@ -204,7 +204,7 @@ export default async function PublicAbsencePage({
               {comps.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                  {c.date ? ` — ${formatDateInTz(c.date, tz)}` : ""}
+                  {c.date ? ` — ${formatDateInTz(`${c.date}T12:00:00Z`, tz)}` : ""}
                 </option>
               ))}
             </select>

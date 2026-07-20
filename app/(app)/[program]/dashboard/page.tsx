@@ -3,10 +3,16 @@ import { getTenantContext } from "@/lib/tenant";
 import { createClient } from "@/lib/supabase/server";
 import {
   ROSTER_ROLES,
+  ROSTER_WRITE_ROLES,
+  SETTINGS_ROLES,
   COSTUMES_ROLES,
   TREASURY_ROLES,
 } from "@/lib/nav";
-import { ATTENDANCE_WRITE_ROLES, activeCaptions } from "@/lib/competitions";
+import {
+  ATTENDANCE_WRITE_ROLES,
+  COMPETITION_WRITE_ROLES,
+  activeCaptions,
+} from "@/lib/competitions";
 import { DIGEST_WRITE_ROLES } from "@/lib/comms";
 import { OPEN_ALTERATION_STATUSES } from "@/lib/costumes";
 import { formatCents, sumActuals, type LedgerAmountRow } from "@/lib/treasury";
@@ -114,6 +120,97 @@ export default async function DashboardPage({
     }
   }
 
+  // ---- First-run setup guide --------------------------------------------------
+  // A brand-new program has no hero and an empty inbox; without guidance a
+  // director can't tell what to do first. When there's NO upcoming competition
+  // (the materially-empty signal) we check the four setup milestones in order
+  // and, if any is undone, replace the hero+inbox with a plain checklist. The
+  // extra count queries run ONLY in this branch (lean-by-construction) and are
+  // skipped entirely once a next comp exists — a running program never pays for
+  // them.
+  let setup:
+    | {
+        hasSeason: boolean;
+        hasStudents: boolean;
+        hasEnsembleMembers: boolean;
+        hasCompetition: boolean;
+      }
+    | null = null;
+  if (!nextComp) {
+    const hasSeason = season != null;
+    let hasStudents = false;
+    let hasEnsembleMembers = false;
+    let hasCompetition = false;
+
+    const { count: studentCount } = await supabase
+      .from("students")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id)
+      .eq("status", "active");
+    hasStudents = (studentCount ?? 0) > 0;
+
+    if (seasonId) {
+      const { count: memCount } = await supabase
+        .from("ensemble_members")
+        .select("id", { count: "exact", head: true })
+        .eq("program_id", program.id)
+        .eq("season_id", seasonId);
+      hasEnsembleMembers = (memCount ?? 0) > 0;
+
+      const { count: compCount } = await supabase
+        .from("competitions")
+        .select("id", { count: "exact", head: true })
+        .eq("program_id", program.id)
+        .eq("season_id", seasonId);
+      hasCompetition = (compCount ?? 0) > 0;
+    }
+
+    const allDone =
+      hasSeason && hasStudents && hasEnsembleMembers && hasCompetition;
+    if (!allDone) {
+      setup = { hasSeason, hasStudents, hasEnsembleMembers, hasCompetition };
+    }
+  }
+
+  // Role gates for the setup links: season/roster/competition writes are seat-
+  // limited (§2). A viewer without the write seat still SEES the step, just
+  // without a link (nothing to click but nothing hidden either).
+  const canSeason = SETTINGS_ROLES.includes(role);
+  const canRoster = ROSTER_WRITE_ROLES.includes(role);
+  const canComp = COMPETITION_WRITE_ROLES.includes(role);
+  const setupSteps = setup
+    ? [
+        {
+          done: setup.hasSeason,
+          label: "Start your season",
+          href: `${base}/settings/rollover`,
+          can: canSeason,
+          hint: null as string | null,
+        },
+        {
+          done: setup.hasStudents,
+          label: "Add your students",
+          href: `${base}/roster/import`,
+          can: canRoster,
+          hint: "Import a spreadsheet, or add them one at a time.",
+        },
+        {
+          done: setup.hasEnsembleMembers,
+          label: "Put students in an ensemble",
+          href: `${base}/roster/ensembles`,
+          can: canRoster,
+          hint: null,
+        },
+        {
+          done: setup.hasCompetition,
+          label: "Add your first competition",
+          href: `${base}/competitions`,
+          can: canComp,
+          hint: null,
+        },
+      ]
+    : [];
+
   // Countdown target: the earliest itinerary time if present, else the comp date
   // at midnight in the program's timezone.
   let daysOut: number | null = null;
@@ -127,6 +224,30 @@ export default async function DashboardPage({
       daysOut = calendarDaysBetween(now, target, tz);
     }
   }
+
+  // ---- Comp-week hallway shortcuts (mobile only) ------------------------------
+  // In the last week before a competition the phone-first hallway jobs — taking
+  // attendance, checking out costumes, quick-change lists — are what a director
+  // reaches for. Surface them as big tap targets on Today, but only within 7
+  // days and only for the flag+role gates the page already computed. CSS hides
+  // this row on desktop, where the full nav is one click away anyway.
+  const compWeekShortcuts =
+    nextComp && daysOut !== null && daysOut <= 7
+      ? [
+          show.comp && {
+            href: `${base}/competitions/${nextComp.id}/attendance`,
+            label: "Attendance",
+          },
+          show.costumes && {
+            href: `${base}/costumes/checkout`,
+            label: "Costume checkout",
+          },
+          show.costumes && {
+            href: `${base}/costumes/quick-change`,
+            label: "Quick change",
+          },
+        ].filter(Boolean as unknown as (v: unknown) => v is { href: string; label: string })
+      : [];
 
   // ---- Needs-you inbox --------------------------------------------------------
   const inbox: InboxItem[] = [];
@@ -307,6 +428,40 @@ export default async function DashboardPage({
         </p>
       </div>
 
+      {setup ? (
+        <section className="setup-guide" aria-label="Set up your program">
+          <h2>Set up your program</h2>
+          <p className="setup-lede">
+            A few steps and you&apos;re ready. Takes about ten minutes with the
+            spreadsheet you already have.
+          </p>
+          <ol className="setup-steps">
+            {setupSteps.map((step, i) => (
+              <li
+                key={i}
+                className={`setup-step${step.done ? " done" : ""}`}
+              >
+                <span className="setup-step-num" aria-hidden="true">
+                  {step.done ? "✓" : i + 1}
+                </span>
+                <div className="setup-step-body">
+                  {step.done || !step.can ? (
+                    <span className="setup-step-label">{step.label}</span>
+                  ) : (
+                    <Link href={step.href} className="setup-step-label">
+                      {step.label}
+                    </Link>
+                  )}
+                  {step.hint && !step.done && (
+                    <div className="setup-step-hint">{step.hint}</div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : (
+        <>
       {!season && (
         <p className="alert-error">
           No active season yet.{" "}
@@ -380,6 +535,19 @@ export default async function DashboardPage({
             </div>
           )}
         </section>
+      )}
+
+      {compWeekShortcuts.length > 0 && (
+        <nav className="comp-week-shortcuts" aria-label="Comp week shortcuts">
+          <p className="comp-week-title">Comp week — quick access</p>
+          <div className="comp-week-row">
+            {compWeekShortcuts.map((s) => (
+              <Link key={s.href} href={s.href} className="comp-week-tap">
+                {s.label}
+              </Link>
+            ))}
+          </div>
+        </nav>
       )}
 
       <section className="today-body">
@@ -472,6 +640,8 @@ export default async function DashboardPage({
           )}
         </aside>
       </section>
+        </>
+      )}
     </section>
   );
 }

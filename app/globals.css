@@ -1108,6 +1108,123 @@
     font-size: 0.84rem;
   }
 
+  /* First-run setup guide — replaces the hero+inbox on a materially-empty
+     program. Deliberately plain and roomy: a first-time director should read it
+     as a to-do list, not a dashboard widget. */
+  .setup-guide {
+    border-top: 3px solid var(--line-strong);
+    border-bottom: 3px solid var(--line-strong);
+    padding: 1.6rem 0 1.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .setup-guide h2 {
+    margin: 0;
+    font-family: var(--font-display-stack);
+    font-size: 1.55rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .setup-lede {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 0.92rem;
+    max-width: 40rem;
+  }
+
+  .setup-steps {
+    list-style: none;
+    margin: 0.4rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .setup-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .setup-step:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .setup-step-num {
+    flex: none;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 50%;
+    border: 2px solid var(--line-strong);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-ui-stack);
+    font-weight: 700;
+    font-size: 0.95rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .setup-step.done .setup-step-num {
+    background: var(--ok, #1f7a4d);
+    border-color: var(--ok, #1f7a4d);
+    color: #fff;
+  }
+
+  .setup-step-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding-top: 0.15rem;
+  }
+
+  .setup-step-label {
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  a.setup-step-label {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .setup-step.done .setup-step-label {
+    color: var(--muted-ink);
+    font-weight: 500;
+  }
+
+  .setup-step-hint {
+    font-size: 0.85rem;
+    color: var(--muted-ink);
+  }
+
+  /* Fair-share guide on the budget page — a quiet, read-only derived card. */
+  .fair-share-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    background: color-mix(in srgb, var(--paper) 96%, var(--line));
+  }
+
+  .fair-share-line {
+    margin: 0 0 0.4rem;
+    font-size: 1rem;
+  }
+
+  .fair-share-note {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
   .today-hero {
     border-top: 3px solid var(--line-strong);
     border-bottom: 3px solid var(--line-strong);
@@ -3386,6 +3503,12 @@
     display: none;
   }
 
+  /* Comp-week hallway shortcuts — phone-only (revealed in the mobile media
+     query below). Desktop keeps the full nav, so this stays hidden there. */
+  .comp-week-shortcuts {
+    display: none;
+  }
+
   @media (max-width: 760px) {
     /* The bottom tab bar replaces the horizontal top nav on phones. */
     .shell-nav {
@@ -3483,6 +3606,49 @@
     /* Today stacks single-column (design ref: "Today — Mobile"). */
     .today {
       gap: 1.1rem;
+    }
+
+    /* Comp-week hallway shortcuts — big tap targets, phone only. */
+    .comp-week-shortcuts {
+      display: block;
+    }
+
+    .comp-week-title {
+      margin: 0 0 0.5rem;
+      font-family: var(--font-display-stack);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--muted-ink);
+    }
+
+    .comp-week-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+    }
+
+    .comp-week-tap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      min-height: 4.5rem;
+      padding: 0.75rem 0.4rem;
+      border: 2px solid var(--line-strong);
+      border-radius: 12px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--font-display-stack);
+      font-size: 0.9rem;
+      font-weight: 700;
+      line-height: 1.15;
+      text-decoration: none;
+    }
+
+    .comp-week-tap:active {
+      background: var(--accent-soft, var(--paper-2, var(--paper)));
     }
 
     .today-hero {

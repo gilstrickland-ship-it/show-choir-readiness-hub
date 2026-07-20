@@ -78,6 +78,14 @@ export default async function RolloverPage({
     }[] | null) ?? [];
   const newSeason = seasons.find((s) => s.id === newSeasonId) ?? null;
 
+  // First-season framing: when nothing exists to roll *from* (no prior season
+  // besides the one this wizard is creating), the carry-forward steps have no
+  // source data. We present the flow as "Start your first season" and the
+  // create action jumps straight to activate. Excluding newSeasonId keeps this
+  // correct on every step — at "new" it counts all seasons, later it ignores the
+  // just-created one.
+  const isFirstSeason = seasons.filter((s) => s.id !== newSeasonId).length === 0;
+
   // Data needed only for the interactive steps.
   const ensembles =
     step === "ensembles" || step === "students"
@@ -111,18 +119,30 @@ export default async function RolloverPage({
 
       {/* --- Wizard --- */}
       <div className="confirm-box stack" style={{ width: "100%" }}>
-        <p className="muted">
-          Rolling over from{" "}
-          <strong>{season ? season.label : "no active season"}</strong>. Ensembles
-          carry forward automatically; you choose which students return, re-point
-          costume sets, then activate the new season.
-        </p>
+        {isFirstSeason ? (
+          <p className="muted">
+            Starting your first season. There&apos;s nothing to carry over from a
+            prior year, so you go straight from creating the season to activating
+            it — add students, ensembles, and competitions afterward from Today.
+          </p>
+        ) : (
+          <p className="muted">
+            Rolling over from{" "}
+            <strong>{season ? season.label : "no active season"}</strong>.
+            Ensembles carry forward automatically; you choose which students
+            return, re-point costume sets, then activate the new season.
+          </p>
+        )}
 
         {step === "new" && (
           <form action={createRolloverSeason} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
-            <h2>Step 1 · Create the new season</h2>
+            <h2>
+              {isFirstSeason
+                ? "Create your first season"
+                : "Step 1 · Create the new season"}
+            </h2>
             <label>
               Season label
               <input type="text" name="label" placeholder="2027-28" required />
@@ -187,27 +207,52 @@ export default async function RolloverPage({
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="newSeasonId" value={newSeasonId} />
-            <h2>Step 5 · Activate {newSeason?.label ?? "the new season"}</h2>
-            <p className="muted">
-              This makes <strong>{newSeason?.label}</strong> the active season and
-              deactivates <strong>{season?.label ?? "the current season"}</strong>.
-              You can archive the old season next.
-            </p>
-            <button type="submit">Activate new season</button>
+            <h2>
+              {isFirstSeason ? "Activate" : "Step 5 · Activate"}{" "}
+              {newSeason?.label ?? "the new season"}
+            </h2>
+            {isFirstSeason ? (
+              <p className="muted">
+                This makes <strong>{newSeason?.label}</strong> your active season.
+                That&apos;s it — you&apos;re ready to build your roster.
+              </p>
+            ) : (
+              <p className="muted">
+                This makes <strong>{newSeason?.label}</strong> the active season
+                and deactivates{" "}
+                <strong>{season?.label ?? "the current season"}</strong>. You can
+                archive the old season next.
+              </p>
+            )}
+            <button type="submit">
+              {isFirstSeason ? "Activate season" : "Activate new season"}
+            </button>
           </form>
         )}
 
         {step === "archive" && (
           <div className="stack">
-            <h2>Step 6 · You&apos;re rolled over 🎉</h2>
+            <h2>
+              {isFirstSeason
+                ? "Your first season is live 🎉"
+                : "Step 6 · You're rolled over 🎉"}
+            </h2>
             <p className="alert-ok">
               {newSeason?.label} is now your active season.
             </p>
-            <p className="muted">
-              Archive the previous season to freeze it read-only — its roster,
-              results, and PDFs stay browsable in History and Export, but nothing
-              can be changed. You can do this now or later from the list below.
-            </p>
+            {isFirstSeason ? (
+              <p className="muted">
+                You&apos;re all set. Head to Today to add students, put them in an
+                ensemble, and schedule your first competition.
+              </p>
+            ) : (
+              <p className="muted">
+                Archive the previous season to freeze it read-only — its roster,
+                results, and PDFs stay browsable in History and Export, but
+                nothing can be changed. You can do this now or later from the list
+                below.
+              </p>
+            )}
             <Link href={`/${slug}/dashboard`}>Go to dashboard</Link>
           </div>
         )}
