@@ -118,7 +118,7 @@ export function verifyToken(raw: string, storedHash: string): boolean {
 //   1. APP_BASE_URL            — explicit override (full URL).
 //   2. VERCEL_PROJECT_PRODUCTION_URL — Vercel system env (host only, no scheme).
 //   3. https://{brand.domain} — last resort; warns, because brand.domain defaults
-//      to the placeholder "octv.example" which would email broken links.
+//      to the brand config's placeholder domain, which would email broken links.
 // Constitution IX — no hardcoded product name (the brand domain flows from env).
 export function appBaseUrl(): string {
   const explicit = process.env.APP_BASE_URL?.replace(/\/+$/, "");
