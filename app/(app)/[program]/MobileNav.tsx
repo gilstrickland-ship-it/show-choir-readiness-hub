@@ -7,34 +7,28 @@ import { usePathname } from "next/navigation";
 // Mobile bottom tab bar ("Today Mobile" design ref, §9 of the redesign
 // handoff). Client component for the same reason as ShellNav: the active state
 // needs the current pathname. Receives the layout's already role/flag-filtered
-// nav items and regroups them into the five-slot mobile IA — Today · Season ·
-// People · Money · More — so a role that can't see a surface never gets its
-// tab. Everything not promoted to a tab lives in the More sheet; the sheet is
-// the only client state here and closes itself on navigation.
+// nav items (with their new task-oriented labels) and regroups them into the
+// five-slot mobile IA — Today · Season · People · Money · More — so a role that
+// can't see a surface never gets its tab. Everything not promoted to a tab
+// lives in the More sheet, plus a Settings entry when the role allows it (it
+// left the desktop nav for the header). The sheet is the only client state
+// here and closes itself on navigation.
 
 const TAB_SLOTS: readonly string[] = [
   "dashboard",
-  "competitions",
+  "season",
   "roster",
   "treasury",
 ];
 
-// Mobile-IA labels for existing slots (routes unchanged; the Season page will
-// take over the `competitions` tab target when it lands).
-const MOBILE_LABELS: Record<string, string> = {
-  dashboard: "Today",
-  competitions: "Season",
-  roster: "People",
-  treasury: "Money",
-  costumes: "Wardrobe",
-};
-
 export function MobileNav({
   slug,
   items,
+  showSettings,
 }: {
   slug: string;
   items: { slot: string; label: string }[];
+  showSettings: boolean;
 }) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -53,7 +47,9 @@ export function MobileNav({
     const item = items.find((i) => i.slot === slot);
     return item ? [item] : [];
   });
+  // Everything not promoted to a tab, plus Settings when the role allows it.
   const more = items.filter((i) => !TAB_SLOTS.includes(i.slot));
+  if (showSettings) more.push({ slot: "settings", label: "Settings" });
   const moreActive = more.some((i) => isActive(i.slot));
 
   return (
@@ -64,7 +60,7 @@ export function MobileNav({
           href={`/${slug}/${item.slot}`}
           aria-current={isActive(item.slot) ? "page" : undefined}
         >
-          {MOBILE_LABELS[item.slot] ?? item.label}
+          {item.label}
         </Link>
       ))}
       {more.length > 0 && (
@@ -87,7 +83,7 @@ export function MobileNav({
                   href={`/${slug}/${item.slot}`}
                   aria-current={isActive(item.slot) ? "page" : undefined}
                 >
-                  {MOBILE_LABELS[item.slot] ?? item.label}
+                  {item.label}
                 </Link>
               ))}
             </div>

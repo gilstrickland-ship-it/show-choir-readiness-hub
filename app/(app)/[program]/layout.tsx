@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
-import { NAV, isNavItemVisible } from "@/lib/nav";
+import { NAV, isNavItemVisible, SETTINGS_ROLES } from "@/lib/nav";
 import { signOut } from "@/app/auth/actions";
 import { ShellNav } from "./ShellNav";
 import { MobileNav } from "./MobileNav";
@@ -32,6 +32,10 @@ export default async function ProgramLayout({
 
   const items = NAV.filter((item) => isNavItemVisible(item, role, flags));
 
+  // Settings left the main nav for the header's right cluster (redesign IA).
+  // Support views (synthetic board_member seat) never expose it.
+  const showSettings = !isSupport && SETTINGS_ROLES.includes(role);
+
   return (
     <div className="shell">
       {isSupport && (
@@ -48,10 +52,19 @@ export default async function ProgramLayout({
             {season ? ` · ${season.label}` : ""}
           </span>
         </div>
+        <ShellNav
+          slug={slug}
+          items={items.map(({ slot, label }) => ({ slot, label }))}
+        />
         <div className="shell-account">
           <span className="badge">
             {isSupport ? `${brand.name} support` : (ROLE_LABELS[role] ?? role)}
           </span>
+          {showSettings && (
+            <Link href={`/${slug}/settings`} className="shell-settings-link">
+              Settings
+            </Link>
+          )}
           <form action={signOut}>
             <button type="submit" className="linklike">
               Sign out
@@ -59,14 +72,11 @@ export default async function ProgramLayout({
           </form>
         </div>
       </header>
-      <ShellNav
-        slug={slug}
-        items={items.map(({ slot, label }) => ({ slot, label }))}
-      />
       <main>{children}</main>
       <MobileNav
         slug={slug}
         items={items.map(({ slot, label }) => ({ slot, label }))}
+        showSettings={showSettings}
       />
     </div>
   );

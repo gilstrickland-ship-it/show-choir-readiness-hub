@@ -407,6 +407,7 @@
     align-items: center;
     gap: 0.75rem;
     font-size: 0.85rem;
+    flex: none;
   }
 
   .shell-account .badge {
@@ -417,22 +418,40 @@
     font-size: 0.68rem;
   }
 
+  /* Settings moved from the nav into the header's right cluster — a quiet
+     UI-font link, distinct from the display-type nav. */
+  .shell-settings-link {
+    color: var(--muted-ink);
+    text-decoration: none;
+    font-weight: 550;
+    transition: color var(--dur) var(--ease);
+  }
+
+  .shell-settings-link:hover {
+    color: var(--ink);
+  }
+
+  /* The nav now lives inside the sticky header, between the brand block and the
+     account cluster. It fills the middle and scrolls horizontally when tight. */
   .shell-nav {
     display: flex;
-    gap: 0 1.35rem;
-    padding: 0 1rem;
-    border-bottom: 1px solid var(--line);
+    gap: 0 1.4rem;
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
     overflow-x: auto;
     scrollbar-width: thin;
   }
 
   .shell-nav a {
     display: inline-block;
-    padding: 0.55rem 0.05rem calc(0.55rem - 3px);
+    padding: 0.35rem 0.05rem calc(0.35rem - 3px);
     border-bottom: 3px solid transparent;
-    margin-bottom: -1px;
-    font-size: 0.86rem;
-    font-weight: 550;
+    font-family: var(--font-display-stack);
+    font-size: 0.94rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--muted-ink);
     text-decoration: none;
     white-space: nowrap;
@@ -446,6 +465,7 @@
 
   .shell-nav a[aria-current="page"] {
     color: var(--ink);
+    font-weight: 750;
     border-bottom-color: var(--accent);
   }
 
@@ -1401,6 +1421,350 @@
     color: var(--warn-text);
   }
 
+  /* ---------------- Season (chronological spine) ---------------- */
+
+  /* The Season spine runs at the same wide measure as Today. */
+  main:has(> .season) {
+    max-width: 70rem;
+    padding: 1.75rem 1.5rem 4.5rem;
+  }
+
+  .season {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    width: 100%;
+  }
+
+  .season-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    border-bottom: 3px solid var(--line-strong);
+    padding-bottom: 0.85rem;
+  }
+
+  .season-head-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .season-h1 {
+    margin: 0;
+    font-family: var(--font-display-stack);
+    font-size: 3.25rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    line-height: 0.95;
+    letter-spacing: 0.01em;
+    border-bottom: none;
+    padding: 0;
+    width: auto;
+  }
+
+  .season-actions {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .season-actions .button-link {
+    font-size: 0.88rem;
+    padding: 0.55rem 1.1rem;
+  }
+
+  .season-filters {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .season-filter {
+    font-weight: 550;
+    font-size: 0.82rem;
+    padding: 0.35rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    background: var(--paper);
+    color: var(--ink-2);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color var(--dur) var(--ease),
+      border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+
+  .season-filter:hover {
+    border-color: var(--ink-2);
+    color: var(--ink);
+  }
+
+  .season-filter.active {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+    font-weight: 600;
+  }
+
+  .season-filter-note {
+    margin-left: auto;
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  .season-months {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .month-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.9rem;
+    padding: 1.15rem 0 0.5rem;
+  }
+
+  .month-abbr {
+    font-family: var(--font-display-stack);
+    font-size: 1.9rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    /* Off-months read as a quiet gray; the current month is the accent. */
+    color: color-mix(in srgb, var(--muted-ink) 45%, var(--paper));
+  }
+
+  .month-abbr.current {
+    color: var(--accent);
+  }
+
+  .month-rule {
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+
+  .month-here {
+    font-size: 0.75rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+  }
+
+  .season-row {
+    display: flex;
+    gap: 1.1rem;
+    align-items: center;
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .season-row.past {
+    opacity: 0.72;
+  }
+
+  .season-date {
+    width: 76px;
+    flex: none;
+    text-align: center;
+  }
+
+  .season-date-num {
+    font-family: var(--font-display-stack);
+    font-size: 1.6rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .season-date-dow {
+    font-size: 0.68rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted-ink);
+  }
+
+  .kind-tag {
+    flex: none;
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 0.18rem 0.55rem;
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  .kind-tag.comp {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+
+  .kind-tag.rehearsal,
+  .kind-tag.event {
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  .kind-tag.fundraiser {
+    background: var(--ok-soft);
+    color: var(--ok-text);
+  }
+
+  .kind-tag.trip {
+    background: var(--warn-soft);
+    color: var(--warn-text);
+  }
+
+  .season-row-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .season-row-title {
+    font-weight: 650;
+    font-size: 0.94rem;
+  }
+
+  .season-row-title a {
+    text-decoration: none;
+  }
+
+  .season-row-title a:hover {
+    color: var(--accent);
+  }
+
+  .season-row-meta {
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  .season-row-right {
+    flex: none;
+    text-align: right;
+  }
+
+  .season-result {
+    font-family: var(--font-display-stack);
+    font-size: 1.1rem;
+    font-weight: 750;
+    text-transform: uppercase;
+    color: var(--ok-text);
+  }
+
+  .season-no-trip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--alert-text);
+  }
+
+  .season-no-trip a {
+    color: var(--alert-text);
+  }
+
+  .season-link {
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  /* Next-comp feature row — the one item that gets full structure. */
+  .season-feature {
+    display: grid;
+    grid-template-columns: 76px 1fr;
+    gap: 0 1.1rem;
+    align-items: start;
+    padding: 1.15rem 0;
+    border-top: 3px solid var(--line-strong);
+    border-bottom: 3px solid var(--line-strong);
+  }
+
+  .season-feature-date {
+    text-align: center;
+    padding-top: 0.25rem;
+  }
+
+  .season-feature-num {
+    font-family: var(--font-display-stack);
+    font-size: 2.5rem;
+    font-weight: 800;
+    line-height: 0.9;
+    color: var(--accent);
+  }
+
+  .season-feature-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+
+  .season-feature-badges {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .season-next-pill {
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 0.18rem 0.55rem;
+    border-radius: 4px;
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  .season-shift-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--warn-text);
+  }
+
+  .season-feature-title {
+    font-family: var(--font-display-stack);
+    font-size: 2rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+
+  .season-feature-title a {
+    text-decoration: none;
+  }
+
+  .season-feature-title a:hover {
+    color: var(--accent);
+  }
+
+  .season-feature-meta {
+    font-size: 0.88rem;
+    color: var(--ink-2);
+  }
+
+  .season-feature-actions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .season-feature-actions .button-link {
+    font-size: 0.84rem;
+    padding: 0.5rem 0.95rem;
+  }
+
   /* ---------------- Mobile bottom nav + responsive Today ---------------- */
 
   .mobile-nav {
@@ -1582,6 +1946,33 @@
     .inbox-row .button-link:hover {
       background: none;
       color: var(--accent-strong);
+    }
+
+    /* Season spine on phones. */
+    main:has(> .season) {
+      padding: 1rem 1.1rem 7rem;
+    }
+
+    .season-h1 {
+      font-size: 2.4rem;
+    }
+
+    .season-head {
+      align-items: flex-start;
+    }
+
+    .season-actions .button-link {
+      flex: 1;
+      text-align: center;
+    }
+
+    .season-filter-note {
+      display: none;
+    }
+
+    .season-feature-actions .button-link {
+      flex: 1;
+      text-align: center;
     }
   }
 }

@@ -14,8 +14,10 @@ test.describe("board member role gating", () => {
     await page.waitForURL("**/demo/dashboard");
     await expect(page.getByRole("heading", { name: /today/i })).toBeVisible();
 
+    // New task-oriented IA: Treasury → "Money"; Comms stays off the board's
+    // surface (COMMS_ROLES excludes board_member).
     const nav = page.getByRole("navigation", { name: "Program navigation" });
-    await expect(nav.getByRole("link", { name: "Treasury" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Money" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Comms" })).toHaveCount(0);
 
     // Treasury is readable but read-only — no add-entry affordance.
