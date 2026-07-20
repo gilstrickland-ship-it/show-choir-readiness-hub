@@ -61,8 +61,10 @@ test.describe("parent token journeys (F13/F15/F16)", () => {
     await page.getByLabel("Competition").selectOption({ index: 0 });
     await page.getByRole("button", { name: "Submit absence report" }).click();
     await expect(page.getByText(/absence report was sent/i)).toBeVisible();
+    // The parent absence history is stacked cards now (not a table) — the phone
+    // surface. Each request is a `.token-report-card` carrying its status label.
     await expect(
-      page.locator("table.members td", { hasText: "Pending review" }),
+      page.locator(".token-report-card", { hasText: "Pending review" }),
     ).toBeVisible();
 
     // --- As staff (director): the queue shows it; Confirm flips it ----------
@@ -79,7 +81,7 @@ test.describe("parent token journeys (F13/F15/F16)", () => {
     // --- Parent view now reads Confirmed -----------------------------------
     await page.goto(`${base}/absence`);
     await expect(
-      page.locator("table.members td", { hasText: "Confirmed" }),
+      page.locator(".token-report-card", { hasText: "Confirmed" }),
     ).toBeVisible();
   });
 });

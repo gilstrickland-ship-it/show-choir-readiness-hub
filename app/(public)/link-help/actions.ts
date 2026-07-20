@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hashToken } from "@/lib/tokens";
 import { sendGuardianLinksEmail } from "@/lib/comms-send";
+import { escapeLike } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 // Self-service link recovery (§8a, C2-3). A parent who deleted the email has no
@@ -64,7 +65,7 @@ export async function recoverLinks(formData: FormData): Promise<void> {
     // ilike pattern (a submitted `_`/`%` would become a wildcard and widen the
     // match); PostgREST can't call lower() in a filter, so we escape every LIKE
     // metacharacter, which turns ilike into a safe case-insensitive equality.
-    const likeExact = email.replace(/([\\%_])/g, "\\$1");
+    const likeExact = escapeLike(email);
     const { data: rows } = await supabase
       .from("guardians")
       .select("id, program_id, email_status")

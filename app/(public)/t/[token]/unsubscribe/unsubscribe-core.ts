@@ -5,6 +5,7 @@ import {
   logTokenEvent,
   assertGuardianCapability,
 } from "@/lib/tokens";
+import { escapeLike } from "@/lib/email";
 import { checkTokenSurfaceLimit } from "@/lib/rate-limit";
 
 // Shared unsubscribe core (§8a, C1-4). ONE implementation behind both surfaces at
@@ -49,7 +50,7 @@ export async function applyUnsubscribe(
       .from("guardians")
       .update({ email_status: "unsubscribed" })
       .eq("program_id", resolved.program.id)
-      .ilike("email", email);
+      .ilike("email", escapeLike(email));
   } else {
     await supabase
       .from("guardians")

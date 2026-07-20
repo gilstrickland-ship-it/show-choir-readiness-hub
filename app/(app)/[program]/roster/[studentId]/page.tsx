@@ -52,6 +52,7 @@ export default async function StudentDetailPage({
     error?: string;
     deactivated?: string;
     confirm?: string;
+    guardian?: string;
     linked?: string;
     token?: string;
     emailed?: string;
@@ -65,7 +66,8 @@ export default async function StudentDetailPage({
     );
   }
   const canWrite = ROSTER_WRITE_ROLES.includes(role);
-  const { saved, error, deactivated, confirm, linked, token, emailed } = await searchParams;
+  const { saved, error, deactivated, confirm, guardian, token, emailed } =
+    await searchParams;
   const freshLinks = token ? guardianLinks(token) : null;
 
   const supabase = await createClient();
@@ -103,6 +105,13 @@ export default async function StudentDetailPage({
   const sizeKeys = program.size_fields ?? [];
   const sizes = student.sizes ?? {};
   const showConfirm = confirm === "deactivate" && canWrite && student.status === "active";
+  // Per-guardian confirm gates (querystring round-trip, mirroring the deactivate
+  // flow). Both destructive guardian actions — resetting the family's links and
+  // removing a guardian — first show an inline confirm box explaining the
+  // consequence, so a phone tap never fires them immediately (no hover title).
+  const resetConfirmGuardianId = confirm === "reset" ? guardian ?? null : null;
+  const removeConfirmGuardianId =
+    confirm === "remove_guardian" ? guardian ?? null : null;
 
   return (
     <section className="stack">
@@ -361,19 +370,38 @@ export default async function StudentDetailPage({
                           Email links to this family
                         </button>
                       </form>
-                      <form action={resendGuardianLinks}>
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="studentId" value={student.id} />
-                        <input type="hidden" name="guardianId" value={g.id} />
-                        <button
-                          type="submit"
+                      {resetConfirmGuardianId === g.id ? (
+                        <div className="confirm-box stack">
+                          <p className="muted">
+                            This creates a fresh set of links and turns off every
+                            link previously emailed to this family. Use it if an
+                            email was forwarded outside the family or a link ended
+                            up in the wrong hands. The new links appear once, below
+                            — email them to the family afterward.
+                          </p>
+                          <div className="row-inline">
+                            <form action={resendGuardianLinks}>
+                              <input type="hidden" name="programId" value={program.id} />
+                              <input type="hidden" name="slug" value={slug} />
+                              <input type="hidden" name="studentId" value={student.id} />
+                              <input type="hidden" name="guardianId" value={g.id} />
+                              <button type="submit" className="danger">
+                                Reset links
+                              </button>
+                            </form>
+                            <Link href={`/${slug}/roster/${student.id}#guardians`}>
+                              Cancel
+                            </Link>
+                          </div>
+                        </div>
+                      ) : (
+                        <Link
+                          href={`/${slug}/roster/${student.id}?confirm=reset&guardian=${g.id}#guardians`}
                           className="linklike"
-                          title="This creates a fresh set of links and turns off every link previously emailed to this family. Use it if an email was forwarded outside the family or a link ended up in the wrong hands. The new links appear once, below — email them to the family afterward."
                         >
                           Reset this family&apos;s links
-                        </button>
-                      </form>
+                        </Link>
+                      )}
                       {g.email_status !== "ok" && (
                         <form action={resetGuardianEmailStatus}>
                           <input type="hidden" name="programId" value={program.id} />
@@ -389,15 +417,36 @@ export default async function StudentDetailPage({
                           </button>
                         </form>
                       )}
-                      <form action={removeGuardian}>
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="studentId" value={student.id} />
-                        <input type="hidden" name="guardianId" value={g.id} />
-                        <button type="submit" className="linklike danger">
+                      {removeConfirmGuardianId === g.id ? (
+                        <div className="confirm-box stack">
+                          <p>
+                            Remove {g.name} as a guardian? They&apos;ll stop
+                            receiving program emails and their family links will
+                            stop working.
+                          </p>
+                          <div className="row-inline">
+                            <form action={removeGuardian}>
+                              <input type="hidden" name="programId" value={program.id} />
+                              <input type="hidden" name="slug" value={slug} />
+                              <input type="hidden" name="studentId" value={student.id} />
+                              <input type="hidden" name="guardianId" value={g.id} />
+                              <button type="submit" className="danger">
+                                Confirm remove
+                              </button>
+                            </form>
+                            <Link href={`/${slug}/roster/${student.id}#guardians`}>
+                              Cancel
+                            </Link>
+                          </div>
+                        </div>
+                      ) : (
+                        <Link
+                          href={`/${slug}/roster/${student.id}?confirm=remove_guardian&guardian=${g.id}#guardians`}
+                          className="linklike danger"
+                        >
                           Remove
-                        </button>
-                      </form>
+                        </Link>
+                      )}
                     </div>
                   </td>
                 </>

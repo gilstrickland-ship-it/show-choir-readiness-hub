@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { signOut } from "@/app/auth/actions";
 import { brand } from "@/lib/brand";
+import { escapeLike } from "@/lib/email";
 import { formatTimeZoneLabel } from "@/lib/datetime";
 import { ROLE_LABELS, type Role } from "@/lib/auth";
 import { createProgram } from "./actions";
@@ -74,7 +75,7 @@ export default async function LaunchPage({
       .from("program_members")
       .select("id, role, status, program:programs(slug, name)")
       .eq("status", "invited")
-      .ilike("invited_email", user.email);
+      .ilike("invited_email", escapeLike(user.email));
     invited = (invitedData ?? []) as unknown as MembershipRow[];
   }
 

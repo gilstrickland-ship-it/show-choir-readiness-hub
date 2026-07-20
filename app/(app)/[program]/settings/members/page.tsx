@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
@@ -43,6 +44,8 @@ export default async function MembersPage({
     invited?: string;
     saved?: string;
     error?: string;
+    confirm?: string;
+    member?: string;
   }>;
 }) {
   const { program: slug } = await params;
@@ -52,7 +55,11 @@ export default async function MembersPage({
       <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
     );
   }
-  const { invited, saved, error } = await searchParams;
+  const { invited, saved, error, confirm, member } = await searchParams;
+  // Removing a member cuts their access immediately — a first tap shows an inline
+  // confirm box (querystring round-trip, same idiom as the roster page) rather
+  // than firing on tap.
+  const removeConfirmMemberId = confirm === "remove_member" ? member ?? null : null;
 
   const supabase = await createClient();
   const { data } = await supabase
@@ -167,14 +174,35 @@ export default async function MembersPage({
                 </form>
               </td>
               <td>
-                <form action={removeMember}>
-                  <input type="hidden" name="programId" value={program.id} />
-                  <input type="hidden" name="slug" value={slug} />
-                  <input type="hidden" name="memberId" value={m.id} />
-                  <button type="submit" className="linklike danger">
+                {removeConfirmMemberId === m.id ? (
+                  <div className="confirm-box stack">
+                    <p>
+                      Remove{" "}
+                      {(m.user_id ? nameByUserId.get(m.user_id) : null) ??
+                        m.invited_email ??
+                        "this member"}{" "}
+                      from the program? They&apos;ll lose access immediately.
+                    </p>
+                    <div className="row-inline">
+                      <form action={removeMember}>
+                        <input type="hidden" name="programId" value={program.id} />
+                        <input type="hidden" name="slug" value={slug} />
+                        <input type="hidden" name="memberId" value={m.id} />
+                        <button type="submit" className="danger">
+                          Confirm remove
+                        </button>
+                      </form>
+                      <Link href={`/${slug}/settings/members`}>Cancel</Link>
+                    </div>
+                  </div>
+                ) : (
+                  <Link
+                    href={`/${slug}/settings/members?confirm=remove_member&member=${m.id}`}
+                    className="linklike danger"
+                  >
                     Remove
-                  </button>
-                </form>
+                  </Link>
+                )}
               </td>
             </tr>
           ))}
