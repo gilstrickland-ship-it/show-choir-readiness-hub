@@ -167,8 +167,16 @@ export default async function ShiftsPage({
 
   return (
     <section className="stack">
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">
+            <Link href={`/${slug}/comms`}>← Comms</Link> · volunteer shifts
+          </p>
+          <h1 className="page-h1">Shifts</h1>
+        </div>
+      </div>
+
       <CommsTabs slug={slug} active="shifts" shiftsEnabled />
-      <h1>Volunteer shifts</h1>
 
       {sp.created && <p className="alert-ok">Created {sp.created} shift(s).</p>}
       {sp.saved && <p className="alert-ok">Shift saved.</p>}

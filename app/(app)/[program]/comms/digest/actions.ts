@@ -21,6 +21,13 @@ function digestPath(slug: string): string {
   return `/${slug}/comms/digest`;
 }
 
+// The digest lifecycle is reachable from two surfaces: the digest-first Comms
+// landing (/comms) and the full digest workspace (/comms/digest). `backTo=comms`
+// returns to the landing; anything else returns to the workspace.
+function backTarget(slug: string, backTo: string): string {
+  return backTo === "comms" ? `/${slug}/comms` : digestPath(slug);
+}
+
 // "Draft now" fallback (mirrors the packet-parse inline path). Runs the gather →
 // Claude → upsert-draft worker synchronously. Requires the `digest` flag on and
 // the Anthropic key present; failures surface as a friendly error param.
@@ -72,10 +79,37 @@ export async function saveDigest(formData: FormData): Promise<void> {
   redirect(`${digestPath(slug)}?saved=1`);
 }
 
+// Discard an unapproved draft (§7 redesign — the digest card's danger action).
+// Draft-only: the `.eq("status", "draft")` guard means an already-approved or
+// sent digest can NEVER be discarded here, so this never destroys an approved or
+// sent parent-facing record (Constitution IV — nothing that reached parents is
+// touched). A discarded week simply re-drafts on the next run. `backTo` lets the
+// digest-first Comms landing and the digest workspace each return to themselves.
+export async function discardDigest(formData: FormData): Promise<void> {
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const digestId = str(formData, "digestId");
+  const backTo = str(formData, "backTo");
+  await requireRole(programId, DIGEST_WRITE_ROLES);
+
+  const supabase = await createClient();
+  await supabase
+    .from("digests")
+    .delete()
+    .eq("id", digestId)
+    .eq("program_id", programId)
+    .eq("status", "draft");
+
+  const dest = backTarget(slug, backTo);
+  revalidatePath(dest);
+  redirect(`${dest}?discarded=1`);
+}
+
 export async function approveDigest(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const digestId = str(formData, "digestId");
+  const backTo = str(formData, "backTo");
   const { user } = await requireRole(programId, DIGEST_WRITE_ROLES);
 
   const supabase = await createClient();
@@ -86,8 +120,9 @@ export async function approveDigest(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .eq("status", "draft");
 
-  revalidatePath(digestPath(slug));
-  redirect(`${digestPath(slug)}?approved=1`);
+  const dest = backTarget(slug, backTo);
+  revalidatePath(dest);
+  redirect(`${dest}?approved=1`);
 }
 
 // Send an APPROVED digest (§8, T038). Recipients = guardians with email_status
@@ -102,7 +137,9 @@ export async function sendDigest(formData: FormData): Promise<void> {
   const slug = str(formData, "slug");
   const digestId = str(formData, "digestId");
   const seasonId = str(formData, "seasonId") || null;
+  const backTo = str(formData, "backTo");
   await requireRole(programId, DIGEST_WRITE_ROLES);
+  const dest = backTarget(slug, backTo);
 
   const supabase = await createClient();
 
@@ -115,7 +152,7 @@ export async function sendDigest(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .maybeSingle();
   if ((digestData as { status: string } | null)?.status !== "approved") {
-    redirect(`${digestPath(slug)}?error=notapproved`);
+    redirect(`${dest}?error=notapproved`);
   }
 
   // Async path: enqueue and return; the job flips the digest to 'sent'.
@@ -124,17 +161,17 @@ export async function sendDigest(formData: FormData): Promise<void> {
       name: "digest/send",
       data: { programId, digestId, seasonId },
     });
-    revalidatePath(digestPath(slug));
-    redirect(`${digestPath(slug)}?done=1&queued=1`);
+    revalidatePath(dest);
+    redirect(`${dest}?done=1&queued=1`);
   }
 
   // Inline fallback (no Inngest): run the same core now and report counts.
   const counts = await sendDigestCore(supabase, { programId, digestId, seasonId });
   if (!counts) {
-    redirect(`${digestPath(slug)}?error=notapproved`);
+    redirect(`${dest}?error=notapproved`);
   }
-  revalidatePath(digestPath(slug));
+  revalidatePath(dest);
   redirect(
-    `${digestPath(slug)}?done=1&sent=${counts.sent}&skipped=${counts.skipped}&failed=${counts.failed}`,
+    `${dest}?done=1&sent=${counts.sent}&skipped=${counts.skipped}&failed=${counts.failed}`,
   );
 }

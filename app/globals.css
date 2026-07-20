@@ -759,49 +759,67 @@
 
   /* ---------------- Public token surface ---------------- */
 
+  /* Full-bleed surface page with a centered 430px column (design ref: "Parent
+     Family Link" — mobile-first poster). */
   .token-frame {
-    max-width: 38rem;
-    margin: 0 auto;
-    padding: 1.4rem 1rem 3rem;
+    min-height: 100vh;
+    background: var(--surface);
+    padding: 1.5rem 1rem 4rem;
+  }
+
+  .token-frame > * {
+    width: 100%;
+    max-width: 26.875rem; /* 430px */
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .token-frame main {
     padding: 0;
-    max-width: none;
   }
 
   .token-header {
-    padding: 0.4rem 0 0.75rem;
+    padding: 0.3rem 0 0.75rem;
     border-bottom: 3px solid var(--line-strong);
-    margin-bottom: 1.4rem;
+    margin-bottom: 1.1rem;
   }
 
   .token-header strong {
     display: block;
     font-family: var(--font-display-stack);
-    font-size: 1.5rem;
-    font-weight: 700;
-    line-height: 1.05;
+    font-size: 1.6rem;
+    font-weight: 800;
+    line-height: 1;
     letter-spacing: 0.02em;
     text-transform: uppercase;
   }
 
-  .token-header .muted {
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
+  .token-header .muted,
+  .token-header-cap {
     margin-top: 0.2rem;
   }
 
   .token-footer {
-    margin-top: 2.5rem;
-    padding-top: 1rem;
+    margin-top: 1.5rem;
+    padding-top: 0.5rem;
     border-top: 1px solid var(--line);
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.5rem;
-    font-size: 0.88rem;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.95rem;
+  }
+
+  .token-footer a {
+    padding: 0.4rem 0;
+  }
+
+  .token-footer a {
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .token-footer a:hover {
+    color: var(--accent);
   }
 
   /* ---------------- Marketing landing ---------------- */
@@ -2780,6 +2798,435 @@
     margin-top: 0.15rem;
   }
 
+  /* ===================== Comms (digest-first landing, Wave D) ===================== */
+
+  /* Accent primary submit button (Approve & send / Send now) — matches the
+     accent .button-link so form buttons and link-buttons read identically. */
+  button.accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  button.accent:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+  }
+
+  /* Danger-outline button (Discard) — an outline, not a solid alert, so the
+     destructive action reads as secondary until intended. */
+  button.discard {
+    background: transparent;
+    border-color: var(--line);
+    color: var(--alert-text);
+  }
+
+  button.discard:hover {
+    background: var(--alert-soft);
+    border-color: var(--alert);
+  }
+
+  .comms-body {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 2.25rem;
+    align-items: start;
+    width: 100%;
+  }
+
+  .comms-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    min-width: 0;
+  }
+
+  .comms-aside {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .comms-section-h {
+    margin: 0.6rem 0 0;
+    font-size: 1.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  /* Digest draft card — the approval focal point. Warn top rule + shadow-2 lift
+     it above the recently-sent log. */
+  .digest-card {
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--warn);
+    border-radius: var(--radius-m);
+    background: var(--paper);
+    box-shadow: var(--shadow-2);
+    padding: 1.2rem 1.35rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    width: 100%;
+  }
+
+  .digest-card.empty {
+    border-top-color: var(--line-strong);
+    box-shadow: var(--shadow-1);
+  }
+
+  .digest-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .digest-card h2 {
+    margin: 0;
+    font-size: 1.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+  }
+
+  .digest-preview {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-s);
+    background: var(--surface);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+  }
+
+  .digest-preview strong {
+    font-weight: 650;
+  }
+
+  .digest-preview p {
+    margin: 0;
+    color: var(--ink-2);
+  }
+
+  .digest-actions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .digest-actions form {
+    margin: 0;
+  }
+
+  /* Recently-sent announcement log. */
+  .sent-list {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .sent-list > *:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .sent-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+    padding: 0.7rem 0;
+    border-top: 1px solid var(--line);
+    font-size: 0.9rem;
+  }
+
+  .sent-subject {
+    flex: 1;
+    min-width: 14rem;
+    font-weight: 600;
+  }
+
+  .sent-meta {
+    color: var(--muted-ink);
+    font-size: 0.82rem;
+  }
+
+  .sent-ok {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ok-text);
+  }
+
+  .sent-fail {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--alert-text);
+  }
+
+  .staffing-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.86rem;
+  }
+
+  .staffing-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .staffing-open {
+    font-weight: 600;
+    color: var(--warn-text);
+  }
+
+  .staffing-full {
+    font-weight: 600;
+    color: var(--ok-text);
+  }
+
+  /* ===================== Settings (restyle, Wave D) ===================== */
+
+  /* The program form is a scan-friendly narrow column per the design. */
+  .settings-form {
+    max-width: 28.75rem; /* 460px */
+  }
+
+  /* Support-access + share-link cards — surface panels (were .confirm-box). */
+  .panel {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    background: var(--surface);
+    padding: 1.15rem 1.25rem;
+  }
+
+  .panel h2 {
+    margin: 0 0 0.4rem;
+    font-size: 1.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+  }
+
+  .panel h3 {
+    margin: 0.6rem 0 0.2rem;
+    font-size: 0.95rem;
+  }
+
+  .panel .members {
+    background: var(--paper);
+  }
+
+  /* ===================== Parent token surface (redesign) ===================== */
+
+  /* The family "poster" — mobile-first, surface page bg, a bold display hero.
+     This is the one parent-facing screen that carries the poster treatment. */
+  .token-poster {
+    gap: 1.1rem;
+    width: 100%;
+  }
+
+  .token-hero {
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 10px;
+    padding: 1.25rem 1.25rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .token-hero-kicker {
+    margin: 0;
+    font-size: 0.7rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: color-mix(in srgb, var(--paper) 62%, var(--ink));
+  }
+
+  .token-hero-count {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+
+  .token-hero-days {
+    font-family: var(--font-display-stack);
+    font-size: 3.5rem;
+    font-weight: 800;
+    line-height: 0.9;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .token-hero-unit {
+    font-family: var(--font-display-stack);
+    font-size: 1.4rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .token-hero-name {
+    font-family: var(--font-display-stack);
+    font-size: 1.4rem;
+    font-weight: 750;
+    text-transform: uppercase;
+    line-height: 1.05;
+  }
+
+  .token-hero-meta {
+    margin: 0;
+    font-size: 0.85rem;
+    color: color-mix(in srgb, var(--paper) 78%, var(--ink));
+  }
+
+  .token-hero-pending {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
+    color: color-mix(in srgb, var(--paper) 70%, var(--ink));
+  }
+
+  .token-hero-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 0.35rem;
+  }
+
+  /* Poster buttons (full-width, tappable). */
+  .token-btn {
+    display: inline-block;
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.92rem;
+    padding: 0.75rem 1.1rem;
+    border-radius: var(--radius-m);
+    border: 1px solid transparent;
+    text-decoration: none;
+    transition: background-color var(--dur) var(--ease),
+      border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+
+  .token-btn.accent {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  .token-btn.accent:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: var(--accent-ink);
+  }
+
+  .token-btn.ghost {
+    background: transparent;
+    border-color: color-mix(in srgb, var(--paper) 32%, var(--ink));
+    color: var(--paper);
+  }
+
+  .token-btn.ghost:hover {
+    background: color-mix(in srgb, var(--paper) 12%, var(--ink));
+    color: var(--paper);
+  }
+
+  .token-btn.dark {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+
+  .token-btn.dark:hover {
+    background: var(--ink-2);
+    border-color: var(--ink-2);
+    color: var(--paper);
+  }
+
+  /* Per-student costume cards. */
+  .token-student-card,
+  .token-nudge,
+  .token-share-card {
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 1rem 1.15rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .token-nudge {
+    border-top-color: var(--accent);
+  }
+
+  .token-student-card h2,
+  .token-nudge h2,
+  .token-share-card h1 {
+    margin: 0;
+    font-size: 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    border-bottom: none;
+    padding: 0;
+    width: auto;
+  }
+
+  .token-costume-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    font-size: 0.9rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .token-costume-label {
+    flex: 1;
+  }
+
+  .token-ok {
+    color: var(--ok-text);
+    font-weight: 600;
+  }
+
+  .token-student-empty {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--muted-ink);
+    border-top: 1px solid var(--line);
+    padding-top: 0.5rem;
+  }
+
+  .token-nudge p,
+  .token-share-card p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--ink-2);
+  }
+
+  .token-nudge .token-btn {
+    margin-top: 0.25rem;
+  }
+
+  .token-header-cap,
+  .token-footer-cap {
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted-ink);
+  }
+
+  .token-footer-cap {
+    flex-basis: 100%;
+    margin-top: 0.4rem;
+  }
+
   /* ---------------- Mobile bottom nav + responsive Today ---------------- */
 
   .mobile-nav {
@@ -3088,6 +3535,20 @@
 
     .alt-meta {
       flex-basis: 100%;
+    }
+
+    /* Comms digest-first landing collapses to a single column; the aside drops
+       below the digest card + recently-sent log. */
+    .comms-body {
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+
+    .digest-actions .accent,
+    .digest-actions .discard,
+    .digest-actions .button-link {
+      flex: 1;
+      text-align: center;
     }
   }
 }

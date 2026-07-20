@@ -11,8 +11,15 @@ import {
 } from "@/lib/comms";
 import { emailConfigured } from "@/lib/email";
 import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
+import Link from "next/link";
 import { CommsTabs } from "../CommsTabs";
-import { draftNow, saveDigest, approveDigest, sendDigest } from "./actions";
+import {
+  draftNow,
+  saveDigest,
+  approveDigest,
+  sendDigest,
+  discardDigest,
+} from "./actions";
 
 // Comms — Digest tab (§8, T025, Constitution IV). Weekly AI-drafted parent digest:
 // gather → Claude draft → director review/edit/approve → send with per-family
@@ -43,6 +50,7 @@ export default async function DigestPage({
   params: Promise<{ program: string }>;
   searchParams: Promise<{
     drafted?: string;
+    discarded?: string;
     saved?: string;
     approved?: string;
     done?: string;
@@ -107,8 +115,16 @@ export default async function DigestPage({
 
   return (
     <section className="stack">
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">
+            <Link href={`/${slug}/comms`}>← Comms</Link> · digest workspace
+          </p>
+          <h1 className="page-h1">Weekly digest</h1>
+        </div>
+      </div>
+
       <CommsTabs slug={slug} active="digest" shiftsEnabled={flags.shifts} />
-      <h1>Weekly digest</h1>
 
       <p className="muted">
         An AI-drafted weekly summary a director reviews and approves before it
@@ -134,6 +150,7 @@ export default async function DigestPage({
       )}
 
       {sp.drafted && <p className="alert-ok">Draft ready below for review.</p>}
+      {sp.discarded && <p className="alert-ok">Draft discarded.</p>}
       {sp.saved && <p className="alert-ok">Draft saved.</p>}
       {sp.approved && <p className="alert-ok">Approved. You can send it now.</p>}
       {sp.done && sp.queued &&
@@ -242,12 +259,22 @@ export default async function DigestPage({
             {canManage && (
               <div className="row-inline" style={{ marginTop: "0.5rem" }}>
                 {d.status === "draft" && (
-                  <form action={approveDigest}>
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="digestId" value={d.id} />
-                    <button type="submit">Approve</button>
-                  </form>
+                  <>
+                    <form action={approveDigest}>
+                      <input type="hidden" name="programId" value={program.id} />
+                      <input type="hidden" name="slug" value={slug} />
+                      <input type="hidden" name="digestId" value={d.id} />
+                      <button type="submit">Approve</button>
+                    </form>
+                    <form action={discardDigest}>
+                      <input type="hidden" name="programId" value={program.id} />
+                      <input type="hidden" name="slug" value={slug} />
+                      <input type="hidden" name="digestId" value={d.id} />
+                      <button type="submit" className="discard">
+                        Discard
+                      </button>
+                    </form>
+                  </>
                 )}
                 {d.status === "approved" && (
                   <form action={sendDigest}>

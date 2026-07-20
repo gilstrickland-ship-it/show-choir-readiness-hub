@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { getTenantContext } from "@/lib/tenant";
@@ -6,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import type { Role } from "@/lib/auth";
 import { inviteMember, reRoleMember, removeMember } from "../actions";
+import { SettingsTabs } from "../SettingsTabs";
 
 const ROLE_OPTIONS: readonly { value: Role; label: string }[] = [
   { value: "director", label: "Director" },
@@ -80,11 +80,14 @@ export default async function MembersPage({
 
   return (
     <section className="stack">
-      <div className="settings-tabs">
-        <Link href={`/${slug}/settings`}>Program</Link>
-        <strong>Members</strong>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">Settings</p>
+          <h1 className="page-h1">Members</h1>
+        </div>
       </div>
-      <h1>Members</h1>
+
+      <SettingsTabs slug={slug} active="members" />
 
       {saved && <p className="alert-ok">Saved.</p>}
       {invited && (
