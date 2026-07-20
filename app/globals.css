@@ -3236,6 +3236,50 @@
     margin-top: 0.4rem;
   }
 
+  /* ---------------- Restricted (role-gated) ---------------- */
+
+  /* Reuses the .auth card shell; these rules add the copy hierarchy. Tokens
+     only — the accent top border signals "held back", not "error". */
+  .restricted {
+    text-align: center;
+  }
+
+  .restricted-eyebrow {
+    margin: 0 0 0.6rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted-ink);
+  }
+
+  .restricted-heading {
+    font-family: var(--font-display-stack);
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    margin: 0 0 1rem;
+  }
+
+  .restricted-body {
+    margin: 0 auto 0.9rem;
+    max-width: 22rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+  }
+
+  .restricted-help {
+    color: var(--muted-ink);
+    font-size: 0.88rem;
+  }
+
+  .restricted-actions {
+    margin-top: 1.4rem;
+  }
+
   /* ---------------- Mobile bottom nav + responsive Today ---------------- */
 
   .mobile-nav {
@@ -3557,6 +3601,17 @@
     .digest-actions .discard,
     .digest-actions .button-link {
       flex: 1;
+      text-align: center;
+    }
+
+    /* Restricted notice: tighten the display heading + let the CTA span the
+       narrow card so it stays an easy tap target. */
+    .restricted-heading {
+      font-size: 1.6rem;
+    }
+
+    .restricted-actions .button-link {
+      display: block;
       text-align: center;
     }
   }

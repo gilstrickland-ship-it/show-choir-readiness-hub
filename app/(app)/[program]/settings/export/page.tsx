@@ -1,6 +1,6 @@
-import { notFound } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { formatDateTimeInTz } from "@/lib/datetime";
@@ -41,7 +41,11 @@ export default async function ExportPage({
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
-  if (!SETTINGS_ROLES.includes(role)) notFound();
+  if (!SETTINGS_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
+    );
+  }
   const sp = await searchParams;
 
   // Recent async export jobs (T036). export_jobs read is director/admin (RLS).

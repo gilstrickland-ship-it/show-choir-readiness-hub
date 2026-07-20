@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTimeInTz } from "@/lib/datetime";
@@ -45,7 +45,11 @@ export default async function RolloverPage({
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
-  if (!SETTINGS_ROLES.includes(role)) notFound();
+  if (!SETTINGS_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
+    );
+  }
   const sp = await searchParams;
   const isDirector = role === "director";
 

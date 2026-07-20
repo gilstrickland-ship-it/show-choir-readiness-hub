@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
@@ -53,7 +53,11 @@ export default async function CostumesInventoryPage({
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
   requireFlag(program, "costumes");
-  if (!COSTUMES_ROLES.includes(role)) notFound();
+  if (!COSTUMES_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Wardrobe" role={role} allowed={COSTUMES_ROLES} />
+    );
+  }
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
   const { kind, set, condition, saved, error } = await searchParams;
 

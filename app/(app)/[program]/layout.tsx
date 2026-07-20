@@ -2,6 +2,7 @@ import Link from "next/link";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
 import { NAV, isNavItemVisible, SETTINGS_ROLES } from "@/lib/nav";
+import { ROLE_LABELS } from "@/lib/auth";
 import { signOut } from "@/app/auth/actions";
 import { ShellNav } from "./ShellNav";
 import { MobileNav } from "./MobileNav";
@@ -10,15 +11,7 @@ import { MobileNav } from "./MobileNav";
 // active season and evaluates flags once via getTenantContext() (cached — pages
 // call the same helper without a second round-trip). Nav is role-aware and
 // flag-gated: flagged-off or role-forbidden items are omitted server-side, never
-// hidden with CSS (Constitution VIII).
-
-const ROLE_LABELS: Record<string, string> = {
-  director: "Director",
-  admin: "Admin",
-  treasurer: "Treasurer",
-  costume_manager: "Costume manager",
-  board_member: "Board member",
-};
+// hidden with CSS (Constitution VIII). ROLE_LABELS is shared from lib/auth.
 
 export default async function ProgramLayout({
   children,

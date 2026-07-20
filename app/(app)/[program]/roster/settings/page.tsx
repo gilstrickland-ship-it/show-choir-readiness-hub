@@ -1,5 +1,5 @@
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { ROSTER_WRITE_ROLES } from "@/lib/nav";
 import { RosterTabs } from "../RosterTabs";
 import { updateSizeFields } from "../actions";
@@ -16,7 +16,11 @@ export default async function RosterSettingsPage({
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
-  if (!ROSTER_WRITE_ROLES.includes(role)) notFound();
+  if (!ROSTER_WRITE_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="People" role={role} allowed={ROSTER_WRITE_ROLES} />
+    );
+  }
   const { saved, error } = await searchParams;
 
   const keys = program.size_fields ?? [];

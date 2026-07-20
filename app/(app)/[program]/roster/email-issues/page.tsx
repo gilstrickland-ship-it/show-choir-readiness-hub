@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES } from "@/lib/nav";
 import { RosterTabs } from "../RosterTabs";
@@ -36,7 +36,11 @@ export default async function EmailIssuesPage({
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
-  if (!ROSTER_ROLES.includes(role)) notFound();
+  if (!ROSTER_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="People" role={role} allowed={ROSTER_ROLES} />
+    );
+  }
   const canWrite = role === "director" || role === "admin";
 
   const supabase = await createClient();

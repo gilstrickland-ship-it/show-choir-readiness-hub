@@ -2,7 +2,8 @@ import { test, expect } from "@playwright/test";
 import { signIn, USERS, DEMO, ensureMembershipActive } from "./helpers";
 
 // Role gating (§2 matrix) — a board member: read-only treasury (no add-entry
-// form), no comms in nav, and a direct comms URL 404s.
+// form), no comms in nav, and a direct comms URL renders the data-free
+// Restricted notice (role-denied members no longer get a bare 404).
 
 test.describe("board member role gating", () => {
   test.beforeAll(async () => {
@@ -30,8 +31,17 @@ test.describe("board member role gating", () => {
       page.getByRole("button", { name: "Add entry" }),
     ).toHaveCount(0);
 
-    // Comms is off the board's surface entirely — the direct URL 404s.
+    // Comms is off the board's surface entirely. The direct URL no longer 404s
+    // for an authenticated member — it renders the data-free Restricted notice
+    // (names the owning seats, but ships none of the surface's content).
     await page.goto("/demo/comms");
-    await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /outside your seat/i }),
+    ).toBeVisible();
+    // Still no leak: none of the comms surface (e.g. its Digest tab) renders.
+    await expect(page.getByRole("link", { name: "Digest" })).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Add an entry" }),
+    ).toHaveCount(0);
   });
 });

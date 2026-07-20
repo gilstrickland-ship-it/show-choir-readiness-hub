@@ -1,6 +1,6 @@
-import { notFound } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../Restricted";
 import { SettingsTabs } from "./SettingsTabs";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
@@ -42,7 +42,11 @@ export default async function SettingsPage({
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
-  if (!SETTINGS_ROLES.includes(role)) notFound();
+  if (!SETTINGS_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
+    );
+  }
   const { saved, error } = await searchParams;
 
   const isDirector = role === "director";
