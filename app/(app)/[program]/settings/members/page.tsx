@@ -1,6 +1,6 @@
-import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import type { Role } from "@/lib/auth";
@@ -40,7 +40,11 @@ export default async function MembersPage({
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
-  if (!SETTINGS_ROLES.includes(role)) notFound();
+  if (!SETTINGS_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
+    );
+  }
   const { invited, saved, error } = await searchParams;
 
   const supabase = await createClient();

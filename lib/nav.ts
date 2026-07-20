@@ -3,7 +3,13 @@ import type { Role } from "@/lib/auth";
 
 // Single source for tenant navigation + per-surface role access. The layout
 // renders nav from this; each domain page re-derives its own role gate from the
-// same constants so a hidden item is also an unreachable URL (defense in depth).
+// same constants (defense in depth). A role-hidden surface is still not reachable
+// by an authenticated member who types/bookmarks its URL: instead of leaking
+// data it renders a data-free <Restricted> notice (app/(app)/[program]/Restricted)
+// that names the owning seats — acceptable because the viewer is already an
+// authenticated member of this program. FLAG-hidden surfaces are different: they
+// keep hard-404ing via requireFlag() so a program with a feature disabled never
+// learns the feature exists (Constitution VIII, tenant isolation).
 //
 // Role visibility follows the §2 permission matrix and the task's explicit
 // carve-outs: treasury is visible to director/admin/treasurer/board_member

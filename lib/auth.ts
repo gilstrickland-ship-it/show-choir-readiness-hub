@@ -15,6 +15,17 @@ export type Role =
   | "costume_manager"
   | "board_member";
 
+// Human-readable seat labels, keyed by Role. Single source of truth — the tenant
+// shell header badge and the Restricted (role-gated) page both read from here, so
+// a seat is named identically everywhere it surfaces.
+export const ROLE_LABELS: Record<Role, string> = {
+  director: "Director",
+  admin: "Admin",
+  treasurer: "Treasurer",
+  costume_manager: "Costume manager",
+  board_member: "Board member",
+};
+
 export type MemberStatus = "invited" | "active" | "removed";
 
 export interface Membership {

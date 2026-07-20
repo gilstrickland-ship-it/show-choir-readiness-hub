@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMMS_ROLES, SETTINGS_ROLES } from "@/lib/nav";
@@ -76,7 +76,11 @@ export default async function CommsPage({
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
-  if (!COMMS_ROLES.includes(role)) notFound();
+  if (!COMMS_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Comms" role={role} allowed={COMMS_ROLES} />
+    );
+  }
   const canManageDigest = DIGEST_WRITE_ROLES.includes(role);
   const canAnnounce = ANNOUNCEMENT_WRITE_ROLES.includes(role);
   const canShare = SETTINGS_ROLES.includes(role); // director/admin (share_links RLS)

@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
 import { RosterTabs } from "../RosterTabs";
@@ -23,7 +23,11 @@ export default async function EnsemblesPage({
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
-  if (!ROSTER_ROLES.includes(role)) notFound();
+  if (!ROSTER_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="People" role={role} allowed={ROSTER_ROLES} />
+    );
+  }
   const canWrite = ROSTER_WRITE_ROLES.includes(role);
   const { saved, error } = await searchParams;
 

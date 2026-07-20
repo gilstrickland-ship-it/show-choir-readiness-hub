@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { TREASURY_ROLES } from "@/lib/nav";
@@ -90,7 +90,11 @@ export default async function LedgerPage({
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
   requireFlag(program, "treasury");
-  if (!TREASURY_ROLES.includes(role)) notFound();
+  if (!TREASURY_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Money" role={role} allowed={TREASURY_ROLES} />
+    );
+  }
   const canWrite = TREASURY_WRITE_ROLES.includes(role);
   const sp = await searchParams;
 

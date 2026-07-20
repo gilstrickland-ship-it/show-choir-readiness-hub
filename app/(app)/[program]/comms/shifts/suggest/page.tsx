@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMMS_ROLES } from "@/lib/nav";
@@ -39,8 +39,16 @@ export default async function SuggestShiftsPage({
   const { program, role, season } = await getTenantContext(slug);
   requireFlag(program, "comms");
   requireFlag(program, "shifts");
-  if (!COMMS_ROLES.includes(role)) notFound();
-  if (!SHIFT_WRITE_ROLES.includes(role)) notFound();
+  if (!COMMS_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Comms" role={role} allowed={COMMS_ROLES} />
+    );
+  }
+  if (!SHIFT_WRITE_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Comms" role={role} allowed={SHIFT_WRITE_ROLES} />
+    );
+  }
   const tz = program.timezone;
   const { competition: competitionId } = await searchParams;
 

@@ -1,5 +1,5 @@
-import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
+import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
@@ -38,7 +38,11 @@ export default async function QuickChangePage({
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
   requireFlag(program, "costumes");
-  if (!COSTUMES_ROLES.includes(role)) notFound();
+  if (!COSTUMES_ROLES.includes(role)) {
+    return (
+      <Restricted slug={slug} surface="Wardrobe" role={role} allowed={COSTUMES_ROLES} />
+    );
+  }
   const tz = program.timezone;
   const { competition: selectedCompId } = await searchParams;
 
