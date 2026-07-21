@@ -15,6 +15,7 @@ import {
   zonedDateKey,
   formatTimeInTz,
 } from "@/lib/datetime";
+import { formatHostedDateRange } from "@/lib/hosting";
 
 // Season (season-workflow redesign, "Season" design ref) — one chronological
 // spine for the active season, absorbing the old Competitions/Events/Travel/
@@ -367,16 +368,19 @@ export default async function SeasonPage({
   if (flags.hosting && seasonId) {
     const { data: hostedData } = await supabase
       .from("hosted_events")
-      .select("id, name, event_date")
+      .select("id, name, event_date, end_date")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .not("event_date", "is", null)
       .order("event_date", { ascending: true });
     for (const h of (hostedData as
-      | { id: string; name: string; event_date: string }[]
+      | { id: string; name: string; event_date: string; end_date: string | null }[]
       | null) ?? []) {
       const instant = zonedWallToUtc(`${h.event_date}T00:00`, tz);
       if (!instant) continue;
+      // Multi-day invitationals (Wave N) show their event_date–end_date span in
+      // the meta line; the spine row itself sits on the first day.
+      const multiDay = h.end_date != null && h.end_date !== h.event_date;
       items.push({
         key: `hosting-${h.id}`,
         ...place("hosting", instant),
@@ -384,7 +388,9 @@ export default async function SeasonPage({
         tagClass: "hosting",
         title: h.name,
         href: `${base}/hosting/${h.id}`,
-        meta: "Invitational you host",
+        meta: multiDay
+          ? `Invitational you host · ${formatHostedDateRange(h.event_date, h.end_date, tz)}`
+          : "Invitational you host",
       });
     }
   }

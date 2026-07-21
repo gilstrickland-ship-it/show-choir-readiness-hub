@@ -299,6 +299,23 @@
     border-color: var(--alert-text);
   }
 
+  /* A quiet destructive TEXT link, not a solid pill. `button.danger` above
+     shares specificity with `button.linklike` and, by source order, would
+     otherwise repaint these as crushed red pills (padding:0 + underline from
+     linklike surviving under danger's alert background). Restore the linklike
+     reset and use the alert-text/alert token pair used elsewhere for text. */
+  button.linklike.danger {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--alert-text);
+  }
+
+  button.linklike.danger:hover {
+    background: none;
+    color: var(--alert);
+  }
+
   fieldset {
     border: 1px solid var(--line);
     border-radius: var(--radius-m);

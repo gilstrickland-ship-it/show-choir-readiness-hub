@@ -39,6 +39,24 @@ function intOrNull(fd: FormData, key: string): number | null {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
+// Resolve an invitational's first/last day from the form, validating the span
+// (Wave N). Returns the pair to persist — with end_date normalized to null when
+// the event is single-day (no last day, or a last day equal to the first) — or
+// null when the span is invalid, so the caller redirects with a friendly
+// ?error=enddate rather than writing an inverted range. "YYYY-MM-DD" date strings
+// compare lexicographically, so a plain string compare is a correct date compare.
+function resolveHostedDates(
+  fd: FormData,
+): { event_date: string | null; end_date: string | null } | null {
+  const eventDate = nullable(fd, "event_date");
+  const endDate = nullable(fd, "end_date");
+  if (!endDate) return { event_date: eventDate, end_date: null };
+  if (!eventDate) return null; // a last day with no first day is meaningless
+  if (endDate < eventDate) return null; // last day before first — reject
+  if (endDate === eventDate) return { event_date: eventDate, end_date: null };
+  return { event_date: eventDate, end_date: endDate };
+}
+
 // Resolve an event to its program + season + archived flag, scoped to programId.
 // Returns null when the event is missing/hidden (RLS) — the caller bounces.
 async function loadEventGuard(
@@ -72,6 +90,8 @@ export async function createHostedEvent(formData: FormData): Promise<void> {
   const name = str(formData, "name");
   if (!name) redirect(`/${slug}/hosting?error=name`);
   if (!seasonId) redirect(`/${slug}/hosting?error=season`);
+  const dates = resolveHostedDates(formData);
+  if (!dates) redirect(`/${slug}/hosting?error=enddate`);
 
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -80,7 +100,8 @@ export async function createHostedEvent(formData: FormData): Promise<void> {
       program_id: programId,
       season_id: seasonId,
       name,
-      event_date: nullable(formData, "event_date"),
+      event_date: dates!.event_date,
+      end_date: dates!.end_date,
       status: "planning",
     })
     .select("id")
@@ -106,13 +127,16 @@ export async function updateHostedEvent(formData: FormData): Promise<void> {
 
   const name = str(formData, "name");
   if (!name) redirect(`/${slug}/hosting/${eventId}?error=name`);
+  const dates = resolveHostedDates(formData);
+  if (!dates) redirect(`/${slug}/hosting/${eventId}?error=enddate`);
   const status = str(formData, "status") as HostedEventStatus;
 
   const { error } = await supabase
     .from("hosted_events")
     .update({
       name,
-      event_date: nullable(formData, "event_date"),
+      event_date: dates!.event_date,
+      end_date: dates!.end_date,
       venue_notes: nullable(formData, "venue_notes"),
       host_contact: nullable(formData, "host_contact"),
       status: HOSTED_EVENT_STATUSES.includes(status) ? status : "planning",
@@ -435,6 +459,9 @@ export async function shiftRemainingSlots(formData: FormData): Promise<void> {
   if (deltaMinutes == null || deltaMinutes === 0) {
     redirect(`/${slug}/hosting/${eventId}?error=delta#schedule`);
   }
+  // Program tz scopes the shift to the pivot's calendar day (Wave N) — day 2 of a
+  // multi-day invitational stays put when day 1 runs behind. Posted by the form.
+  const tz = str(formData, "tz") || "UTC";
 
   const { data: slotRows } = await supabase
     .from("hosted_slots")
@@ -444,7 +471,7 @@ export async function shiftRemainingSlots(formData: FormData): Promise<void> {
   const slots =
     (slotRows as { id: string; starts_at: string | null }[] | null) ?? [];
 
-  const updates = computeShiftRemaining(slots, slotId, deltaMinutes!);
+  const updates = computeShiftRemaining(slots, slotId, deltaMinutes!, tz);
   if (updates.length === 0) {
     redirect(`/${slug}/hosting/${eventId}?error=delta#schedule`);
   }

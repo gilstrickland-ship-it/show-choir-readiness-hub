@@ -4,9 +4,9 @@ import { Restricted } from "../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { HOSTING_ROLES, HOSTING_WRITE_ROLES } from "@/lib/nav";
-import { formatDateInTz } from "@/lib/datetime";
 import {
   HOSTED_EVENT_STATUS_LABELS,
+  formatHostedDateRange,
   type HostedEventRow,
 } from "@/lib/hosting";
 import { createHostedEvent } from "./actions";
@@ -40,7 +40,7 @@ export default async function HostingPage({
   const { data } = await supabase
     .from("hosted_events")
     .select(
-      "id, program_id, season_id, name, event_date, venue_notes, status, created_at, updated_at",
+      "id, program_id, season_id, name, event_date, end_date, venue_notes, status, created_at, updated_at",
     )
     .eq("program_id", program.id)
     .order("event_date", { ascending: true, nullsFirst: false })
@@ -73,6 +73,12 @@ export default async function HostingPage({
       {error === "season" && (
         <p className="alert-error">
           Start an active season before setting up an invitational.
+        </p>
+      )}
+      {error === "enddate" && (
+        <p className="alert-error">
+          The last day can&apos;t be before the first day. Set the first day, then
+          a last day on or after it.
         </p>
       )}
       {error === "save" && (
@@ -108,7 +114,7 @@ export default async function HostingPage({
                 <td>
                   <Link href={`/${slug}/hosting/${e.id}`}>{e.name}</Link>
                 </td>
-                <td>{e.event_date ? formatDateInTz(`${e.event_date}T12:00:00Z`, tz) : "—"}</td>
+                <td>{formatHostedDateRange(e.event_date, e.end_date, tz) || "—"}</td>
                 <td>{HOSTED_EVENT_STATUS_LABELS[e.status]}</td>
                 <td>{schoolCount.get(e.id) ?? 0}</td>
               </tr>
@@ -141,6 +147,10 @@ export default async function HostingPage({
               <label>
                 Date
                 <input type="date" name="event_date" />
+              </label>
+              <label>
+                Last day (optional — for events that span more than one day)
+                <input type="date" name="end_date" />
               </label>
               <button type="submit">Create invitational</button>
             </form>
