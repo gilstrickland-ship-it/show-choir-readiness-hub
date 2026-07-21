@@ -83,6 +83,8 @@ The gap was between that sophistication and the actual audience:
 | Rooming-policy engine (gender rules, ratio enforcement) | Spec explicitly rejects it (programs vary too much); shipped informational ratio lines only. |
 | Distributed rate-limit store (Upstash) | Needed before multi-instance production; an infra dependency + env decision, not a code polish. Self-documented in `lib/rate-limit.ts`. |
 
+> **Wave-2 addendum (July 2026, later the same month):** items 1–6 below were subsequently approved and built — see `specs/002-roadmap-wave-2/spec.md` and tasks T048–T052. What code can't do remains: the DNS/Resend dashboard steps in `docs/deliverability-runbook.md`, and the SMS lane (still deferred — vendor + consent decisions).
+
 ## 5. Recommended next (in rough priority order)
 
 1. **Pilot-ready deliverability**: verified sending domain, DMARC/SPF/DKIM, webhook signing secret set — the unsubscribe/one-click machinery is now in place, DNS is not code.
