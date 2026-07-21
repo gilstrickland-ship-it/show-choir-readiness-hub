@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatDateInTz, formatTimeInTz, formatDateTimeInTz } from "@/lib/datetime";
+import { groupItemsByDay } from "@/lib/itinerary-days";
 import { TokenFooter } from "../parts";
 
 // Published itineraries on the tokenized surface (§8a, invariant §9.3). Guardian
@@ -181,20 +182,45 @@ export default async function PublicItineraryPage({
           {block.items.length === 0 ? (
             <p className="muted">No schedule items.</p>
           ) : (
-            <ul className="stack" style={{ listStyle: "none", paddingLeft: 0 }}>
-              {block.items.map((item, ii) => (
+            (() => {
+              // Day headers only when this competition's items span >1 calendar
+              // day (Wave G / G2) — multi-day trips read clearly; single-day
+              // itineraries render flat, unchanged.
+              const { multiDay, groups } = groupItemsByDay(
+                block.items,
+                tz,
+                (i) => i.starts_at,
+              );
+              const renderRow = (item: ItemRow, ii: number) => (
                 <li key={ii} style={{ width: "100%" }}>
                   <strong>
                     {item.starts_at ? formatTimeInTz(item.starts_at, tz) : "—"}
                   </strong>{" "}
                   {item.title ?? item.kind}
-                  {item.location && (
-                    <div className="muted">{item.location}</div>
-                  )}
+                  {item.location && <div className="muted">{item.location}</div>}
                   {item.details && <div className="muted">{item.details}</div>}
                 </li>
-              ))}
-            </ul>
+              );
+              return multiDay ? (
+                <div className="stack" style={{ width: "100%" }}>
+                  {groups.map((g) => (
+                    <div key={g.key || "untimed"} style={{ width: "100%" }}>
+                      <h3 className="itinerary-day-heading">{g.label}</h3>
+                      <ul
+                        className="stack"
+                        style={{ listStyle: "none", paddingLeft: 0 }}
+                      >
+                        {g.items.map((item, ii) => renderRow(item, ii))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <ul className="stack" style={{ listStyle: "none", paddingLeft: 0 }}>
+                  {block.items.map((item, ii) => renderRow(item, ii))}
+                </ul>
+              );
+            })()
           )}
         </div>
       ))}

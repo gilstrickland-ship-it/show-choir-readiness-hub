@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
@@ -10,6 +11,7 @@ import {
   type ItineraryItemKind,
 } from "@/lib/competitions";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
+import { groupItemsByDay } from "@/lib/itinerary-days";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CompetitionTabs } from "../CompetitionTabs";
 import {
@@ -166,6 +168,104 @@ export default async function ItineraryPage({
     : [];
   const freshShareUrl = sp.share ? shareLinkUrl(sp.share) : null;
 
+  // Day grouping (Wave G / G2): headers only when items span >1 calendar day.
+  const { multiDay, groups: dayGroups } = groupItemsByDay(
+    items,
+    tz,
+    (i) => i.starts_at,
+  );
+  const bodyColSpan = canWrite ? 5 : 4;
+
+  // One item → one <tr> (edit form when draft-writable, else read-only row).
+  const renderItem = (item: ItemRow) =>
+    canWrite && itinerary?.status === "draft" ? (
+      <tr key={item.id}>
+        <td colSpan={5}>
+          <form action={updateItineraryItem} className="row-inline">
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="competitionId" value={competitionId} />
+            <input type="hidden" name="itemId" value={item.id} />
+            <input type="hidden" name="tz" value={tz} />
+            <input
+              type="number"
+              name="sort_order"
+              className="num"
+              defaultValue={item.sort_order}
+              aria-label="Sort order"
+              style={{ width: "3.5rem" }}
+            />
+            <input
+              type="datetime-local"
+              name="starts_at"
+              defaultValue={toZonedInputValue(item.starts_at, tz)}
+              aria-label="Starts at"
+            />
+            <input
+              type="datetime-local"
+              name="ends_at"
+              defaultValue={toZonedInputValue(item.ends_at, tz)}
+              aria-label="Ends at"
+            />
+            <select name="kind" defaultValue={item.kind} aria-label="Kind">
+              {ITINERARY_ITEM_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {ITINERARY_ITEM_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              name="title"
+              defaultValue={item.title ?? ""}
+              aria-label="Title"
+            />
+            <input
+              type="text"
+              name="location"
+              defaultValue={item.location ?? ""}
+              placeholder="Location"
+              aria-label="Location"
+            />
+            <input
+              type="text"
+              name="details"
+              defaultValue={item.details ?? ""}
+              placeholder="Details"
+              aria-label="Details"
+            />
+            <button type="submit" className="secondary">
+              Save
+            </button>
+          </form>
+        </td>
+        <td>
+          <form action={deleteItineraryItem}>
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="competitionId" value={competitionId} />
+            <input type="hidden" name="itemId" value={item.id} />
+            <button type="submit" className="linklike danger">
+              Delete
+            </button>
+          </form>
+        </td>
+      </tr>
+    ) : (
+      <tr key={item.id}>
+        <td>{item.sort_order}</td>
+        <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
+        <td>
+          {ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ?? item.kind}
+        </td>
+        <td>
+          {item.title}
+          {item.location ? <span className="muted"> · {item.location}</span> : null}
+        </td>
+        {canWrite && <td></td>}
+      </tr>
+    );
+
   return (
     <section className="stack">
       <CompetitionTabs slug={slug} competitionId={competitionId} active="itinerary" />
@@ -261,98 +361,21 @@ export default async function ItineraryPage({
               </tr>
             </thead>
             <tbody>
-              {items.map((item) =>
-                canWrite && itinerary?.status === "draft" ? (
-                  <tr key={item.id}>
-                    <td colSpan={5}>
-                      <form action={updateItineraryItem} className="row-inline">
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="competitionId" value={competitionId} />
-                        <input type="hidden" name="itemId" value={item.id} />
-                        <input type="hidden" name="tz" value={tz} />
-                        <input
-                          type="number"
-                          name="sort_order"
-                          className="num"
-                          defaultValue={item.sort_order}
-                          aria-label="Sort order"
-                          style={{ width: "3.5rem" }}
-                        />
-                        <input
-                          type="datetime-local"
-                          name="starts_at"
-                          defaultValue={toZonedInputValue(item.starts_at, tz)}
-                          aria-label="Starts at"
-                        />
-                        <input
-                          type="datetime-local"
-                          name="ends_at"
-                          defaultValue={toZonedInputValue(item.ends_at, tz)}
-                          aria-label="Ends at"
-                        />
-                        <select name="kind" defaultValue={item.kind} aria-label="Kind">
-                          {ITINERARY_ITEM_KINDS.map((k) => (
-                            <option key={k} value={k}>
-                              {ITINERARY_ITEM_KIND_LABELS[k]}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          name="title"
-                          defaultValue={item.title ?? ""}
-                          aria-label="Title"
-                        />
-                        <input
-                          type="text"
-                          name="location"
-                          defaultValue={item.location ?? ""}
-                          placeholder="Location"
-                          aria-label="Location"
-                        />
-                        <input
-                          type="text"
-                          name="details"
-                          defaultValue={item.details ?? ""}
-                          placeholder="Details"
-                          aria-label="Details"
-                        />
-                        <button type="submit" className="secondary">
-                          Save
-                        </button>
-                      </form>
-                    </td>
-                    {canWrite && (
-                      <td>
-                        <form action={deleteItineraryItem}>
-                          <input type="hidden" name="programId" value={program.id} />
-                          <input type="hidden" name="slug" value={slug} />
-                          <input type="hidden" name="competitionId" value={competitionId} />
-                          <input type="hidden" name="itemId" value={item.id} />
-                          <button type="submit" className="linklike danger">
-                            Delete
-                          </button>
-                        </form>
-                      </td>
-                    )}
-                  </tr>
-                ) : (
-                  <tr key={item.id}>
-                    <td>{item.sort_order}</td>
-                    <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
-                    <td>{ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ?? item.kind}</td>
-                    <td>
-                      {item.title}
-                      {item.location ? <span className="muted"> · {item.location}</span> : null}
-                    </td>
-                    {canWrite && <td></td>}
-                  </tr>
-                ),
-              )}
+              {multiDay
+                ? dayGroups.map((g) => (
+                    <Fragment key={g.key || "untimed"}>
+                      <tr className="itinerary-day-head">
+                        <td colSpan={bodyColSpan}>
+                          <strong>{g.label}</strong>
+                        </td>
+                      </tr>
+                      {g.items.map(renderItem)}
+                    </Fragment>
+                  ))
+                : items.map(renderItem)}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={canWrite ? 5 : 4} className="muted">
+                  <td colSpan={bodyColSpan} className="muted">
                     No items yet.
                   </td>
                 </tr>

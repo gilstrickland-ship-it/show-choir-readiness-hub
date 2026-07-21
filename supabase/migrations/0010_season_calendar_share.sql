@@ -1,0 +1,21 @@
+-- ============================================================================
+-- Platform — Season calendar share resource (Wave G / G1)
+-- ----------------------------------------------------------------------------
+-- Adds a fourth share_link_resource value, 'season_calendar', so a director can
+-- mint one broadcast token that a calendar app subscribes to (§8a, FR-002). The
+-- token resolves to a season (resource_id = seasons.id) and the /t/<token>/calendar
+-- feed route emits the whole season — competitions, events, and trips — as a live
+-- text/calendar document. No new tables and no new capability: a season_calendar
+-- link is still just a read-only share link (capability 'resource:view'), gated by
+-- the existing share_links RLS policies. resource_id semantics (a season id) are
+-- enforced in the feed route, exactly like the itinerary/signup_page resources.
+--
+-- Postgres note: `ALTER TYPE ... ADD VALUE` is transaction-safe on PG 12+ as long
+-- as the new value is not USED in the same transaction — this migration only adds
+-- it (nothing here reads it back), so it applies cleanly whether the migration
+-- runner wraps files in a transaction or not. Column add / value add only: no RLS
+-- policy changes are required (share_links already carries its coarse policies from
+-- 0002_rls.sql, and the RLS isolation suite re-derives share_links automatically).
+-- ============================================================================
+
+alter type share_link_resource add value if not exists 'season_calendar';

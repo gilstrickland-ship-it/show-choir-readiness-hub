@@ -3394,6 +3394,25 @@
     gap: 0.4rem 1.1rem;
   }
 
+  /* Day dividers for multi-day itineraries + trip schedules (Wave G / G2). Only
+     rendered when items span more than one calendar day, so a single-day view
+     stays header-free. Quiet but unmistakable — a labeled rule between days. */
+  .itinerary-day-heading {
+    margin: 0.9rem 0 0.3rem;
+    padding-bottom: 0.2rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--ink-2);
+    border-bottom: 2px solid var(--line);
+  }
+
+  .itinerary-day-head td {
+    padding-top: 0.9rem;
+    font-size: 0.95rem;
+    color: var(--ink-2);
+    border-bottom: 2px solid var(--line);
+  }
+
   /* Absence history as stacked cards (C2-4) — a 4-column table is unreadable on
      a 375px phone. Same card idiom as the costume/share cards. */
   .token-report-list {

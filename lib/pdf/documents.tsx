@@ -1,6 +1,7 @@
 import React from "react";
 import { Document, View, Text, DocPage, styles } from "./components";
 import { formatDateInTz, formatTimeInTz } from "@/lib/datetime";
+import { groupItemsByDay } from "@/lib/itinerary-days";
 import {
   formatCents,
   type TripDocData,
@@ -259,8 +260,37 @@ function GroupList({ title, groups }: { title: string; groups: TravelGroupData[]
   );
 }
 
+// One itinerary row (time + event) — shared by the flat and day-grouped layouts.
+function ItineraryRow({
+  it,
+  tz,
+  index,
+}: {
+  it: { startsAt: string | null; endsAt: string | null; kind: string; title: string | null; location: string | null; details: string | null };
+  tz: string;
+  index: number;
+}) {
+  return (
+    <View style={styles.tableRow} key={index} wrap={false}>
+      <Text style={{ width: 90 }}>{itemTime(it, tz)}</Text>
+      <View style={{ flexGrow: 1, flexShrink: 1 }}>
+        <Text style={styles.bold}>{it.title ?? it.kind}</Text>
+        {(it.location || it.details) && (
+          <Text style={styles.muted}>
+            {it.location ?? ""}
+            {it.location && it.details ? " · " : ""}
+            {it.details ?? ""}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
 export function ParentPacket({ data }: { data: PacketData }) {
   const dateStr = data.date ? formatDateInTz(`${data.date}T12:00:00Z`, data.tz) : "";
+  // Day subheadings only when the itinerary spans >1 calendar day (Wave G / G2).
+  const { multiDay, groups } = groupItemsByDay(data.items, data.tz, (i) => i.startsAt);
   return (
     <Document title={`Parent packet — ${data.competitionName}`}>
       <DocPage tz={data.tz} footerNote="Parent packet">
@@ -287,21 +317,20 @@ export function ParentPacket({ data }: { data: PacketData }) {
             <Text style={[styles.bold, { width: 90 }]}>Time</Text>
             <Text style={[styles.bold, { flexGrow: 1 }]}>Event</Text>
           </View>
-          {data.items.map((it, i) => (
-            <View style={styles.tableRow} key={i} wrap={false}>
-              <Text style={{ width: 90 }}>{itemTime(it, data.tz)}</Text>
-              <View style={{ flexGrow: 1, flexShrink: 1 }}>
-                <Text style={styles.bold}>{it.title ?? it.kind}</Text>
-                {(it.location || it.details) && (
-                  <Text style={styles.muted}>
-                    {it.location ?? ""}
-                    {it.location && it.details ? " · " : ""}
-                    {it.details ?? ""}
+          {multiDay
+            ? groups.map((g) => (
+                <View key={g.key || "untimed"}>
+                  <Text style={[styles.bold, { marginTop: 8, marginBottom: 2 }]} wrap={false}>
+                    {g.label}
                   </Text>
-                )}
-              </View>
-            </View>
-          ))}
+                  {g.items.map((it, i) => (
+                    <ItineraryRow key={i} it={it} tz={data.tz} index={i} />
+                  ))}
+                </View>
+              ))
+            : data.items.map((it, i) => (
+                <ItineraryRow key={i} it={it} tz={data.tz} index={i} />
+              ))}
           {data.items.length === 0 && <Text style={styles.muted}>No itinerary items.</Text>}
         </View>
 

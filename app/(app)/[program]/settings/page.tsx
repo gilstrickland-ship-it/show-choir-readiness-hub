@@ -65,7 +65,10 @@ export default async function SettingsPage({
   const linkLabels = new Map<string, string>();
   if (shareLinks.length > 0) {
     const compIds = shareLinks.filter((l) => l.resource === "itinerary").map((l) => l.resource_id);
-    const seasonIds = shareLinks.filter((l) => l.resource === "signup_page").map((l) => l.resource_id);
+    // Both signup_page and season_calendar links are scoped to a season id.
+    const seasonIds = shareLinks
+      .filter((l) => l.resource === "signup_page" || l.resource === "season_calendar")
+      .map((l) => l.resource_id);
     if (compIds.length > 0) {
       const { data } = await supabase
         .from("competitions")
@@ -89,6 +92,7 @@ export default async function SettingsPage({
     itinerary: "Itinerary",
     signup_page: "Volunteer signup",
     packet: "Parent packet",
+    season_calendar: "Season calendar",
   };
 
   // Email health (F1) — presence booleans evaluated server-side (never env
