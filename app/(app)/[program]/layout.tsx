@@ -4,6 +4,7 @@ import { getTenantContext } from "@/lib/tenant";
 import { NAV, isNavItemVisible, SETTINGS_ROLES } from "@/lib/nav";
 import { ROLE_LABELS } from "@/lib/auth";
 import { signOut } from "@/app/auth/actions";
+import { setJourneyDismissed } from "@/lib/guide";
 import { ShellNav } from "./ShellNav";
 import { MobileNav } from "./MobileNav";
 
@@ -29,6 +30,11 @@ export default async function ProgramLayout({
   // Support views (synthetic board_member seat) never expose it.
   const showSettings = !isSupport && SETTINGS_ROLES.includes(role);
 
+  // First-use guide reopen ("Getting started"): visible whenever the guide flag
+  // is on for a real member (support has no membership row to write). Clearing
+  // journey_dismissed reopens the panel on Today (spec §5).
+  const showGuideReopen = flags.guide && !isSupport;
+
   return (
     <div className="shell">
       {isSupport && (
@@ -53,6 +59,15 @@ export default async function ProgramLayout({
           <span className="badge">
             {isSupport ? `${brand.name} support` : (ROLE_LABELS[role] ?? role)}
           </span>
+          {showGuideReopen && (
+            <form action={setJourneyDismissed}>
+              <input type="hidden" name="programId" value={program.id} />
+              <input type="hidden" name="slug" value={slug} />
+              <button type="submit" className="shell-settings-link">
+                Getting started
+              </button>
+            </form>
+          )}
           {showSettings && (
             <Link href={`/${slug}/settings`} className="shell-settings-link">
               Settings
@@ -68,8 +83,11 @@ export default async function ProgramLayout({
       <main>{children}</main>
       <MobileNav
         slug={slug}
+        programId={program.id}
         items={items.map(({ slot, label }) => ({ slot, label }))}
         showSettings={showSettings}
+        showGuideReopen={showGuideReopen}
+        reopenGuide={setJourneyDismissed}
       />
     </div>
   );

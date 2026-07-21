@@ -25,12 +25,20 @@ const TAB_SLOTS: readonly string[] = [
 
 export function MobileNav({
   slug,
+  programId,
   items,
   showSettings,
+  showGuideReopen,
+  reopenGuide,
 }: {
   slug: string;
+  programId: string;
   items: { slot: string; label: string }[];
   showSettings: boolean;
+  showGuideReopen: boolean;
+  // The guarded "reopen guide" server action, passed from the server layout —
+  // a client component may not import an inline "use server" module directly.
+  reopenGuide: (formData: FormData) => Promise<void>;
 }) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -65,7 +73,7 @@ export function MobileNav({
           {item.label}
         </Link>
       ))}
-      {more.length > 0 && (
+      {(more.length > 0 || showGuideReopen) && (
         <>
           <button
             type="button"
@@ -88,6 +96,15 @@ export function MobileNav({
                   {item.label}
                 </Link>
               ))}
+              {showGuideReopen && (
+                <form action={reopenGuide}>
+                  <input type="hidden" name="programId" value={programId} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <button type="submit" role="menuitem">
+                    Getting started
+                  </button>
+                </form>
+              )}
             </div>
           )}
         </>

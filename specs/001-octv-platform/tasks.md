@@ -98,3 +98,8 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 - [X] T054 Wave J convergence fixes: email-address import collision, schedule-generator cadence, host day-of contact (migration 0012), slot/trip/group delete confirms, runbook + email-health subdomain corrections, comms-flag-aware shift links, remaining enum labels, mint error surfacing, webcal variant, tap targets, tz-aware grade mapping, single-source hosting roles.
 - [X] T055 Living itinerary made real: published itineraries editable in place (publish stays the visibility gate), changed-since-publish nudge/banner now reachable, extracted + unit-tested change detection, plain-language source labels.
 - [X] T056 Wave L: monthly ledger reconciliation record (migration 0013, treasurer-only marks, board-visible "reconciled through" on snapshot + reports), shift overbooking hint, review convergence statement.
+
+## Phase 12 — First-use guide (July 2026)
+
+- [X] T057 Guide foundation: guide_state column (0014), guide flag, lib/guide.ts (journeys, verifiers, strip registry, guarded state actions), unit tests.
+- [X] T058 Role journey panel on Today (director/admin, treasurer, costume manager, board orientation), full/pill/dismissed states, Getting-started reopen links, setup-guide absorbed with e2e contract intact.

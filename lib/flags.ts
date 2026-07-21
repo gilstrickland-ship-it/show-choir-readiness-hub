@@ -18,7 +18,8 @@ export type FlagKey =
   | "events"
   | "archive"
   | "support_access"
-  | "hosting";
+  | "hosting"
+  | "guide";
 
 interface FlagDefinition {
   description: string;
@@ -78,6 +79,11 @@ export const flagRegistry: Record<FlagKey, FlagDefinition> = {
     description:
       "Host-mode: run your own invitational — visiting schools, homerooms, schedule, packets.",
     default: false,
+  },
+  guide: {
+    description:
+      "First-use guidance: role journeys, screen intros, parent welcome card.",
+    default: true,
   },
 };
 
