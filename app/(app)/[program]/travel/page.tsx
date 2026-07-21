@@ -168,7 +168,7 @@ export default async function TravelPage({
 
       {canWrite && season && (
         <>
-          <h2>Add a trip</h2>
+          <h2 id="add">Add a trip</h2>
           <form action={createTrip} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
@@ -186,8 +186,9 @@ export default async function TravelPage({
                 Ends
                 <input type="date" name="ends_on" />
               </label>
-              <label className="row-inline">
-                <input type="checkbox" name="is_overnight" /> Overnight (rooms + buses)
+              <label className="checkbox-inline">
+                <input type="checkbox" name="is_overnight" /> Overnight (rooms +
+                buses)
               </label>
             </div>
             <label>

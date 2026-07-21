@@ -4,7 +4,11 @@ import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMMS_ROLES } from "@/lib/nav";
-import { ANNOUNCEMENT_WRITE_ROLES, computeRecipients } from "@/lib/comms";
+import {
+  ANNOUNCEMENT_WRITE_ROLES,
+  computeRecipients,
+  sendStatusLabel,
+} from "@/lib/comms";
 import { emailConfigured } from "@/lib/email";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { CommsTabs } from "../CommsTabs";
@@ -137,7 +141,12 @@ export default async function AnnouncementsPage({
         </div>
       </div>
 
-      <CommsTabs slug={slug} active="announcements" shiftsEnabled={flags.shifts} />
+      <CommsTabs
+        slug={slug}
+        active="announcements"
+        shiftsEnabled={flags.shifts}
+        digestEnabled={flags.digest}
+      />
 
       {(emailIssueCount ?? 0) > 0 && (
         <p>
@@ -236,7 +245,9 @@ export default async function AnnouncementsPage({
           <tbody>
             {announcements.map((a) => {
               const m = rollup.get(a.id) ?? {};
-              const parts = Object.entries(m).map(([k, v]) => `${v} ${k}`);
+              const parts = Object.entries(m).map(
+                ([k, v]) => `${v} ${sendStatusLabel(k)}`,
+              );
               return (
                 <tr key={a.id}>
                   <td>{a.subject ?? "—"}</td>

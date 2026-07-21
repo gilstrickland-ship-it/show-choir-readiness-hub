@@ -134,10 +134,18 @@ export default async function EventsPage({
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
 
       <div className="settings-tabs">
-        <Link href={`/${slug}/events?view=month&ref=${refKey}`}>
+        <Link
+          href={`/${slug}/events?view=month&ref=${refKey}`}
+          aria-label="Month view"
+          aria-current={view === "month" ? "page" : undefined}
+        >
           {view === "month" ? <strong>Month</strong> : "Month"}
         </Link>
-        <Link href={`/${slug}/events?view=week&ref=${refKey}`}>
+        <Link
+          href={`/${slug}/events?view=week&ref=${refKey}`}
+          aria-label="Week view"
+          aria-current={view === "week" ? "page" : undefined}
+        >
           {view === "week" ? <strong>Week</strong> : "Week"}
         </Link>
       </div>
@@ -191,7 +199,7 @@ export default async function EventsPage({
 
       {canWrite && season && (
         <>
-          <h2>Add an event</h2>
+          <h2 id="add">Add an event</h2>
           <form action={createEvent} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />

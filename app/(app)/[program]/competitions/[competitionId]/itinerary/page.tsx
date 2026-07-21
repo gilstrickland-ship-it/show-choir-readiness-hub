@@ -502,9 +502,9 @@ export default async function ItineraryPage({
                 showPublishConfirm ? (
                   <div className="stack confirm-box">
                     <p>
-                      Publish this itinerary? Parents will be able to see it,
-                      and it unlocks packet generation. You can unpublish to
-                      edit again.
+                      Publish this itinerary? Families see it immediately, and
+                      it stays live — any edit you save later reaches them right
+                      away. Publishing also unlocks packet generation.
                     </p>
                     <form action={publishItinerary} className="row-inline">
                       <input

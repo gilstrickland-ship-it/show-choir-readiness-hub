@@ -78,6 +78,45 @@ export function changedItemsSincePublish(
     : none;
 }
 
+// ---------------------------------------------------------------------------
+// Parent poster time anchors (§8a, §10). The family home page shows "call HH:MM"
+// and, when meaningful, "home ~HH:MM". Call time is the depart item's start (or
+// the earliest start). The home estimate needs a REAL end anchor: the latest
+// item end time. A schedule with no end times, or one whose latest end collapses
+// to the call time, has no truthful "home" to show — so we return null and the
+// caller suppresses the segment rather than printing a misleading estimate that
+// just mirrors the call time. Pure (no DB, no React) so tests/unit covers it.
+export interface ItineraryAnchors {
+  callTime: string | null;
+  // ISO timestamp of the estimated arrival home, or null when there's no
+  // meaningful end anchor (no item has an end time, or it equals the call time).
+  homeEstimate: string | null;
+}
+
+export function itineraryAnchors(
+  items: ReadonlyArray<{
+    starts_at: string | null;
+    ends_at: string | null;
+    kind: string;
+  }>,
+): ItineraryAnchors {
+  const depart = items.find((r) => r.kind === "depart" && r.starts_at);
+  const callTime =
+    depart?.starts_at ?? items.find((r) => r.starts_at)?.starts_at ?? null;
+
+  // Latest genuine end time — start times are deliberately excluded (the last
+  // item starting isn't when the bus gets home).
+  const lastEnd =
+    items
+      .map((r) => r.ends_at)
+      .filter((v): v is string => !!v)
+      .sort()
+      .at(-1) ?? null;
+
+  const homeEstimate = lastEnd && lastEnd !== callTime ? lastEnd : null;
+  return { callTime, homeEstimate };
+}
+
 export function groupItemsByDay<T>(
   items: T[],
   tz: string,
