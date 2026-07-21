@@ -93,3 +93,4 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 - [X] T049 Wave G: season_calendar share links + subscribable staff ICS feed + all-day ICS support (G1); day-grouped itineraries (editor, parent, packet PDF) + multi-day trip schedule view (G2).
 - [X] T050 Wave H: travel bulk-assignment flow — fill-target sticky bar + tap-chip queue (querystring-driven, server-rendered), existing flows preserved.
 - [X] T051 Wave I1: hosting foundation — migration 0011 (hosted_events/schools/slots + enums + RLS + archived-season freeze), fixtures + isolation/role/archive coverage, hosting flag (default off, no tier bundle), Hosting nav slot + route stub, lib/hosting.ts types.
+- [X] T052 Wave I2: hosting surfaces — event list/create, schools + homerooms (dup warn), schedule builder (deterministic generator + shift-remaining), master schedule / door signs / director packet PDFs, Season spine rows, volunteer seam.

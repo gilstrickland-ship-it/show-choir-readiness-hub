@@ -1783,6 +1783,99 @@
     color: var(--warn-text);
   }
 
+  .kind-tag.hosting {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+
+  /* ---------------- Host-mode (Wave I2) ---------------- */
+  .hosting-event .comp-back {
+    margin-bottom: 0.5rem;
+  }
+
+  .hosting-header-edit,
+  .hosting-add {
+    margin-top: 0.75rem;
+  }
+
+  .hosting-header-edit > summary,
+  .hosting-add > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--accent-strong);
+    padding: 0.35rem 0;
+  }
+
+  .hosting-school-card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius, 8px);
+    padding: 0.75rem 0.9rem;
+    background: var(--paper);
+  }
+
+  .hosting-school-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .hosting-school-card details > summary {
+    cursor: pointer;
+    color: var(--accent-strong);
+    font-weight: 600;
+    padding: 0.25rem 0;
+  }
+
+  .hosting-slot-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-bottom: 0.5px solid var(--line);
+  }
+
+  .hosting-slot-time {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    min-width: 4.5rem;
+  }
+
+  .hosting-slot-body {
+    flex: 1;
+    min-width: 8rem;
+  }
+
+  .hosting-slot-actions {
+    flex-basis: 100%;
+  }
+
+  .hosting-slot-actions details > summary {
+    cursor: pointer;
+    color: var(--accent-strong);
+    font-weight: 600;
+    padding: 0.2rem 0;
+  }
+
+  .hosting-shift {
+    margin-top: 0.5rem;
+    align-items: flex-end;
+  }
+
+  .hosting-doc-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 0.5rem;
+  }
+
+  .hosting-seam {
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+  }
+
   .season-row-main {
     flex: 1;
     min-width: 0;

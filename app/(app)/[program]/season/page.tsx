@@ -43,7 +43,7 @@ function monthAbbr(instant: Date, timeZone: string): string {
     .toUpperCase();
 }
 
-type ItemKind = "comp" | "event" | "trip";
+type ItemKind = "comp" | "event" | "trip" | "hosting";
 
 interface SeasonItem {
   key: string;
@@ -353,6 +353,35 @@ export default async function SeasonPage({
     }
   }
 
+  // ---- Hosted invitationals (Wave I2) ---------------------------------------
+  // When host-mode is on, the events the program RUNS render as distinguishable
+  // spine rows (a "Hosting" tag, link to the event command center). Lean: queried
+  // only when the flag is on. Undated events have no spine position (omitted).
+  if (flags.hosting && seasonId) {
+    const { data: hostedData } = await supabase
+      .from("hosted_events")
+      .select("id, name, event_date")
+      .eq("program_id", program.id)
+      .eq("season_id", seasonId)
+      .not("event_date", "is", null)
+      .order("event_date", { ascending: true });
+    for (const h of (hostedData as
+      | { id: string; name: string; event_date: string }[]
+      | null) ?? []) {
+      const instant = zonedWallToUtc(`${h.event_date}T00:00`, tz);
+      if (!instant) continue;
+      items.push({
+        key: `hosting-${h.id}`,
+        ...place("hosting", instant),
+        tag: "Hosting",
+        tagClass: "hosting",
+        title: h.name,
+        href: `${base}/hosting/${h.id}`,
+        meta: "Invitational you host",
+      });
+    }
+  }
+
   // Chronological order (program tz).
   items.sort((a, b) => a.instant.getTime() - b.instant.getTime());
 
@@ -589,6 +618,10 @@ export default async function SeasonPage({
                           No trip yet —{" "}
                           <Link href={`${base}/travel`}>create trip</Link>
                         </span>
+                      ) : it.kind === "hosting" ? (
+                        <Link className="season-link" href={it.href ?? `${base}/hosting`}>
+                          Open
+                        </Link>
                       ) : it.kind === "trip" ? (
                         <Link className="season-link" href={it.href ?? `${base}/travel`}>
                           Plan

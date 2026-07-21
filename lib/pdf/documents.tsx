@@ -2,6 +2,7 @@ import React from "react";
 import { Document, View, Text, DocPage, styles } from "./components";
 import { formatDateInTz, formatTimeInTz } from "@/lib/datetime";
 import { groupItemsByDay } from "@/lib/itinerary-days";
+import { brand } from "@/lib/brand";
 import {
   formatCents,
   type TripDocData,
@@ -10,6 +11,7 @@ import {
   type BoardSnapshotData,
   type SnapshotCategory,
   type MealData,
+  type HostEventDocData,
 } from "./queries";
 
 // The four derived documents (§6, §7, T017). Pure: data in, PDF tree out. Times
@@ -511,6 +513,195 @@ function TotalRow({ label, planned, actual }: { label: string; planned: number; 
       <Text style={[styles.bold, { width: 90, textAlign: "right" }]}>{formatCents(actual)}</Text>
       <Text style={[styles.bold, { width: 90, textAlign: "right" }]}>{formatCents(actual - planned)}</Text>
     </View>
+  );
+}
+
+// ============================ HOST-MODE DOCUMENTS ============================
+// Three day-of documents for the program running its own invitational (Wave I2),
+// all derived from one hosted event's schools + slots (Constitution VI). Times
+// render in program tz; host contact is the brand support email + program name
+// (Constitution IX). NO visiting-school student data exists to print (III).
+
+function hostEventSubtitle(data: HostEventDocData): string {
+  const dateStr = data.date ? formatDateInTz(`${data.date}T12:00:00Z`, data.tz) : "";
+  return `${data.programName}${dateStr ? ` · ${dateStr}` : ""}`;
+}
+
+// Shared master-schedule table (Time · School / Label · Kind). Reused by the
+// schedule doc and appended to each director packet.
+function MasterScheduleTable({ data }: { data: HostEventDocData }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Master schedule</Text>
+      <View style={styles.tableHeadRow}>
+        <Text style={[styles.bold, { width: 90 }]}>Time</Text>
+        <Text style={[styles.bold, { flexGrow: 1 }]}>School / Label</Text>
+        <Text style={[styles.bold, { width: 90 }]}>Kind</Text>
+      </View>
+      {data.slots.length === 0 ? (
+        <Text style={styles.muted}>No schedule built yet.</Text>
+      ) : (
+        data.slots.map((s, i) => (
+          <View style={styles.tableRow} key={i} wrap={false}>
+            <Text style={{ width: 90 }}>
+              {s.startsAt ? formatTimeInTz(s.startsAt, data.tz) : "—"}
+            </Text>
+            <Text style={{ flexGrow: 1, flexShrink: 1 }}>
+              {s.label ?? s.schoolName ?? s.kindLabel}
+              {s.durationMinutes != null ? (
+                <Text style={styles.muted}> · {s.durationMinutes} min</Text>
+              ) : null}
+            </Text>
+            <Text style={{ width: 90 }}>{s.kindLabel}</Text>
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+// Master schedule — the slot grid, for the judges' table and backstage.
+export function HostSchedule({ data }: { data: HostEventDocData }) {
+  return (
+    <Document title={`Master schedule — ${data.eventName}`}>
+      <DocPage tz={data.tz} footerNote="Master schedule">
+        <View style={styles.header}>
+          <Text style={styles.brandName}>MASTER SCHEDULE</Text>
+          <Text style={styles.title}>{data.eventName}</Text>
+          <Text style={styles.subtitle}>{hostEventSubtitle(data)}</Text>
+        </View>
+        <MasterScheduleTable data={data} />
+      </DocPage>
+    </Document>
+  );
+}
+
+// Homeroom door signs — one page per school, big type for taping to the door.
+export function HostDoorSigns({ data }: { data: HostEventDocData }) {
+  return (
+    <Document title={`Door signs — ${data.eventName}`}>
+      {data.schools.length === 0 ? (
+        <DocPage tz={data.tz} footerNote="Door signs">
+          <Text style={styles.title}>Door signs — {data.eventName}</Text>
+          <Text style={styles.muted}>No visiting schools added yet.</Text>
+        </DocPage>
+      ) : (
+        data.schools.map((school, i) => (
+          <DocPage key={i} tz={data.tz} footerNote="Door sign">
+            <Text style={{ fontSize: 40, fontFamily: "Helvetica-Bold", marginBottom: 8 }}>
+              {school.schoolName}
+            </Text>
+            {school.ensembleName ? (
+              <Text style={{ fontSize: 20, marginBottom: 12 }}>{school.ensembleName}</Text>
+            ) : null}
+            <Text style={{ fontSize: 28, fontFamily: "Helvetica-Bold", marginBottom: 12 }}>
+              Homeroom: {school.homeroom ?? "____________"}
+            </Text>
+            {school.costumeColors ? (
+              <Text style={{ fontSize: 16, marginBottom: 8 }}>
+                <Text style={styles.bold}>Colors: </Text>
+                {school.costumeColors}
+              </Text>
+            ) : null}
+            <Text style={{ fontSize: 16, marginBottom: 4 }}>
+              <Text style={styles.bold}>Warm-up: </Text>
+              {school.warmupAt ? formatTimeInTz(school.warmupAt, data.tz) : "TBD"}
+            </Text>
+            <Text style={{ fontSize: 16 }}>
+              <Text style={styles.bold}>Perform: </Text>
+              {school.performAt ? formatTimeInTz(school.performAt, data.tz) : "TBD"}
+            </Text>
+          </DocPage>
+        ))
+      )}
+    </Document>
+  );
+}
+
+// Director packet — one page per visiting school: greeting, their times, homeroom,
+// arrival + venue notes, host contact, then the master schedule appended.
+export function HostPacket({ data }: { data: HostEventDocData }) {
+  const awardsLine =
+    data.awardsSlots.length > 0
+      ? data.awardsSlots
+          .map(
+            (a) =>
+              `${a.startsAt ? formatTimeInTz(a.startsAt, data.tz) : "TBD"}${a.label ? ` (${a.label})` : ""}`,
+          )
+          .join(", ")
+      : "TBD";
+  return (
+    <Document title={`Director packets — ${data.eventName}`}>
+      {data.schools.length === 0 ? (
+        <DocPage tz={data.tz} footerNote="Director packet">
+          <Text style={styles.title}>Director packets — {data.eventName}</Text>
+          <Text style={styles.muted}>No visiting schools added yet.</Text>
+        </DocPage>
+      ) : (
+        data.schools.map((school, i) => (
+          <DocPage key={i} tz={data.tz} footerNote="Director packet">
+            <View style={styles.header}>
+              <Text style={styles.brandName}>DIRECTOR PACKET</Text>
+              <Text style={styles.title}>{data.eventName}</Text>
+              <Text style={styles.subtitle}>{hostEventSubtitle(data)}</Text>
+            </View>
+
+            <Text style={{ marginBottom: 10 }}>
+              Welcome, {school.schoolName}
+              {school.ensembleName ? ` (${school.ensembleName})` : ""}! Here is everything your
+              group needs for the day.
+            </Text>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Your times</Text>
+              <Text style={{ marginBottom: 2 }}>
+                <Text style={styles.bold}>Warm-up: </Text>
+                {school.warmupAt ? formatTimeInTz(school.warmupAt, data.tz) : "TBD"}
+              </Text>
+              <Text style={{ marginBottom: 2 }}>
+                <Text style={styles.bold}>Perform: </Text>
+                {school.performAt ? formatTimeInTz(school.performAt, data.tz) : "TBD"}
+              </Text>
+              <Text style={{ marginBottom: 2 }}>
+                <Text style={styles.bold}>Awards: </Text>
+                {awardsLine}
+              </Text>
+              <Text style={{ marginBottom: 2 }}>
+                <Text style={styles.bold}>Homeroom: </Text>
+                {school.homeroom ?? "TBD"}
+              </Text>
+            </View>
+
+            {(school.arrivalNotes || data.venueNotes) && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Notes</Text>
+                {school.arrivalNotes ? (
+                  <Text style={{ marginBottom: 4 }}>
+                    <Text style={styles.bold}>Arrival: </Text>
+                    {school.arrivalNotes}
+                  </Text>
+                ) : null}
+                {data.venueNotes ? (
+                  <Text>
+                    <Text style={styles.bold}>Venue: </Text>
+                    {data.venueNotes}
+                  </Text>
+                ) : null}
+              </View>
+            )}
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Your host</Text>
+              <Text>
+                {data.programName} · {brand.supportEmail}
+              </Text>
+            </View>
+
+            <MasterScheduleTable data={data} />
+          </DocPage>
+        ))
+      )}
+    </Document>
   );
 }
 

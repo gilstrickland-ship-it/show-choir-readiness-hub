@@ -108,3 +108,88 @@ export interface HostedSlotRow {
   created_at: string;
   updated_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Schedule generator (I2) — a pure, deterministic ladder. Kept here (not in the
+// "use server" actions module) so it unit-tests directly and the builder form
+// reads the same defaults. Times are computed in epoch-ms and returned as ISO
+// UTC strings; the caller resolves the program-tz wall-clock start into a UTC
+// instant (lib/datetime.zonedWallToUtc) before calling. No tz math lives here —
+// the ladder is offset arithmetic only, which is exactly what makes it testable.
+//
+// Ladder (spec I1): each school gets a warm-up slot immediately followed by a
+// perform slot; the NEXT school's warm-up begins when the CURRENT school's
+// perform begins. Concretely, for school i (0-based in sort_order):
+//   warmup[i].start  = start + i * warmupMinutes
+//   perform[i].start = warmup[i].start + warmupMinutes   (perform follows warmup)
+// so warm-up[i+1] == perform[i] (the "warm-ups lead performances by one slot"
+// pipeline). warmupMinutes drives the cadence; performMinutes is each perform
+// slot's DURATION. With the 25/25 defaults the two coincide into a seamless
+// back-to-back pipeline. The director reorders/edits after — this only seeds.
+
+export interface GeneratedSlotInput {
+  hosted_school_id: string;
+  kind: HostedSlotKind; // 'warmup' | 'perform'
+  label: string;
+  starts_at: string; // ISO UTC
+  duration_minutes: number;
+  sort_order: number;
+}
+
+export function generateHostSchedule(opts: {
+  startUtcMs: number;
+  schools: { id: string; name: string }[];
+  warmupMinutes: number;
+  performMinutes: number;
+}): GeneratedSlotInput[] {
+  const { startUtcMs, schools, warmupMinutes, performMinutes } = opts;
+  const w = Math.max(0, Math.round(warmupMinutes));
+  const p = Math.max(0, Math.round(performMinutes));
+  const out: GeneratedSlotInput[] = [];
+  schools.forEach((school, i) => {
+    const warmupStart = startUtcMs + i * w * 60_000;
+    const performStart = warmupStart + w * 60_000;
+    out.push({
+      hosted_school_id: school.id,
+      kind: "warmup",
+      label: `${school.name} — Warm-up`,
+      starts_at: new Date(warmupStart).toISOString(),
+      duration_minutes: w,
+      sort_order: i * 2,
+    });
+    out.push({
+      hosted_school_id: school.id,
+      kind: "perform",
+      label: `${school.name} — Perform`,
+      starts_at: new Date(performStart).toISOString(),
+      duration_minutes: p,
+      sort_order: i * 2 + 1,
+    });
+  });
+  return out;
+}
+
+// "Shift remaining" (I2) — the "running 20 minutes behind" one-tap fix. Given the
+// event's slots, a pivot slot id, and ±minutes, return the new starts_at for the
+// pivot AND every slot at or after it (by starts_at). Pure so the arithmetic is
+// unit-tested; the action applies the returned updates in one transaction. Slots
+// with no starts_at can't be shifted (nothing to move) and are skipped. Positive
+// pushes later, negative pulls earlier — reversible by shifting back.
+export function computeShiftRemaining(
+  slots: { id: string; starts_at: string | null }[],
+  pivotId: string,
+  deltaMinutes: number,
+): { id: string; starts_at: string }[] {
+  const pivot = slots.find((s) => s.id === pivotId);
+  if (!pivot || !pivot.starts_at) return [];
+  const threshold = new Date(pivot.starts_at).getTime();
+  const deltaMs = Math.round(deltaMinutes) * 60_000;
+  const out: { id: string; starts_at: string }[] = [];
+  for (const s of slots) {
+    if (!s.starts_at) continue;
+    const ms = new Date(s.starts_at).getTime();
+    if (Number.isNaN(ms) || ms < threshold) continue;
+    out.push({ id: s.id, starts_at: new Date(ms + deltaMs).toISOString() });
+  }
+  return out;
+}

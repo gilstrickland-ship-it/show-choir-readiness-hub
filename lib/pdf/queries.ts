@@ -1,4 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  HOSTED_SLOT_KIND_LABELS,
+  type HostedSlotKind,
+} from "@/lib/hosting";
 
 // Data loaders for the four derived documents (§6, §7, T017). Each takes a
 // Supabase client (the caller's RLS client, so tenant isolation is enforced at
@@ -470,6 +474,169 @@ export async function loadMealData(
     totalAttending,
     totalAbsent,
     absentNames,
+  };
+}
+
+// ---- Host-mode event documents (per hosted_event) --------------------------
+// Three day-of documents (master schedule, homeroom door signs, director packets)
+// all derive from one hosted event's schools + slots (Constitution VI — nothing
+// stored). One loader feeds all three; each renderer picks what it needs. NO
+// visiting-school student data exists to load — hosted_schools holds adult
+// contact + a performer COUNT only (Constitution III).
+
+export interface HostSlotData {
+  kind: HostedSlotKind;
+  kindLabel: string;
+  label: string | null;
+  schoolName: string | null;
+  startsAt: string | null;
+  durationMinutes: number | null;
+}
+export interface HostSchoolData {
+  id: string;
+  schoolName: string;
+  ensembleName: string | null;
+  directorName: string | null;
+  directorEmail: string | null;
+  directorPhone: string | null;
+  performerCount: number | null;
+  division: string | null;
+  costumeColors: string | null;
+  homeroom: string | null;
+  arrivalNotes: string | null;
+  warmupAt: string | null; // derived: first warm-up slot start for this school
+  performAt: string | null; // derived: first perform slot start for this school
+}
+export interface HostEventDocData {
+  programName: string;
+  tz: string;
+  eventName: string;
+  date: string | null; // event_date (all-day)
+  venueNotes: string | null;
+  schools: HostSchoolData[];
+  slots: HostSlotData[]; // master schedule, ordered by starts_at then sort_order
+  awardsSlots: { startsAt: string | null; label: string | null }[];
+}
+
+interface HostEventBase {
+  program_id: string;
+  name: string;
+  event_date: string | null;
+  venue_notes: string | null;
+}
+
+export async function loadHostEventDoc(
+  supabase: SupabaseClient,
+  eventId: string,
+): Promise<HostEventDocData | null> {
+  const { data: eventRow } = await supabase
+    .from("hosted_events")
+    .select("program_id, name, event_date, venue_notes")
+    .eq("id", eventId)
+    .maybeSingle();
+  const event = eventRow as HostEventBase | null;
+  if (!event) return null;
+
+  const { data: progRow } = await supabase
+    .from("programs")
+    .select("name, timezone")
+    .eq("id", event.program_id)
+    .maybeSingle();
+  const program = progRow as { name: string; timezone: string } | null;
+
+  const { data: schoolRows } = await supabase
+    .from("hosted_schools")
+    .select(
+      "id, school_name, ensemble_name, director_name, director_email, director_phone, performer_count, division, costume_colors, homeroom, arrival_notes, sort_order",
+    )
+    .eq("program_id", event.program_id)
+    .eq("hosted_event_id", eventId)
+    .order("sort_order", { ascending: true });
+  const schoolsRaw =
+    (schoolRows as {
+      id: string;
+      school_name: string;
+      ensemble_name: string | null;
+      director_name: string | null;
+      director_email: string | null;
+      director_phone: string | null;
+      performer_count: number | null;
+      division: string | null;
+      costume_colors: string | null;
+      homeroom: string | null;
+      arrival_notes: string | null;
+    }[] | null) ?? [];
+
+  const { data: slotRows } = await supabase
+    .from("hosted_slots")
+    .select("hosted_school_id, kind, label, starts_at, duration_minutes, sort_order")
+    .eq("program_id", event.program_id)
+    .eq("hosted_event_id", eventId)
+    .order("starts_at", { ascending: true, nullsFirst: false })
+    .order("sort_order", { ascending: true });
+  const slotsRaw =
+    (slotRows as {
+      hosted_school_id: string | null;
+      kind: HostedSlotKind;
+      label: string | null;
+      starts_at: string | null;
+      duration_minutes: number | null;
+    }[] | null) ?? [];
+
+  const nameById = new Map<string, string>();
+  for (const s of schoolsRaw) nameById.set(s.id, s.school_name);
+
+  // Per-school derived warm-up + perform times (first of each kind).
+  const warmupBySchool = new Map<string, string | null>();
+  const performBySchool = new Map<string, string | null>();
+  for (const slot of slotsRaw) {
+    if (!slot.hosted_school_id) continue;
+    if (slot.kind === "warmup" && !warmupBySchool.has(slot.hosted_school_id)) {
+      warmupBySchool.set(slot.hosted_school_id, slot.starts_at);
+    }
+    if (slot.kind === "perform" && !performBySchool.has(slot.hosted_school_id)) {
+      performBySchool.set(slot.hosted_school_id, slot.starts_at);
+    }
+  }
+
+  const schools: HostSchoolData[] = schoolsRaw.map((s) => ({
+    id: s.id,
+    schoolName: s.school_name,
+    ensembleName: s.ensemble_name,
+    directorName: s.director_name,
+    directorEmail: s.director_email,
+    directorPhone: s.director_phone,
+    performerCount: s.performer_count,
+    division: s.division,
+    costumeColors: s.costume_colors,
+    homeroom: s.homeroom,
+    arrivalNotes: s.arrival_notes,
+    warmupAt: warmupBySchool.get(s.id) ?? null,
+    performAt: performBySchool.get(s.id) ?? null,
+  }));
+
+  const slots: HostSlotData[] = slotsRaw.map((slot) => ({
+    kind: slot.kind,
+    kindLabel: HOSTED_SLOT_KIND_LABELS[slot.kind],
+    label: slot.label,
+    schoolName: slot.hosted_school_id ? nameById.get(slot.hosted_school_id) ?? null : null,
+    startsAt: slot.starts_at,
+    durationMinutes: slot.duration_minutes,
+  }));
+
+  const awardsSlots = slotsRaw
+    .filter((s) => s.kind === "awards")
+    .map((s) => ({ startsAt: s.starts_at, label: s.label }));
+
+  return {
+    programName: program?.name ?? "",
+    tz: program?.timezone ?? "UTC",
+    eventName: event.name,
+    date: event.event_date,
+    venueNotes: event.venue_notes,
+    schools,
+    slots,
+    awardsSlots,
   };
 }
 
