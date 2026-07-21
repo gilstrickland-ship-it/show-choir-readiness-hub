@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
+import { EVENTS_WRITE_ROLES } from "@/lib/events";
+import { TRAVEL_WRITE_ROLES } from "@/lib/travel";
 import { loadCompReadiness } from "@/lib/readiness";
 import { activeShareLinks, seasonCalendarUrl } from "@/lib/tokens";
 import { regenerateSeasonCalendarShareLink } from "./actions";
@@ -429,6 +431,16 @@ export default async function SeasonPage({
   // shifts" link only shows when both are on (otherwise it would 404).
   const canFillShifts = flags.shifts && flags.comms && SHIFT_WRITE_ROLES.includes(role);
 
+  // Per-kind add affordances — the season spine absorbs the module lists, so it
+  // must also be where a writer starts a new item. Each is gated by its flag AND
+  // its module's write-role set (re-checked server-side in each create action);
+  // a role with no write access sees no add buttons (the pills/rows still browse).
+  // Links target the #add anchor on each module's create form.
+  const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
+  const canAddEvent = flags.events && EVENTS_WRITE_ROLES.includes(role);
+  const canAddTrip = flags.travel && TRAVEL_WRITE_ROLES.includes(role);
+  const canAddAny = canAddComp || canAddEvent || canAddTrip;
+
   return (
     <section className="season">
       <div className="season-head">
@@ -437,9 +449,19 @@ export default async function SeasonPage({
           <h1 className="season-h1">The Season</h1>
         </div>
         <div className="season-actions">
-          {flags.competitions && (
-            <Link href={`${base}/competitions`} className="button-link accent">
-              + Add to season
+          {canAddComp && (
+            <Link href={`${base}/competitions#add`} className="button-link accent">
+              + Competition
+            </Link>
+          )}
+          {canAddEvent && (
+            <Link href={`${base}/events#add`} className="button-link secondary">
+              + Event
+            </Link>
+          )}
+          {canAddTrip && (
+            <Link href={`${base}/travel#add`} className="button-link secondary">
+              + Trip
             </Link>
           )}
           {flags.archive && (
@@ -542,7 +564,26 @@ export default async function SeasonPage({
       )}
 
       {groups.length === 0 ? (
-        <p className="muted">Nothing on the season calendar yet.</p>
+        <p className="muted">
+          Nothing on the season calendar yet.
+          {canAddAny && (
+            <>
+              {" "}
+              Add{" "}
+              {canAddComp && (
+                <Link href={`${base}/competitions#add`}>a competition</Link>
+              )}
+              {canAddComp && (canAddEvent || canAddTrip) &&
+                (canAddEvent && canAddTrip ? ", " : " or ")}
+              {canAddEvent && (
+                <Link href={`${base}/events#add`}>an event</Link>
+              )}
+              {canAddEvent && canAddTrip && " or "}
+              {canAddTrip && <Link href={`${base}/travel#add`}>a trip</Link>}
+              {" to get started."}
+            </>
+          )}
+        </p>
       ) : (
         <section className="season-months">
           {groups.map((g) => (
@@ -647,7 +688,10 @@ export default async function SeasonPage({
                           Plan
                         </Link>
                       ) : it.kind === "event" ? (
-                        <Link className="season-link" href={`${base}/events`}>
+                        <Link
+                          className="season-link"
+                          href={`${base}/events?view=month&ref=${it.dateKey}`}
+                        >
                           View
                         </Link>
                       ) : (

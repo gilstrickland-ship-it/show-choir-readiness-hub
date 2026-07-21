@@ -206,7 +206,12 @@ export default async function CommsPage({
         )}
       </div>
 
-      <CommsTabs slug={slug} active="digest" shiftsEnabled={flags.shifts} />
+      <CommsTabs
+        slug={slug}
+        active="digest"
+        shiftsEnabled={flags.shifts}
+        digestEnabled={flags.digest}
+      />
 
       {sp.approved && <p className="alert-ok">Approved. You can send it now.</p>}
       {sp.discarded && <p className="alert-ok">Draft discarded.</p>}
@@ -235,9 +240,31 @@ export default async function CommsPage({
 
       <div className="comms-body">
         <section className="comms-main">
+          {/* Digest off (program tier prep): the workspace cards are replaced by a
+              compact not-enabled card that points at announcements as the sending
+              tool. Comms is a soft gate — existing drafts stay reviewable in the
+              workspace — so we don't 404, we just stop advertising the draft flow. */}
+          {!flags.digest && (
+            <div className="digest-card empty">
+              <h2>Weekly digest</h2>
+              <p className="muted">
+                The weekly digest isn&apos;t enabled for this program. To reach
+                families now, send an announcement — it goes out immediately.
+              </p>
+              {canAnnounce && (
+                <Link
+                  href={`/${slug}/comms/announcements`}
+                  className="button-link secondary"
+                >
+                  + New announcement
+                </Link>
+              )}
+            </div>
+          )}
+
           {/* Digest draft card — the approval gate (Constitution IV). Only a draft
               renders it; the Approve/Discard forms are the existing actions. */}
-          {draft && (
+          {flags.digest && draft && (
             <div className="digest-card">
               <div className="digest-card-head">
                 <h2>Weekly digest — draft</h2>
@@ -280,7 +307,7 @@ export default async function CommsPage({
           )}
 
           {/* Approved but not yet sent — the send gate. */}
-          {approved && (
+          {flags.digest && approved && (
             <div className="digest-card">
               <div className="digest-card-head">
                 <h2>Weekly digest — approved</h2>
@@ -309,7 +336,7 @@ export default async function CommsPage({
             </div>
           )}
 
-          {!draft && !approved && (
+          {flags.digest && !draft && !approved && (
             <div className="digest-card empty">
               <h2>Weekly digest</h2>
               <p className="muted">

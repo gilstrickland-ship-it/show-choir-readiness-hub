@@ -105,3 +105,9 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 - [X] T058 Role journey panel on Today (director/admin, treasurer, costume manager, board orientation), full/pill/dismissed states, Getting-started reopen links, setup-guide absorbed with e2e contract intact.
 - [X] T059 Intro strips on the eight complex surfaces with "?" re-triggers (?help=1), per-member Got-it state.
 - [X] T060 Parent welcome card (token_events-derived first visits, ?welcome=1 re-show, footer link), e2e reconciled.
+
+## Phase 13 — Platform review round 3 (July 2026)
+
+- [X] T061 Season add-affordances: per-kind "+ Competition / + Event / + Trip" (flag+role gated), #add anchors on the three module create forms, actionable empty state, month-targeted event View links.
+- [X] T062 Trip editing: updateTrip action + Edit-trip popover on trip detail (name/dates/overnight/linked comp), room-safety guard when clearing overnight.
+- [X] T063 Review polish: living-itinerary publish confirm copy, digest-off Comms hub (Overview tab + not-enabled card), friendly delivery-status labels, travel overnight checkbox alignment, events view-tab a11y names, parent home-time estimate suppressed without an end anchor.

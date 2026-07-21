@@ -201,7 +201,7 @@ export default async function CompetitionsPage({
 
       {canWrite && season && ensembles.length === 0 && (
         <div className="stack">
-          <h2>Add a competition</h2>
+          <h2 id="add">Add a competition</h2>
           <p className="muted">
             A competition attaches to an ensemble so it can seed attendance, meals,
             and checkout.{" "}
@@ -212,7 +212,7 @@ export default async function CompetitionsPage({
 
       {canWrite && season && ensembles.length > 0 && (
         <>
-          <h2>Add a competition</h2>
+          <h2 id="add">Add a competition</h2>
           <form action={createCompetition} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />

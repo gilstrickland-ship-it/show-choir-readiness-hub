@@ -64,6 +64,61 @@ export async function createTrip(formData: FormData): Promise<void> {
   redirect(`/${slug}/travel/${data.id}`);
 }
 
+export async function updateTrip(formData: FormData): Promise<void> {
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const tripId = str(formData, "tripId");
+  await requireRole(programId, TRAVEL_WRITE_ROLES);
+
+  const name = str(formData, "name");
+  if (!name) redirect(`/${slug}/travel/${tripId}?error=name`);
+
+  const startsOn = nullable(formData, "starts_on");
+  const endsOn = nullable(formData, "ends_on");
+  // Date sanity: a trip can't end before it starts. createTrip predates this
+  // guard; it lives here where an editor can flip the two dates by hand.
+  if (startsOn && endsOn && endsOn < startsOn) {
+    redirect(`/${slug}/travel/${tripId}?error=dates`);
+  }
+
+  const isOvernight = str(formData, "is_overnight") === "on";
+
+  const supabase = await createClient();
+
+  // Room-safety: rooms are only meaningful on an overnight trip. Turning
+  // overnight OFF while rooms exist would strand them (they'd stop rendering but
+  // keep their rider assignments), so reject and tell the director to clear the
+  // rooms first rather than silently orphaning them.
+  if (!isOvernight) {
+    const { count: roomCount } = await supabase
+      .from("travel_groups")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", programId)
+      .eq("trip_id", tripId)
+      .eq("kind", "room");
+    if ((roomCount ?? 0) > 0) {
+      redirect(`/${slug}/travel/${tripId}?error=overnight_rooms`);
+    }
+  }
+
+  const { error } = await supabase
+    .from("trips")
+    .update({
+      name,
+      starts_on: startsOn,
+      ends_on: endsOn,
+      is_overnight: isOvernight,
+      competition_id: nullable(formData, "competition_id"),
+    })
+    .eq("id", tripId)
+    .eq("program_id", programId);
+
+  if (error) redirect(`/${slug}/travel/${tripId}?error=save`);
+
+  revalidatePath(`/${slug}/travel/${tripId}`);
+  redirect(`/${slug}/travel/${tripId}`);
+}
+
 export async function deleteTrip(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");

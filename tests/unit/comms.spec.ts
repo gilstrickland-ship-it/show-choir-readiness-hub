@@ -12,6 +12,7 @@ import {
   computeRecipients,
   bodyToHtml,
   announcementHtml,
+  sendStatusLabel,
 } from "@/lib/comms";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -120,5 +121,19 @@ describe("bodyToHtml + announcementHtml", () => {
     expect(html).toContain('href="https://x/t/tok/absence"');
     expect(html).toContain('href="https://x/t/tok/unsubscribe"');
     expect(html).toContain("<p>Weekly note</p>");
+  });
+});
+
+describe("sendStatusLabel", () => {
+  test("maps the send-pipeline statuses to friendly labels", () => {
+    expect(sendStatusLabel("sent")).toBe("Sent");
+    expect(sendStatusLabel("skipped_no_key")).toBe("Skipped — email not set up");
+    expect(sendStatusLabel("bounced")).toBe("Bounced");
+    expect(sendStatusLabel("failed")).toBe("Failed");
+  });
+
+  test("unknown statuses fall back to a de-underscored form (no raw token leaks)", () => {
+    expect(sendStatusLabel("queued_retry")).toBe("queued retry");
+    expect(sendStatusLabel("weird")).toBe("weird");
   });
 });

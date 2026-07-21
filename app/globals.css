@@ -345,6 +345,15 @@
     align-items: flex-end;
   }
 
+  /* A checkbox + its text on one line, vertically centered — the base `label`
+     rule is flex-column (label above field), which leaves a bare checkbox
+     stranded above its text. This keeps the two together for boolean toggles. */
+  label.checkbox-inline {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
   .muted {
     color: var(--muted-ink);
     font-size: 0.88rem;

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatDateInTz, formatTimeInTz, zonedWallToUtc } from "@/lib/datetime";
+import { itineraryAnchors } from "@/lib/itinerary-days";
 import { TokenFooter } from "./parts";
 
 // Guardian-token home — the family "poster" (§8a, §10). A dark hero counts down
@@ -208,17 +209,10 @@ export default async function TokenHomePage({
                   kind: string;
                 }[]
               | null) ?? [];
-          const depart = rows.find((r) => r.kind === "depart" && r.starts_at);
-          callTime =
-            depart?.starts_at ??
-            rows.find((r) => r.starts_at)?.starts_at ??
-            null;
-          returnTime =
-            rows
-              .map((r) => r.ends_at ?? r.starts_at)
-              .filter((v): v is string => !!v)
-              .sort()
-              .at(-1) ?? null;
+          // "home ~X" only shows with a real end anchor — see itineraryAnchors.
+          const anchors = itineraryAnchors(rows);
+          callTime = anchors.callTime;
+          returnTime = anchors.homeEstimate;
         }
 
         nextComp = {

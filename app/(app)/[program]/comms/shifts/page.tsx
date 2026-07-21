@@ -66,7 +66,7 @@ export default async function ShiftsPage({
   }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
   requireFlag(program, "shifts");
   if (!COMMS_ROLES.includes(role)) {
@@ -180,7 +180,12 @@ export default async function ShiftsPage({
         </div>
       </div>
 
-      <CommsTabs slug={slug} active="shifts" shiftsEnabled />
+      <CommsTabs
+        slug={slug}
+        active="shifts"
+        shiftsEnabled
+        digestEnabled={flags.digest}
+      />
 
       {sp.created && <p className="alert-ok">Created {sp.created} shift(s).</p>}
       {sp.saved && <p className="alert-ok">Shift saved.</p>}

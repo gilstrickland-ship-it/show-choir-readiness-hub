@@ -27,6 +27,7 @@ import {
   addChaperone,
   removeChaperone,
   deleteTrip,
+  updateTrip,
 } from "../actions";
 import { IntroStrip, HelpDot } from "../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
@@ -140,6 +141,19 @@ export default async function TripPage({
     compName = (c as { name: string } | null)?.name ?? null;
     compEnsembleId =
       (c as { ensemble_id: string | null } | null)?.ensemble_id ?? null;
+  }
+
+  // This season's competitions for the Edit-trip linker (mirrors the create form
+  // on travel/page.tsx). Writers only — the read-only view has no linker.
+  let seasonComps: { id: string; name: string }[] = [];
+  if (canWrite) {
+    const { data: compRows } = await supabase
+      .from("competitions")
+      .select("id, name")
+      .eq("program_id", program.id)
+      .eq("season_id", trip.season_id)
+      .order("date", { ascending: true, nullsFirst: false });
+    seasonComps = (compRows as { id: string; name: string }[] | null) ?? [];
   }
 
   // Groups for this trip.
@@ -449,6 +463,73 @@ export default async function TripPage({
         ) : null}
       </p>
 
+      {/* Edit trip (name / dates / overnight / linked competition) — writers
+          only, in the two-tap details idiom used across this page. Pre-filled
+          with the current values; the competition select mirrors the create
+          form on travel/page.tsx. The overnight toggle is room-safe: the action
+          rejects clearing it while rooms still exist. */}
+      {canWrite && (
+        <details className="stack">
+          <summary className="muted">Edit trip</summary>
+          <form
+            action={updateTrip}
+            className="stack"
+            style={{ gap: "0.5rem", marginTop: "0.5rem" }}
+          >
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="tripId" value={tripId} />
+            <label>
+              Name
+              <input type="text" name="name" defaultValue={trip.name} required />
+            </label>
+            <div className="row-inline">
+              <label>
+                Starts
+                <input
+                  type="date"
+                  name="starts_on"
+                  defaultValue={trip.starts_on ?? ""}
+                />
+              </label>
+              <label>
+                Ends
+                <input
+                  type="date"
+                  name="ends_on"
+                  defaultValue={trip.ends_on ?? ""}
+                />
+              </label>
+              <label className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  name="is_overnight"
+                  defaultChecked={trip.is_overnight}
+                />{" "}
+                Overnight (rooms + buses)
+              </label>
+            </div>
+            <label>
+              Competition (optional)
+              <select
+                name="competition_id"
+                defaultValue={trip.competition_id ?? ""}
+              >
+                <option value="">— none (banquet, tour, standalone)</option>
+                {seasonComps.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="submit" className="secondary">
+              Save trip
+            </button>
+          </form>
+        </details>
+      )}
+
       {/* Derived-document downloads (§6, VI) */}
       <p className="row-inline">
         <a href={`/api/pdf/bus?trip=${trip.id}`} target="_blank" rel="noopener">
@@ -466,6 +547,22 @@ export default async function TripPage({
       </p>
 
       {conflictMsg && <p className="alert-error">{conflictMsg}</p>}
+      {sp.error === "name" && (
+        <p className="alert-error">A trip needs a name.</p>
+      )}
+      {sp.error === "dates" && (
+        <p className="alert-error">
+          A trip can&apos;t end before it starts.
+        </p>
+      )}
+      {sp.error === "overnight_rooms" && (
+        <p className="alert-error">
+          Remove this trip&apos;s rooms before making it a day trip.
+        </p>
+      )}
+      {sp.error === "save" && (
+        <p className="alert-error">Couldn&apos;t save the trip. Try again.</p>
+      )}
       {sp.error === "assign" && (
         <p className="alert-error">
           Couldn&apos;t place that student. Try again.

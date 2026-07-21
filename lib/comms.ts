@@ -97,6 +97,22 @@ function escapeHtml(s: string): string {
 // Assemble the full HTML email: body + the three canonical footer links (§8a)
 // plus a per-recipient Unsubscribe link (CAN-SPAM). Every guardian-facing email
 // footers through here, so the unsubscribe affordance is universal and visible.
+// Friendly labels for the per-recipient send statuses the send pipeline writes
+// (lib/comms-send.ts: sent / skipped_no_key / failed) plus deliverability states
+// a webhook may later stamp (bounced). Staff-facing history tables print these
+// instead of the raw enum strings. Unknown/new statuses fall back to a
+// de-underscored form so nothing leaks a raw token like "skipped_no_key".
+const SEND_STATUS_LABELS: Record<string, string> = {
+  sent: "Sent",
+  skipped_no_key: "Skipped — email not set up",
+  bounced: "Bounced",
+  failed: "Failed",
+};
+
+export function sendStatusLabel(status: string): string {
+  return SEND_STATUS_LABELS[status] ?? status.replace(/_/g, " ");
+}
+
 export function announcementHtml(args: {
   bodyMd: string;
   links: GuardianLinks;

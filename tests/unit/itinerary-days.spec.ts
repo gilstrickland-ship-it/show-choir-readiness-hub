@@ -11,6 +11,7 @@
 import { describe, test, expect } from "vitest";
 import {
   changedItemsSincePublish,
+  itineraryAnchors,
   PUBLISH_JITTER_MS,
 } from "@/lib/itinerary-days";
 
@@ -103,5 +104,59 @@ describe("changedItemsSincePublish", () => {
     expect(
       changedItemsSincePublish([{ updated_at: at }], PUBLISHED_AT, 1_000),
     ).toEqual({ count: 1, lastChangedAt: at });
+  });
+});
+
+// ============================================================================
+// Parent-poster time anchors (§8a, §10). "home ~X" must only show with a real
+// end anchor — otherwise it either has no basis or just mirrors the call time,
+// which reads as misinformation on the family page.
+// ============================================================================
+
+describe("itineraryAnchors", () => {
+  const t = (s: string) => `2026-04-10T${s}:00-00:00`;
+
+  test("call time prefers the depart item's start", () => {
+    const { callTime } = itineraryAnchors([
+      { starts_at: t("09:00"), ends_at: null, kind: "arrive" },
+      { starts_at: t("07:00"), ends_at: null, kind: "depart" },
+    ]);
+    expect(callTime).toBe(t("07:00"));
+  });
+
+  test("falls back to the earliest start when there's no depart item", () => {
+    const { callTime } = itineraryAnchors([
+      { starts_at: t("08:00"), ends_at: null, kind: "warmup" },
+      { starts_at: t("10:00"), ends_at: null, kind: "perform" },
+    ]);
+    expect(callTime).toBe(t("08:00"));
+  });
+
+  test("home estimate is the latest genuine end time", () => {
+    const { homeEstimate } = itineraryAnchors([
+      { starts_at: t("07:00"), ends_at: t("08:00"), kind: "depart" },
+      { starts_at: t("10:00"), ends_at: t("21:30"), kind: "return" },
+    ]);
+    expect(homeEstimate).toBe(t("21:30"));
+  });
+
+  test("no item has an end time → no home estimate (suppressed)", () => {
+    const { homeEstimate } = itineraryAnchors([
+      { starts_at: t("07:00"), ends_at: null, kind: "depart" },
+      { starts_at: t("10:00"), ends_at: null, kind: "perform" },
+    ]);
+    expect(homeEstimate).toBeNull();
+  });
+
+  test("end anchor collapsing to the call time → suppressed (no misleading echo)", () => {
+    const { callTime, homeEstimate } = itineraryAnchors([
+      { starts_at: t("07:00"), ends_at: t("07:00"), kind: "depart" },
+    ]);
+    expect(callTime).toBe(t("07:00"));
+    expect(homeEstimate).toBeNull();
+  });
+
+  test("empty itinerary → both null", () => {
+    expect(itineraryAnchors([])).toEqual({ callTime: null, homeEstimate: null });
   });
 });
