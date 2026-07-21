@@ -91,3 +91,4 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 
 - [X] T048 Wave F: deliverability runbook + Settings email-health card (F1); Charms/CutTime header synonym packs + grade→grad-year helper + import hint + landing migration card (F2).
 - [X] T049 Wave G: season_calendar share links + subscribable staff ICS feed + all-day ICS support (G1); day-grouped itineraries (editor, parent, packet PDF) + multi-day trip schedule view (G2).
+- [X] T050 Wave H: travel bulk-assignment flow — fill-target sticky bar + tap-chip queue (querystring-driven, server-rendered), existing flows preserved.

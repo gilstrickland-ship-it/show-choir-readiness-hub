@@ -89,6 +89,7 @@ export default async function TripPage({
   params: Promise<{ program: string; tripId: string }>;
   searchParams: Promise<{
     sel?: string;
+    fill?: string;
     conflict?: string;
     conflictKind?: string;
     error?: string;
@@ -235,6 +236,27 @@ export default async function TripPage({
   const selId = sp.sel && studentById.has(sp.sel) ? sp.sel : null;
   const selStudent = selId ? studentById.get(selId)! : null;
   const selNeeds = selId ? neededOf(selId) : [];
+
+  // H1 bulk-fill flow: `?fill=<groupId>` makes one group the *active target*.
+  // A sticky bar names it and the unassigned queue becomes big tap-chips — one
+  // tap places a rider and the page re-renders (server data) with the bar still
+  // up. Writers only; ignore a stale/foreign id. The chip list offers only riders
+  // who still need this group's kind, so a tap never trips the one-room-one-bus
+  // guard. Counts re-derive from `assignmentsByGroup` every render (no client
+  // state that can lie); over-capacity warns, never blocks.
+  const fillGroup =
+    canWrite && sp.fill ? (groups.find((g) => g.id === sp.fill) ?? null) : null;
+  const fillKind = fillGroup?.kind ?? null;
+  const fillMembers = fillGroup
+    ? (assignmentsByGroup.get(fillGroup.id) ?? [])
+    : [];
+  const fillCount = fillMembers.length;
+  const fillOver =
+    fillGroup?.capacity != null && fillCount > fillGroup.capacity;
+  const fillChips =
+    fillGroup && fillKind
+      ? queue.filter((s) => neededOf(s.id).includes(fillKind))
+      : [];
 
   // Kinds/sections to render: buses always (writers can add); rooms when overnight
   // or any room group already exists.
@@ -422,6 +444,63 @@ export default async function TripPage({
         </section>
       )}
 
+      {/* ============ H1: bulk-fill tap-chip queue (active target) ============ */}
+      {/* Drag-free bus/room loading for phones: with a target picked, the whole
+          unassigned queue (for that kind) becomes big tap-chips. One tap = one
+          rider placed; the page re-renders from server data and the sticky bar
+          below keeps the target up. Renders for every viewport (great on desktop
+          too) and sits alongside — not replacing — the two-pane flow. */}
+      {fillGroup && (
+        <section className="travel-fill-queue stack">
+          <h2>
+            Tap a name to add to {fillGroup.label}
+          </h2>
+          {fillChips.length === 0 ? (
+            <p className="alert-ok">
+              Everyone who still needs a{" "}
+              {GROUP_KIND_LABEL[fillGroup.kind].toLowerCase()} is placed.
+            </p>
+          ) : (
+            <div className="travel-chip-grid">
+              {fillChips.map((s) => {
+                const isAbsent = absent.has(s.id);
+                const needs = neededOf(s.id);
+                return (
+                  <form
+                    key={s.id}
+                    action={assignStudent}
+                    className="travel-chip-form"
+                  >
+                    <input type="hidden" name="programId" value={program.id} />
+                    <input type="hidden" name="slug" value={slug} />
+                    <input type="hidden" name="tripId" value={tripId} />
+                    <input type="hidden" name="travelGroupId" value={fillGroup.id} />
+                    <input type="hidden" name="studentId" value={s.id} />
+                    <input type="hidden" name="kind" value={fillGroup.kind} />
+                    <input type="hidden" name="fill" value={fillGroup.id} />
+                    <button
+                      type="submit"
+                      className="travel-chip"
+                      style={{ opacity: isAbsent ? 0.6 : 1 }}
+                    >
+                      <span className="travel-chip-name">{studentName(s)}</span>
+                      <span className="travel-chip-badges">
+                        {isAbsent && <span className="chip danger">absent</span>}
+                        {needs.map((k) => (
+                          <span key={k} className="chip">
+                            needs {GROUP_KIND_LABEL[k].toLowerCase()}
+                          </span>
+                        ))}
+                      </span>
+                    </button>
+                  </form>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
       <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", width: "100%" }}>
         {/* ==================== LEFT: unassigned queue ==================== */}
         <div className="stack" style={{ flex: "1 1 16rem", minWidth: "14rem" }}>
@@ -514,6 +593,7 @@ export default async function TripPage({
                       ? (studentKinds.get(selId)?.has(kind) ?? false)
                       : false;
                     const canAssignHere = selStudent != null && selNeeds.includes(kind);
+                    const isFillTarget = fillGroup?.id === g.id;
                     return (
                       <div
                         key={g.id}
@@ -521,7 +601,13 @@ export default async function TripPage({
                         style={{
                           flex: "1 1 15rem",
                           minWidth: "13rem",
-                          border: `1px solid ${over ? "var(--warn)" : "var(--border)"}`,
+                          border: `1px solid ${
+                            isFillTarget
+                              ? "var(--accent)"
+                              : over
+                                ? "var(--warn)"
+                                : "var(--border)"
+                          }`,
                           background: over ? "rgba(217,119,6,0.08)" : undefined,
                           borderRadius: 8,
                           padding: "0.75rem",
@@ -536,6 +622,26 @@ export default async function TripPage({
                           </span>
                         </div>
                         {g.notes && <p className="muted">{g.notes}</p>}
+
+                        {/* H1: fill affordance — make this group the active target.
+                            Tapping switches the sticky bar + chip queue to it;
+                            when it's already active, "Done" drops ?fill=. */}
+                        {canWrite &&
+                          (isFillTarget ? (
+                            <Link
+                              href={`/${slug}/travel/${tripId}`}
+                              className="travel-fill-toggle is-active"
+                            >
+                              Filling this {GROUP_KIND_LABEL[kind].toLowerCase()} — Done
+                            </Link>
+                          ) : (
+                            <Link
+                              href={`/${slug}/travel/${tripId}?fill=${g.id}`}
+                              className="travel-fill-toggle"
+                            >
+                              Fill this {GROUP_KIND_LABEL[kind].toLowerCase()}
+                            </Link>
+                          ))}
 
                         {/* Members */}
                         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -798,6 +904,29 @@ export default async function TripPage({
             </button>
           </form>
         </details>
+      )}
+
+      {/* H1: sticky target bar — pinned to the viewport bottom while a group is
+          being filled. Styled like the mobile tab bar. Count/capacity re-derive
+          from server data every render; over-capacity warns (never blocks). The
+          "Done" control is a real link that drops ?fill= and returns to browse. */}
+      {fillGroup && (
+        <div className="travel-fill-bar">
+          <span className="travel-fill-bar-label">
+            Filling <strong>{fillGroup.label}</strong>
+            <span className={fillOver ? "chip danger" : "chip"}>
+              {fillCount}
+              {fillGroup.capacity != null ? ` / ${fillGroup.capacity}` : ""}
+              {fillOver ? " over" : ""}
+            </span>
+          </span>
+          <Link
+            href={`/${slug}/travel/${tripId}`}
+            className="travel-fill-bar-done"
+          >
+            Done
+          </Link>
+        </div>
       )}
     </section>
   );

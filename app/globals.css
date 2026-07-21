@@ -3528,10 +3528,156 @@
     display: none;
   }
 
+  /* ---------------- Travel bulk-fill (H1) ---------------- */
+  /* Drag-free bus/room loading: pick a target, then tap names to add them.
+     A sticky bar names the target; the queue becomes big tap-chips. Sized for
+     thumbs (44px+ targets) and works on every viewport. */
+
+  .travel-fill-toggle {
+    align-self: flex-start;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-pill);
+    background: var(--paper);
+    color: var(--accent);
+    font-size: 0.82rem;
+    font-weight: 650;
+    text-decoration: none;
+    line-height: 1.2;
+  }
+
+  .travel-fill-toggle:hover {
+    background: var(--accent-soft);
+    text-decoration: none;
+  }
+
+  .travel-fill-toggle.is-active {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+  }
+
+  .travel-fill-queue {
+    width: 100%;
+    padding: 0.9rem;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-m);
+    background: var(--accent-soft);
+  }
+
+  .travel-chip-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .travel-chip-form {
+    margin: 0;
+  }
+
+  .travel-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+    min-height: 44px;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--line-strong, var(--border));
+    border-radius: var(--radius-m);
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--dur) var(--ease),
+      background var(--dur) var(--ease);
+  }
+
+  .travel-chip:hover {
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+
+  .travel-chip:active {
+    background: var(--accent-soft);
+  }
+
+  .travel-chip-name {
+    font-size: 1rem;
+    font-weight: 650;
+  }
+
+  .travel-chip-badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .travel-fill-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 0.7rem 1rem;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-m);
+    background: color-mix(in srgb, var(--paper) 94%, transparent);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-2);
+  }
+
+  .travel-fill-bar-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+  }
+
+  .travel-fill-bar-label .chip {
+    margin: 0;
+  }
+
+  .travel-fill-bar-done {
+    flex: none;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 1.2rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .travel-fill-bar-done:hover {
+    background: var(--accent-strong);
+    text-decoration: none;
+  }
+
   @media (max-width: 760px) {
     /* The bottom tab bar replaces the horizontal top nav on phones. */
     .shell-nav {
       display: none;
+    }
+
+    /* H1: lift the sticky fill bar clear of the fixed bottom tab bar, and let
+       each tap-chip span the row so it's a fat, unmissable thumb target. */
+    .travel-fill-bar {
+      bottom: 4.75rem;
+      z-index: 39;
+    }
+
+    .travel-chip-grid {
+      flex-direction: column;
+    }
+
+    .travel-chip {
+      width: 100%;
     }
 
     .shell-header {
