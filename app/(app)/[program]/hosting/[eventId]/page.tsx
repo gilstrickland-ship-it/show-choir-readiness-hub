@@ -19,10 +19,12 @@ import {
   NO_HEALTH_LABEL,
   DEFAULT_WARMUP_MINUTES,
   DEFAULT_PERFORM_MINUTES,
+  formatHostedDateRange,
   type HostedEventRow,
   type HostedSchoolRow,
   type HostedSlotRow,
 } from "@/lib/hosting";
+import { groupItemsByDay } from "@/lib/itinerary-days";
 import {
   updateHostedEvent,
   addHostedSchool,
@@ -101,7 +103,7 @@ export default async function HostingEventPage({
   const { data: eventData } = await supabase
     .from("hosted_events")
     .select(
-      "id, program_id, season_id, name, event_date, venue_notes, host_contact, status, created_at, updated_at, seasons(label, archived_at)",
+      "id, program_id, season_id, name, event_date, end_date, venue_notes, host_contact, status, created_at, updated_at, seasons(label, archived_at)",
     )
     .eq("id", eventId)
     .eq("program_id", program.id)
@@ -160,9 +162,111 @@ export default async function HostingEventPage({
   const confirmReplace = sp.confirm === "replace" && canWrite;
 
   const statusLabel = HOSTED_EVENT_STATUS_LABELS[event.status];
-  const dateStr = event.event_date
-    ? formatDateInTz(`${event.event_date}T12:00:00Z`, tz)
-    : "No date set";
+  const dateStr =
+    formatHostedDateRange(event.event_date, event.end_date, tz) || "No date set";
+  // The invitational spans more than one day (Wave N) — drives day-grouped slots
+  // and the per-day generate hint. end_date is normalized to null when single-day.
+  const eventMultiDay = event.end_date != null;
+
+  // Group the schedule under day headers only when the slots themselves span more
+  // than one program-tz calendar day (Wave N) — the same threshold as the
+  // itinerary editor. A single-day schedule renders flat, exactly as before.
+  const slotDays = groupItemsByDay(slots, tz, (s) => s.starts_at);
+
+  // One schedule row — shared by the flat and day-grouped layouts (Wave N), so the
+  // day headers wrap identical rows. Closes over the writer/edit context.
+  const renderSlot = (slot: HostedSlotRow) => (
+    <div className="hosting-slot-row" key={slot.id}>
+      <span className="hosting-slot-time">
+        {slot.starts_at ? formatTimeInTz(slot.starts_at, tz) : "—"}
+      </span>
+      <span className="kind-tag hosting">
+        {HOSTED_SLOT_KIND_LABELS[slot.kind]}
+      </span>
+      <span className="hosting-slot-body">
+        <strong>
+          {slot.label ??
+            (slot.hosted_school_id
+              ? schoolName.get(slot.hosted_school_id)
+              : null) ??
+            HOSTED_SLOT_KIND_LABELS[slot.kind]}
+        </strong>
+        {slot.duration_minutes != null ? (
+          <span className="muted"> · {slot.duration_minutes} min</span>
+        ) : null}
+      </span>
+      {canWrite && (
+        <div className="hosting-slot-actions">
+          <details>
+            <summary>Edit</summary>
+            <form action={updateHostedSlot} className="stack">
+              <input type="hidden" name="programId" value={program.id} />
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="eventId" value={eventId} />
+              <input type="hidden" name="slotId" value={slot.id} />
+              <input type="hidden" name="tz" value={tz} />
+              <SlotFields slot={slot} schools={schools} tz={tz} />
+              <button type="submit">Save slot</button>
+            </form>
+            {/* Shift remaining — this slot + every later slot that day. */}
+            <form
+              action={shiftRemainingSlots}
+              className="row-inline hosting-shift"
+            >
+              <input type="hidden" name="programId" value={program.id} />
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="eventId" value={eventId} />
+              <input type="hidden" name="slotId" value={slot.id} />
+              <input type="hidden" name="tz" value={tz} />
+              <label>
+                Shift this + later slots by (min)
+                <input
+                  type="number"
+                  name="delta_minutes"
+                  step="1"
+                  placeholder="-5"
+                  className="num"
+                />
+              </label>
+              <button type="submit" className="secondary">
+                Shift remaining
+              </button>
+            </form>
+            {eventMultiDay && (
+              <p className="muted">
+                Moves this slot and every later slot that day — the next day
+                stays put.
+              </p>
+            )}
+            {confirmDeleteSlot === slot.id ? (
+              <div className="confirm-box stack">
+                <p>Delete this slot? It&apos;s removed from the schedule.</p>
+                <form action={removeHostedSlot} className="row-inline">
+                  <input type="hidden" name="programId" value={program.id} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="eventId" value={eventId} />
+                  <input type="hidden" name="slotId" value={slot.id} />
+                  <button type="submit" className="danger">
+                    Confirm delete
+                  </button>
+                  <Link href={`${eventBase}#schedule`}>Cancel</Link>
+                </form>
+              </div>
+            ) : (
+              <p>
+                <Link
+                  className="linklike"
+                  href={`${eventBase}?confirm=deleteslot&slotId=${slot.id}#schedule`}
+                >
+                  Delete slot
+                </Link>
+              </p>
+            )}
+          </details>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <section className="hosting-event stack">
@@ -204,6 +308,12 @@ export default async function HostingEventPage({
       )}
       {sp.error === "name" && (
         <p className="alert-error">The invitational needs a name.</p>
+      )}
+      {sp.error === "enddate" && (
+        <p className="alert-error">
+          The last day can&apos;t be before the first day. Leave it blank for a
+          single-day event.
+        </p>
       )}
       {sp.error === "school_name" && (
         <p className="alert-error">A school needs a name.</p>
@@ -285,6 +395,14 @@ export default async function HostingEventPage({
                   type="date"
                   name="event_date"
                   defaultValue={event.event_date ?? ""}
+                />
+              </label>
+              <label>
+                Last day (optional — for events that span more than one day)
+                <input
+                  type="date"
+                  name="end_date"
+                  defaultValue={event.end_date ?? ""}
                 />
               </label>
               <label>
@@ -490,123 +608,16 @@ export default async function HostingEventPage({
             No schedule yet. Generate one from your schools, or add slots by
             hand.
           </p>
+        ) : slotDays.multiDay ? (
+          // Multi-day schedule: group rows under program-tz day headers (Wave N).
+          slotDays.groups.map((g) => (
+            <div className="stack" key={g.key || "untimed"}>
+              <h3 className="itinerary-day-heading">{g.label}</h3>
+              {g.items.map(renderSlot)}
+            </div>
+          ))
         ) : (
-          <div className="stack">
-            {slots.map((slot) => (
-              <div className="hosting-slot-row" key={slot.id}>
-                <span className="hosting-slot-time">
-                  {slot.starts_at ? formatTimeInTz(slot.starts_at, tz) : "—"}
-                </span>
-                <span className="kind-tag hosting">
-                  {HOSTED_SLOT_KIND_LABELS[slot.kind]}
-                </span>
-                <span className="hosting-slot-body">
-                  <strong>
-                    {slot.label ??
-                      (slot.hosted_school_id
-                        ? schoolName.get(slot.hosted_school_id)
-                        : null) ??
-                      HOSTED_SLOT_KIND_LABELS[slot.kind]}
-                  </strong>
-                  {slot.duration_minutes != null ? (
-                    <span className="muted">
-                      {" "}
-                      · {slot.duration_minutes} min
-                    </span>
-                  ) : null}
-                </span>
-                {canWrite && (
-                  <div className="hosting-slot-actions">
-                    <details>
-                      <summary>Edit</summary>
-                      <form action={updateHostedSlot} className="stack">
-                        <input
-                          type="hidden"
-                          name="programId"
-                          value={program.id}
-                        />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="eventId" value={eventId} />
-                        <input type="hidden" name="slotId" value={slot.id} />
-                        <input type="hidden" name="tz" value={tz} />
-                        <SlotFields slot={slot} schools={schools} tz={tz} />
-                        <button type="submit">Save slot</button>
-                      </form>
-                      {/* Shift remaining — this slot + every later slot. */}
-                      <form
-                        action={shiftRemainingSlots}
-                        className="row-inline hosting-shift"
-                      >
-                        <input
-                          type="hidden"
-                          name="programId"
-                          value={program.id}
-                        />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="eventId" value={eventId} />
-                        <input type="hidden" name="slotId" value={slot.id} />
-                        <label>
-                          Shift this + later slots by (min)
-                          <input
-                            type="number"
-                            name="delta_minutes"
-                            step="1"
-                            placeholder="-5"
-                            className="num"
-                          />
-                        </label>
-                        <button type="submit" className="secondary">
-                          Shift remaining
-                        </button>
-                      </form>
-                      {confirmDeleteSlot === slot.id ? (
-                        <div className="confirm-box stack">
-                          <p>
-                            Delete this slot? It&apos;s removed from the
-                            schedule.
-                          </p>
-                          <form
-                            action={removeHostedSlot}
-                            className="row-inline"
-                          >
-                            <input
-                              type="hidden"
-                              name="programId"
-                              value={program.id}
-                            />
-                            <input type="hidden" name="slug" value={slug} />
-                            <input
-                              type="hidden"
-                              name="eventId"
-                              value={eventId}
-                            />
-                            <input
-                              type="hidden"
-                              name="slotId"
-                              value={slot.id}
-                            />
-                            <button type="submit" className="danger">
-                              Confirm delete
-                            </button>
-                            <Link href={`${eventBase}#schedule`}>Cancel</Link>
-                          </form>
-                        </div>
-                      ) : (
-                        <p>
-                          <Link
-                            className="linklike"
-                            href={`${eventBase}?confirm=deleteslot&slotId=${slot.id}#schedule`}
-                          >
-                            Delete slot
-                          </Link>
-                        </p>
-                      )}
-                    </details>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <div className="stack">{slots.map(renderSlot)}</div>
         )}
 
         {canWrite && (
@@ -621,13 +632,16 @@ export default async function HostingEventPage({
                   eventId={eventId}
                   tz={tz}
                   replace={false}
+                  multiDay={eventMultiDay}
                 />
               </details>
             ) : confirmReplace ? (
               <div className="confirm-box stack">
                 <p>
                   Replace the current {slots.length}-slot schedule with a
-                  freshly generated one? The existing slots are deleted first.
+                  freshly generated one? This replaces the entire schedule
+                  {slotDays.multiDay ? ", all days" : ""} — the existing slots
+                  are deleted first.
                 </p>
                 <GenerateForm
                   programId={program.id}
@@ -635,6 +649,7 @@ export default async function HostingEventPage({
                   eventId={eventId}
                   tz={tz}
                   replace
+                  multiDay={eventMultiDay}
                 />
                 <p>
                   <Link href={`${eventBase}#schedule`}>Cancel</Link>
@@ -873,12 +888,14 @@ function GenerateForm({
   eventId,
   tz,
   replace,
+  multiDay,
 }: {
   programId: string;
   slug: string;
   eventId: string;
   tz: string;
   replace: boolean;
+  multiDay: boolean;
 }) {
   return (
     <form action={generateHostedSchedule} className="stack">
@@ -916,6 +933,13 @@ function GenerateForm({
         the warm-up and perform durations sets how far apart schools run, so no
         two performances overlap. Reorder or edit any slot afterward.
       </p>
+      {multiDay && (
+        <p className="muted">
+          Generate seeds one day at a time — set the start time for each day and
+          add the second day&apos;s slots by hand, or regenerate per day as you
+          plan.
+        </p>
+      )}
       <button type="submit">
         {replace ? "Replace with generated schedule" : "Generate schedule"}
       </button>
