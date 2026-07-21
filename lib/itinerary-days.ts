@@ -29,6 +29,55 @@ export interface GroupedDays<T> {
 const UNTIMED_KEY = "";
 const UNTIMED_LABEL = "Untimed";
 
+// ---------------------------------------------------------------------------
+// Living itinerary change detection (Wave C2 / K, T055). One home for the rule
+// shared by the staff editor (published itineraries are editable in place; a
+// nudge appears when times drift after publishing) and the parent itinerary
+// page (an "Updated {when}" banner). Publishing does NOT freeze the itinerary —
+// staff keep editing a live schedule on competition day — so both surfaces must
+// agree on whether families are seeing something newer than the publish moment.
+//
+// Edits within PUBLISH_JITTER_MS of publish (the publish write itself, or a
+// last-second tidy) don't count as a post-publish change; anything later does.
+// Pure (no DB, no React) so tests/unit covers it directly.
+
+// The grace window after published_at during which item edits are treated as
+// part of publishing, not a post-publish change.
+export const PUBLISH_JITTER_MS = 60_000;
+
+export interface ChangedSincePublish {
+  // How many items were genuinely edited after publish (past the jitter window).
+  count: number;
+  // ISO timestamp of the latest such edit, or null when count === 0.
+  lastChangedAt: string | null;
+}
+
+export function changedItemsSincePublish(
+  items: ReadonlyArray<{ updated_at: string | null }>,
+  publishedAt: string | null,
+  jitterMs: number = PUBLISH_JITTER_MS,
+): ChangedSincePublish {
+  const none: ChangedSincePublish = { count: 0, lastChangedAt: null };
+  if (!publishedAt) return none;
+  const base = new Date(publishedAt).getTime();
+  if (Number.isNaN(base)) return none;
+  const threshold = base + jitterMs;
+
+  let count = 0;
+  let latest = 0;
+  for (const item of items) {
+    if (!item.updated_at) continue;
+    const t = new Date(item.updated_at).getTime();
+    if (!Number.isNaN(t) && t > threshold) {
+      count += 1;
+      if (t > latest) latest = t;
+    }
+  }
+  return count > 0
+    ? { count, lastChangedAt: new Date(latest).toISOString() }
+    : none;
+}
+
 export function groupItemsByDay<T>(
   items: T[],
   tz: string,
