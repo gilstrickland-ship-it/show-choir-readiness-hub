@@ -238,3 +238,81 @@ export function lineVariance(
 ): number {
   return direction === "income" ? actual - planned : planned - actual;
 }
+
+// ---------------------------------------------------------------------------
+// Monthly reconciliation (Wave L). The standard third money control alongside
+// separation of duties + board transparency: each month, compare the ledger to
+// the bank statement and mark it reconciled. All pure — the DB row is a status
+// assertion, these helpers just bucket entries into months and compute how
+// current the books are.
+// ---------------------------------------------------------------------------
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+] as const;
+
+// A ledger entry_date is a plain calendar day ("YYYY-MM-DD", no timezone — see
+// formatDateOnly). Its month bucket is just the year-month prefix; a plain date
+// carries no instant, so converting it through a timezone would be wrong. Returns
+// "YYYY-MM", or null for anything that isn't a valid date key.
+export function monthKeyForDate(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{2})-\d{2}/.exec(dateStr);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+
+// First-of-month calendar-day key ("YYYY-MM" → "YYYY-MM-01"), the shape stored
+// in ledger_reconciliations.month.
+export function firstOfMonth(monthKey: string): string {
+  return `${monthKey}-01`;
+}
+
+// "2026-07" → "July 2026". Engine-stable month names (no Intl month lookup, which
+// varies by engine/locale) keep this pure and unit-testable. Falls back to the
+// raw key when it isn't a valid "YYYY-MM".
+export function formatMonthKey(monthKey: string | null | undefined): string {
+  if (!monthKey) return "—";
+  const m = /^(\d{4})-(\d{2})/.exec(monthKey);
+  if (!m) return String(monthKey);
+  const name = MONTH_NAMES[Number(m[2]) - 1];
+  return name ? `${name} ${m[1]}` : String(monthKey);
+}
+
+export interface LedgerMonthRow {
+  entry_date: string;
+  voided_at: string | null;
+}
+
+// Distinct months (year-month keys) that carry at least one NON-VOIDED ledger
+// entry, newest first. Drives the reconciliation card's row list — a month is
+// reconcilable only once it has real activity; voided entries never anchor a
+// month on their own (Principle V).
+export function listMonthsWithEntries(rows: readonly LedgerMonthRow[]): string[] {
+  const set = new Set<string>();
+  for (const r of rows) {
+    if (r.voided_at) continue;
+    const key = monthKeyForDate(r.entry_date);
+    if (key) set.add(key);
+  }
+  return [...set].sort((a, b) => b.localeCompare(a));
+}
+
+// The month the books are "reconciled through": the latest month-with-entries
+// such that it AND every earlier month-with-entries is marked reconciled. A gap
+// (an earlier active month left unreconciled) stops the run — the board gets an
+// honest "current through" line, never a cherry-picked latest month. Returns a
+// "YYYY-MM" key, or null when the earliest active month isn't reconciled yet.
+export function reconciledThroughMonth(
+  monthsWithEntries: readonly string[],
+  reconciledMonths: readonly string[],
+): string | null {
+  const active = [...monthsWithEntries].sort((a, b) => a.localeCompare(b));
+  const reconciled = new Set(reconciledMonths);
+  let through: string | null = null;
+  for (const m of active) {
+    if (!reconciled.has(m)) break;
+    through = m;
+  }
+  return through;
+}

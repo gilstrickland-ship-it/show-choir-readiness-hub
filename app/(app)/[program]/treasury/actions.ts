@@ -9,6 +9,7 @@ import {
   TREASURY_WRITE_ROLES,
   parseLedgerDirection,
   parseDollarsToCents,
+  firstOfMonth,
   type LedgerDirection,
 } from "@/lib/treasury";
 
@@ -218,6 +219,68 @@ export async function voidEntry(formData: FormData): Promise<void> {
     // Prefill a fresh entry from the voided one (§7 "void & re-enter").
     redirect(`${ledgerPath(slug)}?reenter=${entryId}#add-entry`);
   }
+  redirect(`${ledgerPath(slug)}?saved=1`);
+}
+
+// ---------------------------------------------------------------------------
+// Monthly reconciliation (Wave L). Marking a month reconciled asserts the ledger
+// was compared to the bank statement and matched — a status record, not money.
+// Treasurer only (requireRole, defense in depth on top of RLS). Un-marking is a
+// delete (a reconciliation is reversible, unlike a ledger entry). No update path:
+// re-marking after an un-mark just re-inserts. `monthKey` is a "YYYY-MM" bucket;
+// the row stores the first-of-month date and unique(program_id, month) makes a
+// duplicate mark a benign no-op.
+// ---------------------------------------------------------------------------
+
+const MONTH_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export async function markReconciled(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const monthKey = String(formData.get("month") ?? "").trim();
+  const actor = await requireRole(programId, TREASURY_WRITE_ROLES);
+
+  if (!MONTH_KEY_RE.test(monthKey)) {
+    redirect(`${ledgerPath(slug)}?error=reconcile`);
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("ledger_reconciliations").insert({
+    program_id: programId,
+    month: firstOfMonth(monthKey),
+    note: textOrNull(formData.get("note")),
+    reconciled_by: actor.user.id,
+  });
+  // A duplicate (already reconciled) is a benign no-op, not an error surface.
+  if (error && error.code !== "23505") {
+    redirect(`${ledgerPath(slug)}?error=reconcile`);
+  }
+
+  revalidatePath(ledgerPath(slug));
+  redirect(`${ledgerPath(slug)}?saved=1`);
+}
+
+export async function unmarkReconciled(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const monthKey = String(formData.get("month") ?? "").trim();
+  await requireRole(programId, TREASURY_WRITE_ROLES);
+
+  if (!MONTH_KEY_RE.test(monthKey)) {
+    redirect(`${ledgerPath(slug)}?error=reconcile`);
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("ledger_reconciliations")
+    .delete()
+    .eq("program_id", programId)
+    .eq("month", firstOfMonth(monthKey));
+  if (error) {
+    redirect(`${ledgerPath(slug)}?error=reconcile`);
+  }
+
+  revalidatePath(ledgerPath(slug));
   redirect(`${ledgerPath(slug)}?saved=1`);
 }
 

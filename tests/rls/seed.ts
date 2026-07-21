@@ -140,6 +140,12 @@ insert into ledger_entries (id, program_id, season_id, direction, amount_cents, 
 insert into ledger_audit (id, program_id, entry_id, action, actor) values
   ('${p.ledgerAudit}', '${p.program}', '${p.ledgerLive}', 'create', '${p.treasurer}');
 
+-- Monthly reconciliation record (Wave L): one reconciled month per program so the
+-- isolation sweep + role spec have cross-tenant rows. Treasurer-marked; a fixed
+-- past month keeps it clear of any current-month collisions the role spec inserts.
+insert into ledger_reconciliations (id, program_id, month, reconciled_by) values
+  ('${p.ledgerReconciliation}', '${p.program}', '2026-06-01', '${p.treasurer}');
+
 insert into shifts (id, program_id, season_id, competition_id, title) values
   ('${p.shift}', '${p.program}', '${p.seasonActive}', '${p.competition}', 'Concessions');
 

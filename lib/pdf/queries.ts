@@ -3,6 +3,13 @@ import {
   HOSTED_SLOT_KIND_LABELS,
   type HostedSlotKind,
 } from "@/lib/hosting";
+import {
+  listMonthsWithEntries,
+  monthKeyForDate,
+  reconciledThroughMonth,
+  formatMonthKey,
+  type LedgerMonthRow,
+} from "@/lib/treasury";
 
 // Data loaders for the four derived documents (§6, §7, T017). Each takes a
 // Supabase client (the caller's RLS client, so tenant isolation is enforced at
@@ -680,6 +687,9 @@ export interface BoardSnapshotData {
   totalActualIncome: number;
   totalPlannedExpense: number;
   totalActualExpense: number;
+  // "Reconciled through {Month YYYY}" — the latest contiguous month whose books
+  // were checked against the bank statement (Wave L). Null when none yet.
+  reconciledThroughLabel: string | null;
 }
 
 interface SeasonBase {
@@ -727,16 +737,19 @@ export async function loadBoardSnapshot(
   let uncategorizedOut = 0;
   const { data: ledgerRows } = await supabase
     .from("ledger_entries")
-    .select("direction, amount_cents, budget_line_id, voided_at")
+    .select("direction, amount_cents, budget_line_id, voided_at, entry_date")
     .eq("program_id", season.program_id)
     .eq("season_id", seasonId)
     .is("voided_at", null);
-  for (const e of (ledgerRows as {
-    direction: "in" | "out";
-    amount_cents: number;
-    budget_line_id: string | null;
-    voided_at: string | null;
-  }[] | null) ?? []) {
+  const ledger =
+    (ledgerRows as {
+      direction: "in" | "out";
+      amount_cents: number;
+      budget_line_id: string | null;
+      voided_at: string | null;
+      entry_date: string;
+    }[] | null) ?? [];
+  for (const e of ledger) {
     const amt = Number(e.amount_cents);
     if (e.budget_line_id) {
       actualByLine.set(e.budget_line_id, (actualByLine.get(e.budget_line_id) ?? 0) + amt);
@@ -745,6 +758,23 @@ export async function loadBoardSnapshot(
     } else {
       uncategorizedOut += amt;
     }
+  }
+
+  // "Reconciled through" — months (this season) with activity, matched against
+  // the program's reconciliation records (Wave L). The ledger query already
+  // excludes voided rows, so every fetched row counts toward its month.
+  const monthsWithEntries = listMonthsWithEntries(ledger as LedgerMonthRow[]);
+  let reconciledThroughLabel: string | null = null;
+  if (monthsWithEntries.length > 0) {
+    const { data: recRows } = await supabase
+      .from("ledger_reconciliations")
+      .select("month")
+      .eq("program_id", season.program_id);
+    const reconciledKeys = ((recRows as { month: string }[] | null) ?? [])
+      .map((r) => monthKeyForDate(r.month))
+      .filter((k): k is string => k !== null);
+    const through = reconciledThroughMonth(monthsWithEntries, reconciledKeys);
+    reconciledThroughLabel = through ? formatMonthKey(through) : null;
   }
 
   const incomeCategories: SnapshotCategory[] = [];
@@ -819,5 +849,6 @@ export async function loadBoardSnapshot(
     totalActualIncome: sum(incomeCategories, "actualCents") + uncategorizedIn,
     totalPlannedExpense: sum(expenseCategories, "plannedCents"),
     totalActualExpense: sum(expenseCategories, "actualCents") + uncategorizedOut,
+    reconciledThroughLabel,
   };
 }

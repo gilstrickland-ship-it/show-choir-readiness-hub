@@ -65,6 +65,7 @@ const SLOT = {
   hosted_event: 50,
   hosted_school: 51,
   hosted_slot: 52,
+  ledger_reconciliation: 53,
   // A-only archived-season extras + ledger states (slots ≥ 60)
   competition_archived: 60,
   costume_set_archived: 61,
@@ -135,6 +136,7 @@ export interface ProgramIds {
   hostedEvent: string;
   hostedSchool: string;
   hostedSlot: string;
+  ledgerReconciliation: string;
   // A-only
   competitionArchived: string;
   costumeSetArchived: string;
@@ -201,6 +203,7 @@ function build(prefix: 'a' | 'b'): ProgramIds {
     hostedEvent: g('hosted_event'),
     hostedSchool: g('hosted_school'),
     hostedSlot: g('hosted_slot'),
+    ledgerReconciliation: g('ledger_reconciliation'),
     competitionArchived: g('competition_archived'),
     costumeSetArchived: g('costume_set_archived'),
     budgetArchived: g('budget_archived'),

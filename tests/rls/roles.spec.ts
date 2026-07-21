@@ -45,6 +45,13 @@ const insertHostedEvent: [string, unknown[]] = [
   [A.program, A.seasonActive],
 ];
 
+// Reconciliation write = treasurer only (Wave L). A month distinct from the
+// seeded 2026-06 row so unique(program_id, month) never confounds the probe.
+const insertReconciliation: [string, unknown[]] = [
+  `insert into ledger_reconciliations (program_id, month, reconciled_by) values ($1, '2026-03-01', $2)`,
+  [A.program, A.treasurer],
+];
+
 describe.skipIf(rlsSkipped())('§2 role matrix', () => {
   describe('ledger write = treasurer only', () => {
     test('admin CANNOT insert ledger_entries', async () => {
@@ -108,6 +115,38 @@ describe.skipIf(rlsSkipped())('§2 role matrix', () => {
       expect(
         await board().count(`select 1 from hosted_events where program_id = $1`, [A.program]),
       ).toBeGreaterThan(0);
+    });
+  });
+
+  describe('monthly reconciliation = treasurer writes, treasury readers read (Wave L)', () => {
+    test('treasurer CAN insert a reconciliation', async () => {
+      expect(await treasurer().allows(...insertReconciliation)).toBe(true);
+    });
+
+    test('treasurer CAN delete (un-mark) a reconciliation', async () => {
+      const ok = await treasurer().allows(
+        `delete from ledger_reconciliations where id = $1`,
+        [A.ledgerReconciliation],
+      );
+      expect(ok).toBe(true);
+    });
+
+    test('admin CANNOT write a reconciliation (treasurer only)', async () => {
+      const err = await admin().expectDenied(...insertReconciliation);
+      expect(err.code).toBe(RLS_DENIED);
+    });
+
+    test('board CANNOT write but CAN read reconciliations', async () => {
+      expect((await board().expectDenied(...insertReconciliation)).code).toBe(RLS_DENIED);
+      expect(
+        await board().count(`select 1 from ledger_reconciliations where program_id = $1`, [A.program]),
+      ).toBeGreaterThan(0);
+    });
+
+    test('costume_manager CANNOT read reconciliations (treasury read excludes it)', async () => {
+      expect(
+        await costume().count(`select 1 from ledger_reconciliations where program_id = $1`, [A.program]),
+      ).toBe(0);
     });
   });
 

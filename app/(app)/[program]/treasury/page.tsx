@@ -11,13 +11,23 @@ import {
   formatDateOnly,
   todayDateKey,
   sumActuals,
+  listMonthsWithEntries,
+  monthKeyForDate,
+  formatMonthKey,
   NO_HEALTH_LABEL,
   type CategoryDirection,
   type LedgerDirection,
   type LedgerAmountRow,
+  type LedgerMonthRow,
 } from "@/lib/treasury";
 import { TreasuryTabs } from "./TreasuryTabs";
-import { addEntry, voidEntry, categorizeEntry } from "./actions";
+import {
+  addEntry,
+  voidEntry,
+  categorizeEntry,
+  markReconciled,
+  unmarkReconciled,
+} from "./actions";
 
 // Running ledger (T019) — the treasury landing. Date-desc list with direction
 // badges, cents-formatted amounts, a running balance, filters (date range /
@@ -66,6 +76,7 @@ const ERR: Record<string, string> = {
   categorize: "Could not categorize the entry.",
   receipt_type: "Receipts must be a PDF or image.",
   receipt_upload: "The receipt failed to upload. The entry was not saved.",
+  reconcile: "Could not update the reconciliation record.",
 };
 
 export default async function LedgerPage({
@@ -83,6 +94,7 @@ export default async function LedgerPage({
     voided?: string;
     uncategorized?: string;
     reenter?: string;
+    confirm?: string;
     saved?: string;
     error?: string;
   }>;
@@ -242,6 +254,38 @@ export default async function LedgerPage({
       unTotal += r.amount_cents;
     }
   }
+
+  // ---- Reconciliation card (Wave L) -----------------------------------------
+  // Months (this season) that carry non-voided entries, and which of those the
+  // treasurer has marked reconciled against the bank statement. Reconciliation
+  // rows are program-scoped (not season-scoped) — we look them up by month key.
+  let reconMonths: string[] = [];
+  const reconciledBy = new Map<string, { date: string; note: string | null }>();
+  if (season) {
+    const { data: monthRows } = await supabase
+      .from("ledger_entries")
+      .select("entry_date, voided_at")
+      .eq("program_id", program.id)
+      .eq("season_id", season.id);
+    reconMonths = listMonthsWithEntries((monthRows as LedgerMonthRow[] | null) ?? []);
+
+    if (reconMonths.length > 0) {
+      const { data: recRows } = await supabase
+        .from("ledger_reconciliations")
+        .select("month, note, created_at")
+        .eq("program_id", program.id);
+      for (const r of (recRows as
+        | { month: string; note: string | null; created_at: string }[]
+        | null) ?? []) {
+        const key = monthKeyForDate(r.month);
+        if (key) reconciledBy.set(key, { date: r.created_at, note: r.note });
+      }
+    }
+  }
+  const unmarkConfirmMonth =
+    canWrite && sp.confirm?.startsWith("unmark_")
+      ? sp.confirm.slice("unmark_".length)
+      : null;
 
   // ---- Re-enter prefill (from a just-voided entry) --------------------------
   let prefill: EntryRow | null = null;
@@ -440,6 +484,90 @@ export default async function LedgerPage({
           </div>
         </div>
       </div>
+
+      {/* Reconciliation (Wave L) — the monthly bank-statement check. */}
+      {season && reconMonths.length > 0 && (
+        <div className="confirm-box stack" style={{ width: "100%" }}>
+          <h2 style={{ margin: 0 }}>Reconciliation</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Each month, compare the ledger to the bank statement, then mark it
+            reconciled here. The board can see how current the books are — that
+            protects you.
+          </p>
+          <table className="members">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Status</th>
+                {canWrite && <th></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {reconMonths.map((mKey) => {
+                const rec = reconciledBy.get(mKey);
+                return (
+                  <tr key={mKey}>
+                    <td>{formatMonthKey(mKey)}</td>
+                    <td>
+                      {rec ? (
+                        <span>
+                          <strong>Reconciled ✓</strong> {formatDateOnly(rec.date)}
+                          {rec.note ? (
+                            <span className="muted"> · {rec.note}</span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        <span className="muted">Not reconciled</span>
+                      )}
+                    </td>
+                    {canWrite && (
+                      <td>
+                        {rec ? (
+                          unmarkConfirmMonth === mKey ? (
+                            <span className="row-inline">
+                              <form action={unmarkReconciled}>
+                                <input type="hidden" name="programId" value={program.id} />
+                                <input type="hidden" name="slug" value={slug} />
+                                <input type="hidden" name="month" value={mKey} />
+                                <button type="submit" className="linklike danger">
+                                  Confirm un-mark
+                                </button>
+                              </form>
+                              <Link href={`/${slug}/treasury`}>Cancel</Link>
+                            </span>
+                          ) : (
+                            <Link
+                              href={`/${slug}/treasury?confirm=unmark_${mKey}`}
+                              className="linklike danger"
+                            >
+                              Un-mark
+                            </Link>
+                          )
+                        ) : (
+                          <form action={markReconciled} className="row-inline">
+                            <input type="hidden" name="programId" value={program.id} />
+                            <input type="hidden" name="slug" value={slug} />
+                            <input type="hidden" name="month" value={mKey} />
+                            <input
+                              type="text"
+                              name="note"
+                              placeholder="Note (optional)"
+                              aria-label={`Reconciliation note for ${formatMonthKey(mKey)}`}
+                            />
+                            <button type="submit" className="secondary">
+                              Mark reconciled
+                            </button>
+                          </form>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Filters */}
       <form method="get" className="row-inline money-filters">

@@ -414,6 +414,10 @@ export default async function ShiftsPage({
                 <input type="number" name="needed_count" className="num" min={1} defaultValue={1} />
               </label>
             </div>
+            <p className="muted">
+              Volunteer no-shows typically run 10–20% — for critical crews, add
+              one or two extra slots.
+            </p>
             <div className="row-inline">
               <label>
                 Starts

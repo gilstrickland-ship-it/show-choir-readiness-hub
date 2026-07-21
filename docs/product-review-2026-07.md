@@ -98,3 +98,11 @@ The gap was between that sophistication and the actual audience:
 ## 6. Sources
 
 Key citations behind the research claims: Productions Magazine (hosting a show choir competition), Millard North Vocal Music parent handbook, Linn-Mar Supernova contest rules, BoosterHub (Charms sunset, SignUpGenius attrition, fair-share), Parent Booster USA + nonprofitlawblog (individual fundraising accounts), NFHS (booster embezzlement), United Educators (chaperone ratios), Wenger (quick-change practice), hoachoir.com / showchoirs.org / showchoirnationals.com (circuit formats), mailsoftly (education email open rates).
+
+## 7. Convergence statement (July 21, 2026)
+
+The review → research → build → re-review loop has closed. Waves A–L shipped: bug sweep, plain language, parent notifications + compliance, parent UX, staff workflow + mobile IA, e2e reconciliation + hardening, deliverability + import presets, season ICS + multi-day itineraries, travel bulk flow, host-mode module, 24 convergence fixes, living-itinerary resurrection, and the monthly reconciliation control.
+
+Every research implication is now either shipped or documented-deferred with rationale. The reconciliation control closes the last research-flagged gap in the money surface (separation of duties and full-board transparency were already built; monthly bank-statement reconciliation was the missing third safeguard against booster embezzlement). Volunteer no-show buffering ships as guidance copy on the shift form.
+
+The remaining deferred items require human or environment action, or new product decisions: the SMS lane (Twilio vendor + consent model), background-check tracking, volunteer waitlists, a distributed rate-limit store (Upstash), and the DNS/Resend deliverability steps. None is a code-polish item; each is self-documented where it lives.

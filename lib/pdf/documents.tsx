@@ -719,6 +719,11 @@ export function BoardSnapshot({ data }: { data: BoardSnapshotData }) {
             Season {data.seasonLabel}
             {data.budgetName ? ` · ${data.budgetName}` : ""}
           </Text>
+          <Text style={styles.subtitle}>
+            {data.reconciledThroughLabel
+              ? `Reconciled through ${data.reconciledThroughLabel}`
+              : "No months reconciled yet"}
+          </Text>
         </View>
 
         <View style={styles.section}>
