@@ -44,10 +44,13 @@ function daysUntil(dateKey: string, tz: string): number | null {
 
 export default async function TokenHomePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ welcome?: string }>;
 }) {
   const { token } = await params;
+  const sp = await searchParams;
   const resolved = await getResolvedToken(token);
   if (!resolved) notFound();
 
@@ -57,8 +60,8 @@ export default async function TokenHomePage({
         <div className="token-share-card">
           <h1>Welcome</h1>
           <p>
-            This is a shared, read-only link for {resolved.program.name}. Use the
-            links below to view the itinerary and volunteer signup.
+            This is a shared, read-only link for {resolved.program.name}. Use
+            the links below to view the itinerary and volunteer signup.
           </p>
         </div>
         <TokenFooter token={token} kind="share" />
@@ -66,9 +69,48 @@ export default async function TokenHomePage({
     );
   }
 
-  const { program, students } = resolved;
+  const { program, students, guardian } = resolved;
   const tz = program.timezone;
   const supabase = createAdminClient();
+
+  // Parent welcome card (spec 003 §4) — a friendly hello on a family's first
+  // couple of visits, then it quietly disappears. "First visits" is derived from
+  // the token_events audit trail (reads only, no schema, no client state): count
+  // this family's guardian-token 'view' rows. The layout logs THIS visit before
+  // the page renders, so the count already includes it — show the card at ≤ 3.
+  // The footer's "How this page works" link force-shows it any time via ?welcome=1.
+  let showWelcome = sp.welcome === "1";
+  if (!showWelcome) {
+    // The family's guardian rows (siblings share an email), then their tokens.
+    let guardianIds = [guardian.id];
+    if (guardian.email) {
+      const { data: fam } = await supabase
+        .from("guardians")
+        .select("id")
+        .eq("program_id", program.id)
+        .eq("email", guardian.email);
+      const ids = ((fam as { id: string }[] | null) ?? []).map((g) => g.id);
+      if (ids.length > 0) guardianIds = ids;
+    }
+    const { data: toks } = await supabase
+      .from("guardian_tokens")
+      .select("id")
+      .eq("program_id", program.id)
+      .in("guardian_id", guardianIds);
+    const tokenIds = ((toks as { id: string }[] | null) ?? []).map((t) => t.id);
+    if (tokenIds.length > 0) {
+      const { count } = await supabase
+        .from("token_events")
+        .select("id", { count: "exact", head: true })
+        .eq("program_id", program.id)
+        .eq("token_kind", "guardian")
+        .eq("action", "view")
+        .in("token_id", tokenIds);
+      showWelcome = (count ?? 0) <= 3;
+    } else {
+      showWelcome = true;
+    }
+  }
 
   const { data: season } = await supabase
     .from("seasons")
@@ -118,7 +160,11 @@ export default async function TokenHomePage({
       .eq("season_id", seasonId)
       .in("student_id", studentIds);
     const ensembleIds = Array.from(
-      new Set(((mems as { ensemble_id: string }[] | null) ?? []).map((m) => m.ensemble_id)),
+      new Set(
+        ((mems as { ensemble_id: string }[] | null) ?? []).map(
+          (m) => m.ensemble_id,
+        ),
+      ),
     );
 
     if (ensembleIds.length > 0) {
@@ -131,7 +177,8 @@ export default async function TokenHomePage({
         .gte("date", todayKey)
         .order("date", { ascending: true })
         .limit(1);
-      const comp = ((comps as { id: string; name: string; date: string | null }[] | null) ?? [])[0];
+      const comp = ((comps as
+        { id: string; name: string; date: string | null }[] | null) ?? [])[0];
       if (comp) {
         // Published-only invariant (§9.3): the itinerary status decides whether
         // itinerary/packet/call-time surface at all — a draft never leaks here.
@@ -154,15 +201,24 @@ export default async function TokenHomePage({
             .eq("itinerary_id", itinRow.id)
             .order("starts_at", { ascending: true });
           const rows =
-            (items as { starts_at: string | null; ends_at: string | null; kind: string }[] | null) ??
-            [];
+            (items as
+              | {
+                  starts_at: string | null;
+                  ends_at: string | null;
+                  kind: string;
+                }[]
+              | null) ?? [];
           const depart = rows.find((r) => r.kind === "depart" && r.starts_at);
-          callTime = depart?.starts_at ?? rows.find((r) => r.starts_at)?.starts_at ?? null;
-          returnTime = rows
-            .map((r) => r.ends_at ?? r.starts_at)
-            .filter((v): v is string => !!v)
-            .sort()
-            .at(-1) ?? null;
+          callTime =
+            depart?.starts_at ??
+            rows.find((r) => r.starts_at)?.starts_at ??
+            null;
+          returnTime =
+            rows
+              .map((r) => r.ends_at ?? r.starts_at)
+              .filter((v): v is string => !!v)
+              .sort()
+              .at(-1) ?? null;
         }
 
         nextComp = {
@@ -183,20 +239,25 @@ export default async function TokenHomePage({
         .select("id, needed_count")
         .eq("program_id", program.id)
         .eq("season_id", seasonId);
-      const shifts = (shiftRows as { id: string; needed_count: number }[] | null) ?? [];
+      const shifts =
+        (shiftRows as { id: string; needed_count: number }[] | null) ?? [];
       if (shifts.length > 0) {
         const { data: suRows } = await supabase
           .from("shift_signups")
           .select("shift_id, status")
           .eq("program_id", program.id)
-          .in("shift_id", shifts.map((s) => s.id))
+          .in(
+            "shift_id",
+            shifts.map((s) => s.id),
+          )
           .eq("status", "confirmed");
         const confirmed = new Map<string, number>();
         for (const su of (suRows as { shift_id: string }[] | null) ?? []) {
           confirmed.set(su.shift_id, (confirmed.get(su.shift_id) ?? 0) + 1);
         }
         openShiftSlots = shifts.reduce(
-          (sum, s) => sum + Math.max(0, s.needed_count - (confirmed.get(s.id) ?? 0)),
+          (sum, s) =>
+            sum + Math.max(0, s.needed_count - (confirmed.get(s.id) ?? 0)),
           0,
         );
       }
@@ -207,13 +268,32 @@ export default async function TokenHomePage({
 
   return (
     <section className="stack token-poster">
+      {showWelcome && (
+        <section className="token-welcome-card">
+          <h2>Welcome</h2>
+          <p>
+            This page is your family&apos;s — bookmark it, it works all season.
+          </p>
+          <p>
+            The links at the bottom do three things: see the times, sign up to
+            help, and report an absence.
+          </p>
+          <p>
+            Everything also arrives by email. The links in your newest email
+            always work.
+          </p>
+        </section>
+      )}
+
       {nextComp && (
         <section className="token-hero">
           <p className="token-hero-kicker">Next competition</p>
           {days !== null && (
             <div className="token-hero-count">
               <span className="token-hero-days">{days}</span>
-              <span className="token-hero-unit">{days === 1 ? "day" : "days"}</span>
+              <span className="token-hero-unit">
+                {days === 1 ? "day" : "days"}
+              </span>
             </div>
           )}
           <div className="token-hero-name">{nextComp.name}</div>
@@ -267,7 +347,8 @@ export default async function TokenHomePage({
                     <span className="token-costume-label">
                       {r.piece?.label ?? "Costume piece"} —{" "}
                       <strong className={open ? "danger" : "token-ok"}>
-                        {ALTERATION_LABEL[r.alteration_status] ?? r.alteration_status}
+                        {ALTERATION_LABEL[r.alteration_status] ??
+                          r.alteration_status}
                       </strong>
                     </span>
                   </div>
@@ -282,8 +363,8 @@ export default async function TokenHomePage({
         <section className="token-nudge">
           <h2>Volunteers needed</h2>
           <p>
-            {openShiftSlots} spot{openShiftSlots === 1 ? "" : "s"} still open this
-            season — chaperones and helpers.
+            {openShiftSlots} spot{openShiftSlots === 1 ? "" : "s"} still open
+            this season — chaperones and helpers.
           </p>
           <Link href={`/t/${token}/signup`} className="token-btn dark">
             See open shifts

@@ -103,3 +103,5 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 
 - [X] T057 Guide foundation: guide_state column (0014), guide flag, lib/guide.ts (journeys, verifiers, strip registry, guarded state actions), unit tests.
 - [X] T058 Role journey panel on Today (director/admin, treasurer, costume manager, board orientation), full/pill/dismissed states, Getting-started reopen links, setup-guide absorbed with e2e contract intact.
+- [X] T059 Intro strips on the eight complex surfaces with "?" re-triggers (?help=1), per-member Got-it state.
+- [X] T060 Parent welcome card (token_events-derived first visits, ?welcome=1 re-show, footer link), e2e reconciled.

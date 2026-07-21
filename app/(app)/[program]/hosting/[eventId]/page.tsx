@@ -34,6 +34,8 @@ import {
   generateHostedSchedule,
   shiftRemainingSlots,
 } from "../actions";
+import { IntroStrip, HelpDot } from "../../IntroStrip";
+import { loadGuideState } from "@/lib/guide";
 
 // Host-mode event command center (Wave I2) — one page, three sections + header,
 // the comp-week idiom. Schools, schedule builder (generate + shift-remaining),
@@ -66,13 +68,22 @@ export default async function HostingEventPage({
     confirm?: string;
     schoolId?: string;
     slotId?: string;
+    help?: string;
   }>;
 }) {
   const { program: slug, eventId } = await params;
-  const { program, role } = await getTenantContext(slug);
+  const { program, role, flags, membership, isSupport } =
+    await getTenantContext(slug);
   requireFlag(program, "hosting");
   if (!HOSTING_ROLES.includes(role)) {
-    return <Restricted slug={slug} surface="Hosting" role={role} allowed={HOSTING_ROLES} />;
+    return (
+      <Restricted
+        slug={slug}
+        surface="Hosting"
+        role={role}
+        allowed={HOSTING_ROLES}
+      />
+    );
   }
   const tz = program.timezone;
   const sp = await searchParams;
@@ -80,6 +91,13 @@ export default async function HostingEventPage({
   const eventBase = `${base}/hosting/${eventId}`;
 
   const supabase = await createClient();
+
+  // First-use intro strip (spec 003 §3) — what host-mode does end to end.
+  const showGuide = flags.guide && !isSupport && !!membership.user_id;
+  const guideState =
+    showGuide && membership.user_id
+      ? await loadGuideState(supabase, program.id, membership.user_id)
+      : {};
   const { data: eventData } = await supabase
     .from("hosted_events")
     .select(
@@ -125,7 +143,9 @@ export default async function HostingEventPage({
     const hr = (s.homeroom ?? "").trim();
     if (hr) homeroomCount.set(hr, (homeroomCount.get(hr) ?? 0) + 1);
   }
-  const roomsInUse = Array.from(homeroomCount.keys()).sort((a, b) => a.localeCompare(b));
+  const roomsInUse = Array.from(homeroomCount.keys()).sort((a, b) =>
+    a.localeCompare(b),
+  );
   const dupHomerooms = new Set(
     Array.from(homeroomCount.entries())
       .filter(([, n]) => n > 1)
@@ -133,8 +153,10 @@ export default async function HostingEventPage({
   );
 
   const hasSlots = slots.length > 0;
-  const confirmRemoveSchool = sp.confirm === "removeschool" && canWrite ? sp.schoolId : null;
-  const confirmDeleteSlot = sp.confirm === "deleteslot" && canWrite ? sp.slotId : null;
+  const confirmRemoveSchool =
+    sp.confirm === "removeschool" && canWrite ? sp.schoolId : null;
+  const confirmDeleteSlot =
+    sp.confirm === "deleteslot" && canWrite ? sp.slotId : null;
   const confirmReplace = sp.confirm === "replace" && canWrite;
 
   const statusLabel = HOSTED_EVENT_STATUS_LABELS[event.status];
@@ -165,28 +187,45 @@ export default async function HostingEventPage({
       {sp.school_removed && <p className="alert-ok">School removed.</p>}
       {sp.slot_saved && <p className="alert-ok">Schedule slot saved.</p>}
       {sp.slot_removed && <p className="alert-ok">Slot removed.</p>}
-      {sp.generated && <p className="alert-ok">Schedule generated from your schools.</p>}
+      {sp.generated && (
+        <p className="alert-ok">Schedule generated from your schools.</p>
+      )}
       {sp.shifted && (
         <p className="alert-ok">
           Moved that slot and everything after it {sp.shifted} minute
-          {sp.shifted === "1" ? "" : "s"} {sp.dir === "earlier" ? "earlier" : "later"}.
+          {sp.shifted === "1" ? "" : "s"}{" "}
+          {sp.dir === "earlier" ? "earlier" : "later"}.
         </p>
       )}
       {sp.error === "archived" && (
-        <p className="alert-error">This season is archived — nothing here can be changed.</p>
+        <p className="alert-error">
+          This season is archived — nothing here can be changed.
+        </p>
       )}
-      {sp.error === "name" && <p className="alert-error">The invitational needs a name.</p>}
-      {sp.error === "school_name" && <p className="alert-error">A school needs a name.</p>}
+      {sp.error === "name" && (
+        <p className="alert-error">The invitational needs a name.</p>
+      )}
+      {sp.error === "school_name" && (
+        <p className="alert-error">A school needs a name.</p>
+      )}
       {sp.error === "start" && (
-        <p className="alert-error">Pick a start time to generate the schedule.</p>
+        <p className="alert-error">
+          Pick a start time to generate the schedule.
+        </p>
       )}
       {sp.error === "noschools" && (
-        <p className="alert-error">Add at least one school before generating a schedule.</p>
+        <p className="alert-error">
+          Add at least one school before generating a schedule.
+        </p>
       )}
       {sp.error === "delta" && (
-        <p className="alert-error">Enter a non-zero number of minutes to shift.</p>
+        <p className="alert-error">
+          Enter a non-zero number of minutes to shift.
+        </p>
       )}
-      {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
+      {sp.error === "save" && (
+        <p className="alert-error">Couldn&apos;t save. Try again.</p>
+      )}
 
       {/* ---- Header ---- */}
       <div className="comp-head">
@@ -194,17 +233,34 @@ export default async function HostingEventPage({
           <div className="comp-status-row">
             <span className="chip">{statusLabel}</span>
           </div>
-          <h1 className="comp-h1">{event.name}</h1>
+          <div className="page-title-row">
+            <h1 className="comp-h1">{event.name}</h1>
+            {showGuide && <HelpDot href={`${eventBase}?help=1`} />}
+          </div>
           <p className="comp-meta">
             {dateStr} · {schools.length} school{schools.length === 1 ? "" : "s"}
           </p>
         </div>
         <div className="comp-head-actions">
-          <a href={`/api/pdf/host-schedule?event=${eventId}`} target="_blank" className="button-link">
+          <a
+            href={`/api/pdf/host-schedule?event=${eventId}`}
+            target="_blank"
+            className="button-link"
+          >
             Master schedule (PDF)
           </a>
         </div>
       </div>
+
+      {showGuide && (
+        <IntroStrip
+          surfaceKey="hosting_event"
+          programId={program.id}
+          selfPath={eventBase}
+          guideState={guideState}
+          help={sp.help === "1"}
+        />
+      )}
 
       {canWrite && (
         <details className="hosting-header-edit">
@@ -216,11 +272,20 @@ export default async function HostingEventPage({
             <div className="row-inline">
               <label>
                 Name
-                <input type="text" name="name" defaultValue={event.name} required />
+                <input
+                  type="text"
+                  name="name"
+                  defaultValue={event.name}
+                  required
+                />
               </label>
               <label>
                 Date
-                <input type="date" name="event_date" defaultValue={event.event_date ?? ""} />
+                <input
+                  type="date"
+                  name="event_date"
+                  defaultValue={event.event_date ?? ""}
+                />
               </label>
               <label>
                 Status
@@ -244,7 +309,11 @@ export default async function HostingEventPage({
             </label>
             <label>
               Venue notes
-              <textarea name="venue_notes" rows={2} defaultValue={event.venue_notes ?? ""} />
+              <textarea
+                name="venue_notes"
+                rows={2}
+                defaultValue={event.venue_notes ?? ""}
+              />
             </label>
             <p className="muted">{NO_HEALTH_LABEL}</p>
             <button type="submit">Save details</button>
@@ -263,12 +332,14 @@ export default async function HostingEventPage({
           </span>
         </div>
         <p className="muted">
-          Adult director contact and a performer count only — never visiting-school student
-          data. {NO_HEALTH_LABEL}
+          Adult director contact and a performer count only — never
+          visiting-school student data. {NO_HEALTH_LABEL}
         </p>
 
         {schools.length === 0 ? (
-          <p className="muted">No visiting schools yet. Add the first one below.</p>
+          <p className="muted">
+            No visiting schools yet. Add the first one below.
+          </p>
         ) : (
           <div className="stack">
             {schools.map((s) => {
@@ -277,7 +348,9 @@ export default async function HostingEventPage({
                 <div className="hosting-school-card" key={s.id}>
                   <div className="hosting-school-head">
                     <strong>{s.school_name}</strong>
-                    {s.ensemble_name ? <span className="muted"> · {s.ensemble_name}</span> : null}
+                    {s.ensemble_name ? (
+                      <span className="muted"> · {s.ensemble_name}</span>
+                    ) : null}
                     {s.homeroom ? (
                       <span className={`chip${dup ? " warn" : ""}`}>
                         {s.homeroom}
@@ -289,24 +362,44 @@ export default async function HostingEventPage({
                     <details>
                       <summary>Edit</summary>
                       <form action={updateHostedSchool} className="stack">
-                        <input type="hidden" name="programId" value={program.id} />
+                        <input
+                          type="hidden"
+                          name="programId"
+                          value={program.id}
+                        />
                         <input type="hidden" name="slug" value={slug} />
                         <input type="hidden" name="eventId" value={eventId} />
                         <input type="hidden" name="schoolId" value={s.id} />
-                        <input type="hidden" name="sort_order" value={s.sort_order} />
+                        <input
+                          type="hidden"
+                          name="sort_order"
+                          value={s.sort_order}
+                        />
                         <SchoolFields school={s} />
                         <button type="submit">Save school</button>
                       </form>
                       {confirmRemoveSchool === s.id ? (
                         <div className="confirm-box stack">
                           <p>
-                            Remove <strong>{s.school_name}</strong>? Its schedule slots are kept
-                            but unlinked from the school.
+                            Remove <strong>{s.school_name}</strong>? Its
+                            schedule slots are kept but unlinked from the
+                            school.
                           </p>
-                          <form action={removeHostedSchool} className="row-inline">
-                            <input type="hidden" name="programId" value={program.id} />
+                          <form
+                            action={removeHostedSchool}
+                            className="row-inline"
+                          >
+                            <input
+                              type="hidden"
+                              name="programId"
+                              value={program.id}
+                            />
                             <input type="hidden" name="slug" value={slug} />
-                            <input type="hidden" name="eventId" value={eventId} />
+                            <input
+                              type="hidden"
+                              name="eventId"
+                              value={eventId}
+                            />
                             <input type="hidden" name="schoolId" value={s.id} />
                             <button type="submit" className="danger">
                               Confirm remove
@@ -393,7 +486,10 @@ export default async function HostingEventPage({
         </div>
 
         {slots.length === 0 ? (
-          <p className="muted">No schedule yet. Generate one from your schools, or add slots by hand.</p>
+          <p className="muted">
+            No schedule yet. Generate one from your schools, or add slots by
+            hand.
+          </p>
         ) : (
           <div className="stack">
             {slots.map((slot) => (
@@ -401,15 +497,22 @@ export default async function HostingEventPage({
                 <span className="hosting-slot-time">
                   {slot.starts_at ? formatTimeInTz(slot.starts_at, tz) : "—"}
                 </span>
-                <span className="kind-tag hosting">{HOSTED_SLOT_KIND_LABELS[slot.kind]}</span>
+                <span className="kind-tag hosting">
+                  {HOSTED_SLOT_KIND_LABELS[slot.kind]}
+                </span>
                 <span className="hosting-slot-body">
                   <strong>
                     {slot.label ??
-                      (slot.hosted_school_id ? schoolName.get(slot.hosted_school_id) : null) ??
+                      (slot.hosted_school_id
+                        ? schoolName.get(slot.hosted_school_id)
+                        : null) ??
                       HOSTED_SLOT_KIND_LABELS[slot.kind]}
                   </strong>
                   {slot.duration_minutes != null ? (
-                    <span className="muted"> · {slot.duration_minutes} min</span>
+                    <span className="muted">
+                      {" "}
+                      · {slot.duration_minutes} min
+                    </span>
                   ) : null}
                 </span>
                 {canWrite && (
@@ -417,7 +520,11 @@ export default async function HostingEventPage({
                     <details>
                       <summary>Edit</summary>
                       <form action={updateHostedSlot} className="stack">
-                        <input type="hidden" name="programId" value={program.id} />
+                        <input
+                          type="hidden"
+                          name="programId"
+                          value={program.id}
+                        />
                         <input type="hidden" name="slug" value={slug} />
                         <input type="hidden" name="eventId" value={eventId} />
                         <input type="hidden" name="slotId" value={slot.id} />
@@ -426,8 +533,15 @@ export default async function HostingEventPage({
                         <button type="submit">Save slot</button>
                       </form>
                       {/* Shift remaining — this slot + every later slot. */}
-                      <form action={shiftRemainingSlots} className="row-inline hosting-shift">
-                        <input type="hidden" name="programId" value={program.id} />
+                      <form
+                        action={shiftRemainingSlots}
+                        className="row-inline hosting-shift"
+                      >
+                        <input
+                          type="hidden"
+                          name="programId"
+                          value={program.id}
+                        />
                         <input type="hidden" name="slug" value={slug} />
                         <input type="hidden" name="eventId" value={eventId} />
                         <input type="hidden" name="slotId" value={slot.id} />
@@ -447,12 +561,30 @@ export default async function HostingEventPage({
                       </form>
                       {confirmDeleteSlot === slot.id ? (
                         <div className="confirm-box stack">
-                          <p>Delete this slot? It&apos;s removed from the schedule.</p>
-                          <form action={removeHostedSlot} className="row-inline">
-                            <input type="hidden" name="programId" value={program.id} />
+                          <p>
+                            Delete this slot? It&apos;s removed from the
+                            schedule.
+                          </p>
+                          <form
+                            action={removeHostedSlot}
+                            className="row-inline"
+                          >
+                            <input
+                              type="hidden"
+                              name="programId"
+                              value={program.id}
+                            />
                             <input type="hidden" name="slug" value={slug} />
-                            <input type="hidden" name="eventId" value={eventId} />
-                            <input type="hidden" name="slotId" value={slot.id} />
+                            <input
+                              type="hidden"
+                              name="eventId"
+                              value={eventId}
+                            />
+                            <input
+                              type="hidden"
+                              name="slotId"
+                              value={slot.id}
+                            />
                             <button type="submit" className="danger">
                               Confirm delete
                             </button>
@@ -494,8 +626,8 @@ export default async function HostingEventPage({
             ) : confirmReplace ? (
               <div className="confirm-box stack">
                 <p>
-                  Replace the current {slots.length}-slot schedule with a freshly generated one?
-                  The existing slots are deleted first.
+                  Replace the current {slots.length}-slot schedule with a
+                  freshly generated one? The existing slots are deleted first.
                 </p>
                 <GenerateForm
                   programId={program.id}
@@ -510,7 +642,10 @@ export default async function HostingEventPage({
               </div>
             ) : (
               <p className="muted">
-                <Link className="linklike" href={`${eventBase}?confirm=replace#schedule`}>
+                <Link
+                  className="linklike"
+                  href={`${eventBase}?confirm=replace#schedule`}
+                >
                   Regenerate schedule (replaces the current one)
                 </Link>
               </p>
@@ -535,7 +670,9 @@ export default async function HostingEventPage({
       {/* ================= DAY-OF DOCUMENTS ================= */}
       <section className="comp-section" id="documents">
         <h2>Day-of documents</h2>
-        <p className="muted">Rendered live from the schools and schedule above.</p>
+        <p className="muted">
+          Rendered live from the schools and schedule above.
+        </p>
         <div className="hosting-doc-links">
           <a href={`/api/pdf/host-schedule?event=${eventId}`} target="_blank">
             Master schedule ↓
@@ -552,8 +689,8 @@ export default async function HostingEventPage({
       {/* ================= VOLUNTEER SEAM ================= */}
       <p className="muted hosting-seam">
         Need volunteers for the day? Create shifts on the{" "}
-        <Link href={`${base}/comms/shifts`}>Comms → Shifts</Link> page — either standalone or
-        attached to a general event you make for the invitational.
+        <Link href={`${base}/comms/shifts`}>Comms → Shifts</Link> page — either
+        standalone or attached to a general event you make for the invitational.
       </p>
     </section>
   );
@@ -576,7 +713,11 @@ function SchoolFields({ school }: { school: HostedSchoolRow | null }) {
         </label>
         <label>
           Ensemble
-          <input type="text" name="ensemble_name" defaultValue={school?.ensemble_name ?? ""} />
+          <input
+            type="text"
+            name="ensemble_name"
+            defaultValue={school?.ensemble_name ?? ""}
+          />
         </label>
         <label>
           Division
@@ -591,15 +732,27 @@ function SchoolFields({ school }: { school: HostedSchoolRow | null }) {
       <div className="row-inline">
         <label>
           Director name
-          <input type="text" name="director_name" defaultValue={school?.director_name ?? ""} />
+          <input
+            type="text"
+            name="director_name"
+            defaultValue={school?.director_name ?? ""}
+          />
         </label>
         <label>
           Director email
-          <input type="email" name="director_email" defaultValue={school?.director_email ?? ""} />
+          <input
+            type="email"
+            name="director_email"
+            defaultValue={school?.director_email ?? ""}
+          />
         </label>
         <label>
           Director phone
-          <input type="tel" name="director_phone" defaultValue={school?.director_phone ?? ""} />
+          <input
+            type="tel"
+            name="director_phone"
+            defaultValue={school?.director_phone ?? ""}
+          />
         </label>
       </div>
       <div className="row-inline">
@@ -633,7 +786,11 @@ function SchoolFields({ school }: { school: HostedSchoolRow | null }) {
       </div>
       <label>
         Arrival notes
-        <textarea name="arrival_notes" rows={2} defaultValue={school?.arrival_notes ?? ""} />
+        <textarea
+          name="arrival_notes"
+          rows={2}
+          defaultValue={school?.arrival_notes ?? ""}
+        />
       </label>
     </>
   );
@@ -664,7 +821,10 @@ function SlotFields({
         </label>
         <label>
           School
-          <select name="hosted_school_id" defaultValue={slot?.hosted_school_id ?? ""}>
+          <select
+            name="hosted_school_id"
+            defaultValue={slot?.hosted_school_id ?? ""}
+          >
             <option value="">— none (break / awards / meal) —</option>
             {schools.map((s) => (
               <option key={s.id} value={s.id}>
@@ -752,11 +912,13 @@ function GenerateForm({
         </label>
       </div>
       <p className="muted">
-        Lays a warm-up then perform slot for each school in order. The longer of the warm-up and
-        perform durations sets how far apart schools run, so no two performances overlap. Reorder
-        or edit any slot afterward.
+        Lays a warm-up then perform slot for each school in order. The longer of
+        the warm-up and perform durations sets how far apart schools run, so no
+        two performances overlap. Reorder or edit any slot afterward.
       </p>
-      <button type="submit">{replace ? "Replace with generated schedule" : "Generate schedule"}</button>
+      <button type="submit">
+        {replace ? "Replace with generated schedule" : "Generate schedule"}
+      </button>
     </form>
   );
 }

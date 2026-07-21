@@ -1292,6 +1292,78 @@
     align-self: flex-start;
   }
 
+  /* Intro strips (spec 003 §3) — a calm orientation line under the heading of the
+     eight complex surfaces. Accent-tinted like .alert-info, never alarming; the
+     "First:" action is bolded inline, the "Got it" dismiss sits to the right (and
+     drops below the copy on narrow screens). */
+  .intro-strip {
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: var(--radius-s);
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+    border-left: 4px solid var(--accent);
+  }
+
+  .intro-strip-copy {
+    margin: 0;
+    flex: 1;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+  }
+
+  .intro-strip-copy strong {
+    color: var(--ink);
+  }
+
+  .intro-strip-dismiss {
+    flex: none;
+  }
+
+  @media (max-width: 34rem) {
+    .intro-strip {
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+  }
+
+  /* Heading + "?" re-trigger row (spec §3). Keeps the small help affordance on the
+     heading's baseline without changing the heading's own accessible name. */
+  .page-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .help-dot {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 50%;
+    border: 1.5px solid var(--line-strong);
+    color: var(--muted-ink);
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    transition:
+      border-color var(--dur) var(--ease),
+      color var(--dur) var(--ease);
+  }
+
+  .help-dot:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
   /* Fair-share guide on the budget page — a quiet, read-only derived card. */
   .fair-share-card {
     border: 1px solid var(--line);
@@ -3527,10 +3599,37 @@
   }
 
   .token-nudge p,
-  .token-share-card p {
+  .token-share-card p,
+  .token-welcome-card p {
     margin: 0;
     font-size: 0.9rem;
     color: var(--ink-2);
+  }
+
+  /* Parent welcome card (spec 003 §4) — shown on a family's first couple of
+     visits (or via the footer's "How this page works" link). Same card idiom as
+     the share/nudge cards, accent-topped so it reads as a friendly hello, then
+     quietly disappears once the family has been here a few times. */
+  .token-welcome-card {
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--accent);
+    border-radius: 10px;
+    padding: 1rem 1.15rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .token-welcome-card h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    border-bottom: none;
+    padding: 0;
+    width: auto;
   }
 
   .token-nudge .token-btn {

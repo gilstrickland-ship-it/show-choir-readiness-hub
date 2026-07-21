@@ -21,6 +21,8 @@ import {
   type LedgerMonthRow,
 } from "@/lib/treasury";
 import { TreasuryTabs } from "./TreasuryTabs";
+import { IntroStrip, HelpDot } from "../IntroStrip";
+import { loadGuideState } from "@/lib/guide";
 import {
   addEntry,
   voidEntry,
@@ -70,7 +72,8 @@ interface TripOpt {
 }
 
 const ERR: Record<string, string> = {
-  entry: "Could not save the entry. Check the amount (e.g. 1,234.56), direction, and date.",
+  entry:
+    "Could not save the entry. Check the amount (e.g. 1,234.56), direction, and date.",
   void: "Could not void the entry.",
   void_reason: "A void needs a reason.",
   categorize: "Could not categorize the entry.",
@@ -97,20 +100,36 @@ export default async function LedgerPage({
     confirm?: string;
     saved?: string;
     error?: string;
+    help?: string;
   }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags, membership, isSupport } =
+    await getTenantContext(slug);
   requireFlag(program, "treasury");
   if (!TREASURY_ROLES.includes(role)) {
     return (
-      <Restricted slug={slug} surface="Money" role={role} allowed={TREASURY_ROLES} />
+      <Restricted
+        slug={slug}
+        surface="Money"
+        role={role}
+        allowed={TREASURY_ROLES}
+      />
     );
   }
   const canWrite = TREASURY_WRITE_ROLES.includes(role);
   const sp = await searchParams;
 
   const supabase = await createClient();
+
+  // First-use intro strip (spec 003 §3) — flag on, real member (not a support
+  // view). Read the member's collapsed state once; the strip decides its own
+  // visibility from that + ?help=1.
+  const showGuide = flags.guide && !isSupport && !!membership.user_id;
+  const guideState =
+    showGuide && membership.user_id
+      ? await loadGuideState(supabase, program.id, membership.user_id)
+      : {};
 
   // Option sources: budget lines (grouped by category) for the current season's
   // budget, plus season competitions and trips for tagging + filtering.
@@ -267,7 +286,9 @@ export default async function LedgerPage({
       .select("entry_date, voided_at")
       .eq("program_id", program.id)
       .eq("season_id", season.id);
-    reconMonths = listMonthsWithEntries((monthRows as LedgerMonthRow[] | null) ?? []);
+    reconMonths = listMonthsWithEntries(
+      (monthRows as LedgerMonthRow[] | null) ?? [],
+    );
 
     if (reconMonths.length > 0) {
       const { data: recRows } = await supabase
@@ -275,8 +296,8 @@ export default async function LedgerPage({
         .select("month, note, created_at")
         .eq("program_id", program.id);
       for (const r of (recRows as
-        | { month: string; note: string | null; created_at: string }[]
-        | null) ?? []) {
+        { month: string; note: string | null; created_at: string }[] | null) ??
+        []) {
         const key = monthKeyForDate(r.month);
         if (key) reconciledBy.set(key, { date: r.created_at, note: r.note });
       }
@@ -325,8 +346,13 @@ export default async function LedgerPage({
     <section className="stack money">
       <div className="page-head">
         <div className="page-head-titles">
-          <p className="eyebrow">Tracked, never touched — entries void, never delete</p>
-          <h1 className="page-h1">Money</h1>
+          <p className="eyebrow">
+            Tracked, never touched — entries void, never delete
+          </p>
+          <div className="page-title-row">
+            <h1 className="page-h1">Money</h1>
+            {showGuide && <HelpDot href={`/${slug}/treasury?help=1`} />}
+          </div>
         </div>
         {canWrite && season && (
           <div className="page-head-actions">
@@ -336,7 +362,11 @@ export default async function LedgerPage({
                 <h2 className="drawer-title">
                   {prefill ? "Re-enter (from voided entry)" : "Add an entry"}
                 </h2>
-                <form action={addEntry} className="stack" encType="multipart/form-data">
+                <form
+                  action={addEntry}
+                  className="stack"
+                  encType="multipart/form-data"
+                >
                   <input type="hidden" name="programId" value={program.id} />
                   <input type="hidden" name="slug" value={slug} />
                   <input type="hidden" name="seasonId" value={season.id} />
@@ -372,7 +402,9 @@ export default async function LedgerPage({
                         inputMode="decimal"
                         required
                         placeholder="1,234.56"
-                        defaultValue={prefill ? dollarsValue(prefill.amount_cents) : ""}
+                        defaultValue={
+                          prefill ? dollarsValue(prefill.amount_cents) : ""
+                        }
                       />
                     </label>
                     <label>
@@ -388,7 +420,10 @@ export default async function LedgerPage({
                   <div className="row-inline">
                     <label>
                       Budget line
-                      {lineSelect("budget_line_id", prefill?.budget_line_id ?? "")}
+                      {lineSelect(
+                        "budget_line_id",
+                        prefill?.budget_line_id ?? "",
+                      )}
                     </label>
                     <label>
                       Competition tag
@@ -406,7 +441,10 @@ export default async function LedgerPage({
                     </label>
                     <label>
                       Trip tag
-                      <select name="trip_id" defaultValue={prefill?.trip_id ?? ""}>
+                      <select
+                        name="trip_id"
+                        defaultValue={prefill?.trip_id ?? ""}
+                      >
                         <option value="">(none)</option>
                         {trips.map((t) => (
                           <option key={t.id} value={t.id}>
@@ -418,11 +456,19 @@ export default async function LedgerPage({
                   </div>
                   <label style={{ width: "100%" }}>
                     Memo
-                    <input type="text" name="memo" defaultValue={prefill?.memo ?? ""} />
+                    <input
+                      type="text"
+                      name="memo"
+                      defaultValue={prefill?.memo ?? ""}
+                    />
                   </label>
                   <label>
                     Receipt (PDF or image)
-                    <input type="file" name="receipt" accept="application/pdf,image/*" />
+                    <input
+                      type="file"
+                      name="receipt"
+                      accept="application/pdf,image/*"
+                    />
                   </label>
                   <p className="muted">{NO_HEALTH_LABEL}</p>
                   <button type="submit">
@@ -435,18 +481,30 @@ export default async function LedgerPage({
         )}
       </div>
 
+      {showGuide && (
+        <IntroStrip
+          surfaceKey="treasury"
+          programId={program.id}
+          selfPath={`/${slug}/treasury`}
+          guideState={guideState}
+          help={sp.help === "1"}
+        />
+      )}
+
       <TreasuryTabs slug={slug} active="ledger" />
 
       {sp.saved && <p className="alert-ok">Saved.</p>}
       {sp.error && (
-        <p className="alert-error">{ERR[sp.error] ?? "Something went wrong."}</p>
+        <p className="alert-error">
+          {ERR[sp.error] ?? "Something went wrong."}
+        </p>
       )}
 
       {!season && (
         <p className="alert-error">
           No active season. Ledger entries are season-scoped —{" "}
-          <Link href={`/${slug}/settings/rollover`}>Start a season</Link> to record
-          them.
+          <Link href={`/${slug}/settings/rollover`}>Start a season</Link> to
+          record them.
         </p>
       )}
 
@@ -464,7 +522,9 @@ export default async function LedgerPage({
         </div>
         <div className="metric-cell">
           <div className="metric-label">Out</div>
-          <div className="metric-value alert">{formatCents(metrics.outCents)}</div>
+          <div className="metric-value alert">
+            {formatCents(metrics.outCents)}
+          </div>
           <div className="metric-sub">expenses paid</div>
         </div>
         <div className={`metric-cell${unCount > 0 ? " warn" : ""}`}>
@@ -474,7 +534,10 @@ export default async function LedgerPage({
             {unCount > 0 ? (
               <>
                 {formatCents(unTotal)} ·{" "}
-                <Link href={`/${slug}/treasury?uncategorized=1`} className="metric-link">
+                <Link
+                  href={`/${slug}/treasury?uncategorized=1`}
+                  className="metric-link"
+                >
                   categorize now
                 </Link>
               </>
@@ -511,7 +574,8 @@ export default async function LedgerPage({
                     <td>
                       {rec ? (
                         <span>
-                          <strong>Reconciled ✓</strong> {formatDateOnly(rec.date)}
+                          <strong>Reconciled ✓</strong>{" "}
+                          {formatDateOnly(rec.date)}
                           {rec.note ? (
                             <span className="muted"> · {rec.note}</span>
                           ) : null}
@@ -526,10 +590,21 @@ export default async function LedgerPage({
                           unmarkConfirmMonth === mKey ? (
                             <span className="row-inline">
                               <form action={unmarkReconciled}>
-                                <input type="hidden" name="programId" value={program.id} />
+                                <input
+                                  type="hidden"
+                                  name="programId"
+                                  value={program.id}
+                                />
                                 <input type="hidden" name="slug" value={slug} />
-                                <input type="hidden" name="month" value={mKey} />
-                                <button type="submit" className="linklike danger">
+                                <input
+                                  type="hidden"
+                                  name="month"
+                                  value={mKey}
+                                />
+                                <button
+                                  type="submit"
+                                  className="linklike danger"
+                                >
                                   Confirm un-mark
                                 </button>
                               </form>
@@ -545,7 +620,11 @@ export default async function LedgerPage({
                           )
                         ) : (
                           <form action={markReconciled} className="row-inline">
-                            <input type="hidden" name="programId" value={program.id} />
+                            <input
+                              type="hidden"
+                              name="programId"
+                              value={program.id}
+                            />
                             <input type="hidden" name="slug" value={slug} />
                             <input type="hidden" name="month" value={mKey} />
                             <input
@@ -685,7 +764,9 @@ export default async function LedgerPage({
                       {formatCents(e.amount_cents)}
                     </span>
                   ) : (
-                    <span className={`money-amt ${e.direction === "in" ? "in" : "out"}`}>
+                    <span
+                      className={`money-amt ${e.direction === "in" ? "in" : "out"}`}
+                    >
                       {e.direction === "in" ? "+ " : "− "}
                       {formatCents(e.amount_cents)}
                     </span>
@@ -711,7 +792,9 @@ export default async function LedgerPage({
                   )}
                 </td>
                 <td>{party || <span className="muted">—</span>}</td>
-                <td>{e.receipt_path ? "📎" : <span className="muted">—</span>}</td>
+                <td>
+                  {e.receipt_path ? "📎" : <span className="muted">—</span>}
+                </td>
                 <td className="right">
                   {voided ? (
                     <span className="muted">—</span>
@@ -722,7 +805,10 @@ export default async function LedgerPage({
                 {canWrite && (
                   <td>
                     {voided ? (
-                      <span className="muted" title={e.void_reason ?? undefined}>
+                      <span
+                        className="muted"
+                        title={e.void_reason ?? undefined}
+                      >
                         voided
                       </span>
                     ) : (
@@ -730,10 +816,21 @@ export default async function LedgerPage({
                         <summary>Correct</summary>
                         <div className="stack">
                           {uncategorized && cats.length > 0 && (
-                            <form action={categorizeEntry} className="row-inline">
-                              <input type="hidden" name="programId" value={program.id} />
+                            <form
+                              action={categorizeEntry}
+                              className="row-inline"
+                            >
+                              <input
+                                type="hidden"
+                                name="programId"
+                                value={program.id}
+                              />
                               <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="entryId" value={e.id} />
+                              <input
+                                type="hidden"
+                                name="entryId"
+                                value={e.id}
+                              />
                               {lineSelect("budget_line_id", "")}
                               <button type="submit" className="secondary">
                                 Categorize
@@ -741,7 +838,11 @@ export default async function LedgerPage({
                             </form>
                           )}
                           <form action={voidEntry} className="row-inline">
-                            <input type="hidden" name="programId" value={program.id} />
+                            <input
+                              type="hidden"
+                              name="programId"
+                              value={program.id}
+                            />
                             <input type="hidden" name="slug" value={slug} />
                             <input type="hidden" name="entryId" value={e.id} />
                             <input
@@ -782,8 +883,8 @@ export default async function LedgerPage({
       </table>
 
       <p className="page-foot">
-        Corrections are void + re-enter with a required reason — the audit log keeps
-        everything. Voided rows never count toward balances.
+        Corrections are void + re-enter with a required reason — the audit log
+        keeps everything. Voided rows never count toward balances.
       </p>
     </section>
   );

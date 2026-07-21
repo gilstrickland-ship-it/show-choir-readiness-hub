@@ -12,6 +12,8 @@ import {
   type CategoryDirection,
 } from "@/lib/treasury";
 import { TreasuryTabs } from "../TreasuryTabs";
+import { IntroStrip, HelpDot } from "../../IntroStrip";
+import { loadGuideState } from "@/lib/guide";
 import {
   createBudget,
   activateBudget,
@@ -58,7 +60,8 @@ const ERR: Record<string, string> = {
   cat_in_use: "Remove this category's lines before deleting it.",
   line_in_use:
     "This line has ledger entries tagged to it. Re-tag those entries (void + re-enter) before deleting the line.",
-  not_empty: "This budget already has categories — the template only seeds an empty budget.",
+  not_empty:
+    "This budget already has categories — the template only seeds an empty budget.",
 };
 
 export default async function BudgetPage({
@@ -66,20 +69,34 @@ export default async function BudgetPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ saved?: string; error?: string }>;
+  searchParams: Promise<{ saved?: string; error?: string; help?: string }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags, membership, isSupport } =
+    await getTenantContext(slug);
   requireFlag(program, "treasury");
   if (!TREASURY_ROLES.includes(role)) {
     return (
-      <Restricted slug={slug} surface="Money" role={role} allowed={TREASURY_ROLES} />
+      <Restricted
+        slug={slug}
+        surface="Money"
+        role={role}
+        allowed={TREASURY_ROLES}
+      />
     );
   }
   const canWrite = TREASURY_WRITE_ROLES.includes(role);
-  const { saved, error } = await searchParams;
+  const { saved, error, help } = await searchParams;
 
   const supabase = await createClient();
+
+  // First-use intro strip (spec 003 §3) — orientation only; the empty-state below
+  // still carries the "start from a template" offer, so this doesn't repeat it.
+  const showGuide = flags.guide && !isSupport && !!membership.user_id;
+  const guideState =
+    showGuide && membership.user_id
+      ? await loadGuideState(supabase, program.id, membership.user_id)
+      : {};
 
   // The budget for the active season (draft or active). One per season is the
   // norm; if multiple drafts exist we take the newest.
@@ -153,7 +170,9 @@ export default async function BudgetPage({
       .eq("program_id", program.id)
       .eq("season_id", season.id);
     fairShareStudents = new Set(
-      ((memRows as { student_id: string }[] | null) ?? []).map((m) => m.student_id),
+      ((memRows as { student_id: string }[] | null) ?? []).map(
+        (m) => m.student_id,
+      ),
     ).size;
   }
   const showFairShare = budget?.status === "active" && fairShareStudents > 0;
@@ -164,7 +183,19 @@ export default async function BudgetPage({
   return (
     <section className="stack">
       <TreasuryTabs slug={slug} active="budget" />
-      <h1>Budget</h1>
+      <div className="page-title-row">
+        <h1>Budget</h1>
+        {showGuide && <HelpDot href={`/${slug}/treasury/budget?help=1`} />}
+      </div>
+      {showGuide && (
+        <IntroStrip
+          surfaceKey="budget"
+          programId={program.id}
+          selfPath={`/${slug}/treasury/budget`}
+          guideState={guideState}
+          help={help === "1"}
+        />
+      )}
       <p className="muted">
         A fully custom, two-level structure — your categories and lines. Planned
         amounts are entered in dollars and stored to the cent. One active budget
@@ -172,7 +203,9 @@ export default async function BudgetPage({
       </p>
 
       {saved && <p className="alert-ok">Saved.</p>}
-      {error && <p className="alert-error">{ERR[error] ?? "Something went wrong."}</p>}
+      {error && (
+        <p className="alert-error">{ERR[error] ?? "Something went wrong."}</p>
+      )}
 
       {!season && (
         <p className="alert-error">
@@ -230,8 +263,8 @@ export default async function BudgetPage({
               <p className="fair-share-line">
                 Fair share: planned expenses{" "}
                 <strong>{formatCents(plannedExpenseCents)}</strong> ÷{" "}
-                {fairShareStudents} student{fairShareStudents === 1 ? "" : "s"} ={" "}
-                <strong>{formatCents(perStudentCents)}</strong> per student
+                {fairShareStudents} student{fairShareStudents === 1 ? "" : "s"}{" "}
+                = <strong>{formatCents(perStudentCents)}</strong> per student
               </p>
               <p className="muted fair-share-note">
                 A per-student share is a budgeting guide. IRS rules for booster
@@ -303,8 +336,16 @@ export default async function BudgetPage({
                                       name="programId"
                                       value={program.id}
                                     />
-                                    <input type="hidden" name="slug" value={slug} />
-                                    <input type="hidden" name="lineId" value={l.id} />
+                                    <input
+                                      type="hidden"
+                                      name="slug"
+                                      value={slug}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="lineId"
+                                      value={l.id}
+                                    />
                                     <input
                                       type="text"
                                       name="name"
@@ -316,7 +357,9 @@ export default async function BudgetPage({
                                       type="text"
                                       name="planned"
                                       inputMode="decimal"
-                                      defaultValue={(l.planned_cents / 100).toFixed(2)}
+                                      defaultValue={(
+                                        l.planned_cents / 100
+                                      ).toFixed(2)}
                                       aria-label="Planned dollars"
                                     />
                                     <input
@@ -338,9 +381,20 @@ export default async function BudgetPage({
                                       name="programId"
                                       value={program.id}
                                     />
-                                    <input type="hidden" name="slug" value={slug} />
-                                    <input type="hidden" name="lineId" value={l.id} />
-                                    <button type="submit" className="linklike danger">
+                                    <input
+                                      type="hidden"
+                                      name="slug"
+                                      value={slug}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="lineId"
+                                      value={l.id}
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="linklike danger"
+                                    >
                                       Delete
                                     </button>
                                   </form>
@@ -397,7 +451,10 @@ export default async function BudgetPage({
                               <button type="submit">Add line</button>
                             </form>
 
-                            <form action={updateCategory} className="row-inline">
+                            <form
+                              action={updateCategory}
+                              className="row-inline"
+                            >
                               <input
                                 type="hidden"
                                 name="programId"
@@ -480,7 +537,12 @@ export default async function BudgetPage({
                 <input type="hidden" name="budgetId" value={budget.id} />
                 <label>
                   Name
-                  <input type="text" name="name" required placeholder="Concessions" />
+                  <input
+                    type="text"
+                    name="name"
+                    required
+                    placeholder="Concessions"
+                  />
                 </label>
                 <label>
                   Direction
