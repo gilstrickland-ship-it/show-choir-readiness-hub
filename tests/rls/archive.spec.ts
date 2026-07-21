@@ -33,6 +33,12 @@ describe.skipIf(rlsSkipped())('archived season', () => {
     test('treasurer reads the archived budget', async () => {
       expect(await treasurer().count(`select 1 from budgets where id = $1`, [A.budgetArchived])).toBe(1);
     });
+
+    test('director reads the archived hosted event', async () => {
+      expect(
+        await director().count(`select 1 from hosted_events where id = $1`, [A.hostedEventArchived]),
+      ).toBe(1);
+    });
   });
 
   describe('writes are rejected', () => {
@@ -63,6 +69,30 @@ describe.skipIf(rlsSkipped())('archived season', () => {
     test('updating an archived competition touches zero rows (USING filters it out)', async () => {
       const res = await director().query(`update competitions set name = 'Changed' where id = $1`, [
         A.competitionArchived,
+      ]);
+      expect(res.rowCount).toBe(0);
+    });
+
+    test('inserting a hosted event into the archived season is denied', async () => {
+      const err = await director().expectDenied(
+        `insert into hosted_events (program_id, season_id, name) values ($1, $2, 'Nope')`,
+        [A.program, A.seasonArchived],
+      );
+      expect(err.code).toBe(RLS_DENIED);
+    });
+
+    test('inserting a hosted school under the archived hosted event is denied', async () => {
+      // Child tables freeze through the hosted_event's season (hosted_event_archived).
+      const err = await director().expectDenied(
+        `insert into hosted_schools (program_id, hosted_event_id, school_name) values ($1, $2, 'Nope HS')`,
+        [A.program, A.hostedEventArchived],
+      );
+      expect(err.code).toBe(RLS_DENIED);
+    });
+
+    test('updating the archived hosted event touches zero rows (USING filters it out)', async () => {
+      const res = await director().query(`update hosted_events set name = 'Changed' where id = $1`, [
+        A.hostedEventArchived,
       ]);
       expect(res.rowCount).toBe(0);
     });

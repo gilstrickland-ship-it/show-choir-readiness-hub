@@ -47,6 +47,13 @@ export const COMMS_ROLES: readonly Role[] = [
   "costume_manager",
 ];
 
+// Hosting (Wave I host-mode, §I1 matrix). Nav-visible to director/admin (write)
+// and board_member (read-only, mirroring the treasury/board posture); write is
+// director/admin only, re-checked in server actions (I2). treasurer and
+// costume_manager get neither nav nor write — hosting is not their surface.
+export const HOSTING_ROLES: readonly Role[] = ["director", "admin", "board_member"];
+export const HOSTING_WRITE_ROLES: readonly Role[] = ["director", "admin"];
+
 export interface NavItem {
   slot: string;
   label: string;
@@ -75,6 +82,9 @@ export const NAV: readonly NavItem[] = [
   { slot: "treasury", label: "Money", flag: "treasury", roles: TREASURY_ROLES },
   { slot: "costumes", label: "Wardrobe", flag: "costumes", roles: COSTUMES_ROLES },
   { slot: "comms", label: "Comms", flag: "comms", roles: COMMS_ROLES },
+  // Host-mode: its own slot behind the `hosting` flag (default off). Visible to
+  // director/admin/board_member; hard-404s via requireFlag when the flag is off.
+  { slot: "hosting", label: "Hosting", flag: "hosting", roles: HOSTING_ROLES },
 ];
 
 // A nav item is visible when its flag gate passes (single `flag` on, OR any of

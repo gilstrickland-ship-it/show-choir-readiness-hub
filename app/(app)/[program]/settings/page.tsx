@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../Restricted";
@@ -11,6 +12,7 @@ import {
   recentSupportViews,
 } from "@/lib/support";
 import { activeShareLinks } from "@/lib/tokens";
+import { emailHealth } from "@/lib/email";
 import { formatDateOnly } from "@/lib/treasury";
 import {
   updateProgram,
@@ -63,7 +65,10 @@ export default async function SettingsPage({
   const linkLabels = new Map<string, string>();
   if (shareLinks.length > 0) {
     const compIds = shareLinks.filter((l) => l.resource === "itinerary").map((l) => l.resource_id);
-    const seasonIds = shareLinks.filter((l) => l.resource === "signup_page").map((l) => l.resource_id);
+    // Both signup_page and season_calendar links are scoped to a season id.
+    const seasonIds = shareLinks
+      .filter((l) => l.resource === "signup_page" || l.resource === "season_calendar")
+      .map((l) => l.resource_id);
     if (compIds.length > 0) {
       const { data } = await supabase
         .from("competitions")
@@ -87,7 +92,48 @@ export default async function SettingsPage({
     itinerary: "Itinerary",
     signup_page: "Volunteer signup",
     packet: "Parent packet",
+    season_calendar: "Season calendar",
   };
+
+  // Email health (F1) — presence booleans evaluated server-side (never env
+  // values) + guardian inbox-health counts scoped to this program by RLS.
+  const health = emailHealth();
+  const countGuardians = async (status: string) =>
+    (
+      await supabase
+        .from("guardians")
+        .select("id", { count: "exact", head: true })
+        .eq("program_id", program.id)
+        .eq("email_status", status)
+    ).count ?? 0;
+  const [okCount, bouncedCount, unsubCount] = await Promise.all([
+    countGuardians("ok"),
+    countGuardians("bounced"),
+    countGuardians("unsubscribed"),
+  ]);
+  const emailChecks: { ok: boolean; label: string; detail: string }[] = [
+    {
+      ok: health.sendingConfigured,
+      label: "Sending configured",
+      detail: health.sendingConfigured
+        ? "A mail provider key is set, so the app can send email."
+        : "No mail provider key is set — email can't go out yet. Ask whoever hosts your deployment to add the Resend API key.",
+    },
+    {
+      ok: health.webhookSigning,
+      label: "Webhook signing",
+      detail: health.webhookSigning
+        ? "Bounces and unsubscribes arrive verified-signed."
+        : "Bounce and unsubscribe notices aren't verified yet. Ask whoever hosts your deployment to set the Resend webhook signing secret.",
+    },
+    {
+      ok: health.fromDomainOk,
+      label: "From-address domain",
+      detail: health.fromDomainOk
+        ? "Email is sent from your program's own verified domain."
+        : "The address email is sent from doesn't match a verified program domain — messages may be filtered as spam. Ask whoever hosts your deployment to set a verified sending domain.",
+    },
+  ];
 
   return (
     <section className="stack">
@@ -155,6 +201,45 @@ export default async function SettingsPage({
 
         <button type="submit">Save changes</button>
       </form>
+
+      {/* Email health (F1) — deliverability at a glance. Presence booleans only,
+          evaluated server-side; env values are never shown. */}
+      <div className="panel stack">
+        <h2>Email health</h2>
+        <p className="muted">
+          Whether {brand.name} can reliably reach families. These checks read
+          your deployment&apos;s setup — no keys or secrets are ever shown here.
+          A red dash means something the person who hosts your deployment needs
+          to finish.
+        </p>
+        <ul className="stack" style={{ listStyle: "none", paddingLeft: 0 }}>
+          {emailChecks.map((c) => (
+            <li key={c.label}>
+              <strong>
+                <span aria-hidden="true">{c.ok ? "✓ " : "– "}</span>
+                {c.label} — {c.ok ? "OK" : "needs attention"}
+              </strong>
+              <br />
+              <span className="muted">{c.detail}</span>
+            </li>
+          ))}
+          <li>
+            <strong>Guardian inbox health</strong>
+            <br />
+            <span className="muted">
+              {okCount} receiving email · {bouncedCount} bounced ·{" "}
+              {unsubCount} unsubscribed.{" "}
+              {bouncedCount + unsubCount > 0 ? (
+                <Link href={`/${slug}/roster/email-issues`}>
+                  Review addresses that need attention
+                </Link>
+              ) : (
+                "Every address is good."
+              )}
+            </span>
+          </li>
+        </ul>
+      </div>
 
       {/* Support access (§10) — director-only consent toggle. */}
       <div className="panel stack">

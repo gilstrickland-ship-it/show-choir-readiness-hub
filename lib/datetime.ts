@@ -134,6 +134,55 @@ export function formatDateInTz(
   }).format(d);
 }
 
+// The calendar day after a "YYYY-MM-DD" key (→ "YYYY-MM-DD"). Computed in UTC so
+// it is DST-safe (date keys carry no offset). Null on invalid input. Used to walk
+// a trip's inclusive day range and for the exclusive all-day ICS DTEND.
+export function nextDateKey(key: string | null | undefined): string | null {
+  if (!key) return null;
+  const ms = Date.parse(`${key.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms + 86_400_000).toISOString().slice(0, 10);
+}
+
+// The inclusive list of "YYYY-MM-DD" day keys from `startKey` to `endKey`. Empty
+// when either is missing or the range is inverted. Bounded defensively so a bad
+// range can never spin (a season is weeks, not years).
+export function dateKeyRange(
+  startKey: string | null | undefined,
+  endKey: string | null | undefined,
+): string[] {
+  if (!startKey || !endKey) return [];
+  const start = startKey.slice(0, 10);
+  const end = endKey.slice(0, 10);
+  if (end < start) return [];
+  const out: string[] = [];
+  let cur: string | null = start;
+  for (let i = 0; cur && cur <= end && i < 400; i++) {
+    out.push(cur);
+    cur = nextDateKey(cur);
+  }
+  return out;
+}
+
+// A full-weekday day heading in program tz — "Friday, Apr 10" (no time, no year).
+// Used to label the day groups on multi-day itineraries and trip schedules (Wave
+// G / G2). Distinct from formatDateInTz (which abbreviates the weekday and adds a
+// year) because a day divider reads better spelled out and without the year noise.
+export function formatDayHeadingInTz(
+  iso: string | Date | null | undefined,
+  timeZone: string,
+): string {
+  if (!iso) return "—";
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(d);
+}
+
 // The calendar day ("YYYY-MM-DD") an instant falls on in `timeZone` — used to
 // bucket events into calendar cells by the program's wall clock, not the server's.
 export function zonedDateKey(

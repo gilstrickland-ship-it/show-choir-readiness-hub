@@ -208,11 +208,20 @@ export interface ResolvedGuardianToken {
   students: ResolvedStudent[];
 }
 
+// Share-link resource kinds. `season_calendar` (Wave G / G1) resolves to a season
+// and drives the subscribable /t/<token>/calendar feed; it is minted, listed, and
+// revoked exactly like the others — no new capability, still `resource:view`.
+export type ShareResource =
+  | "itinerary"
+  | "packet"
+  | "signup_page"
+  | "season_calendar";
+
 export interface ResolvedShareLink {
   kind: "share";
   tokenId: string;
   program: ResolvedProgram;
-  resource: "itinerary" | "packet" | "signup_page";
+  resource: ShareResource;
   resource_id: string;
 }
 
@@ -281,7 +290,7 @@ export async function resolveToken(raw: string): Promise<ResolvedToken> {
     const link = sl as {
       id: string;
       program_id: string;
-      resource: "itinerary" | "packet" | "signup_page";
+      resource: ShareResource;
       resource_id: string;
       expires_at: string | null;
     };
@@ -416,11 +425,23 @@ export function shareLinkUrl(rawToken: string): string {
   return `${appBaseUrl()}/t/${rawToken}`;
 }
 
-export type MintableShareResource = "itinerary" | "signup_page";
+// The subscribable season-calendar feed URL for a raw token (Wave G / G1). The
+// feed lives at /t/<token>/calendar (Next.js hosts the /t/<token> pages and this
+// route at distinct paths). Known ONLY at mint time (hash-only storage) — shown
+// once, never reconstructed. Calendar apps ("From URL" in Google Calendar) accept
+// the https form; a webcal:// scheme is the same URL with the scheme swapped.
+export function seasonCalendarUrl(rawToken: string): string {
+  return `${appBaseUrl()}/t/${rawToken}/calendar`;
+}
+
+export type MintableShareResource =
+  | "itinerary"
+  | "signup_page"
+  | "season_calendar";
 
 export interface ActiveShareLink {
   id: string;
-  resource: "itinerary" | "packet" | "signup_page";
+  resource: ShareResource;
   resource_id: string;
   created_at: string;
   expires_at: string | null;

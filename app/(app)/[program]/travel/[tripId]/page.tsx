@@ -11,7 +11,13 @@ import {
   relevantKinds,
   type TravelGroupKind,
 } from "@/lib/travel";
-import { formatDateInTz } from "@/lib/datetime";
+import {
+  formatDateInTz,
+  formatTimeInTz,
+  formatDayHeadingInTz,
+  zonedDateKey,
+  dateKeyRange,
+} from "@/lib/datetime";
 import {
   createGroup,
   updateGroup,
@@ -83,9 +89,12 @@ export default async function TripPage({
   params: Promise<{ program: string; tripId: string }>;
   searchParams: Promise<{
     sel?: string;
+    fill?: string;
     conflict?: string;
     conflictKind?: string;
     error?: string;
+    confirm?: string;
+    groupId?: string;
   }>;
 }) {
   const { program: slug, tripId } = await params;
@@ -230,6 +239,33 @@ export default async function TripPage({
   const selStudent = selId ? studentById.get(selId)! : null;
   const selNeeds = selId ? neededOf(selId) : [];
 
+  // H1 bulk-fill flow: `?fill=<groupId>` makes one group the *active target*.
+  // A sticky bar names it and the unassigned queue becomes big tap-chips — one
+  // tap places a rider and the page re-renders (server data) with the bar still
+  // up. Writers only; ignore a stale/foreign id. The chip list offers only riders
+  // who still need this group's kind, so a tap never trips the one-room-one-bus
+  // guard. Counts re-derive from `assignmentsByGroup` every render (no client
+  // state that can lie); over-capacity warns, never blocks.
+  const fillGroup =
+    canWrite && sp.fill ? (groups.find((g) => g.id === sp.fill) ?? null) : null;
+  const fillKind = fillGroup?.kind ?? null;
+
+  // Cascade-delete confirmations (the ?confirm= confirm-box idiom used across the
+  // app): a group or the whole trip is only removed on the second, explicit tap.
+  const confirmDeleteTrip = sp.confirm === "deletetrip" && canWrite;
+  const confirmDeleteGroup =
+    sp.confirm === "deletegroup" && canWrite ? sp.groupId : null;
+  const fillMembers = fillGroup
+    ? (assignmentsByGroup.get(fillGroup.id) ?? [])
+    : [];
+  const fillCount = fillMembers.length;
+  const fillOver =
+    fillGroup?.capacity != null && fillCount > fillGroup.capacity;
+  const fillChips =
+    fillGroup && fillKind
+      ? queue.filter((s) => neededOf(s.id).includes(fillKind))
+      : [];
+
   // Kinds/sections to render: buses always (writers can add); rooms when overnight
   // or any room group already exists.
   const kindsToShow: TravelGroupKind[] = TRAVEL_GROUP_KINDS.filter((k) => {
@@ -254,6 +290,91 @@ export default async function TripPage({
   }
 
   const roomsExist = groups.some((g) => g.kind === "room");
+
+  // ---- Trip schedule (G2.5): read-only per-day merge, multi-day trips only ----
+  // A nationals trip runs several days; staff want one place that shows what
+  // happens each day. We merge the linked competition's PUBLISHED itinerary items
+  // (invariant §9.3 — drafts never leak) with program events whose time falls in
+  // the trip's date range (program tz), bucketed by day. Empty days say so, and a
+  // hint points staff at the pattern for park days / meals (create them as events).
+  // Lean by construction: these queries run ONLY when the trip spans >1 day.
+  const isMultiDay =
+    !!trip.starts_on && !!trip.ends_on && trip.starts_on !== trip.ends_on;
+
+  interface ScheduleEntry {
+    startsAt: string;
+    label: string;
+    sublabel: string | null;
+    source: "itinerary" | "event";
+  }
+  let scheduleByDay: { key: string; label: string; entries: ScheduleEntry[] }[] = [];
+  if (isMultiDay) {
+    const dayKeys = dateKeyRange(trip.starts_on, trip.ends_on);
+    const entriesByDay = new Map<string, ScheduleEntry[]>();
+    for (const k of dayKeys) entriesByDay.set(k, []);
+
+    // Linked competition's published itinerary items.
+    if (trip.competition_id) {
+      const { data: itinRow } = await supabase
+        .from("itineraries")
+        .select("id")
+        .eq("program_id", program.id)
+        .eq("competition_id", trip.competition_id)
+        .eq("status", "published")
+        .maybeSingle();
+      const itinId = (itinRow as { id: string } | null)?.id ?? null;
+      if (itinId) {
+        const { data: itinItems } = await supabase
+          .from("itinerary_items")
+          .select("starts_at, kind, title, location")
+          .eq("program_id", program.id)
+          .eq("itinerary_id", itinId)
+          .not("starts_at", "is", null)
+          .order("starts_at", { ascending: true });
+        for (const it of (itinItems as
+          | { starts_at: string; kind: string; title: string | null; location: string | null }[]
+          | null) ?? []) {
+          const bucket = entriesByDay.get(zonedDateKey(it.starts_at, tz));
+          if (bucket)
+            bucket.push({
+              startsAt: it.starts_at,
+              label: it.title ?? it.kind,
+              sublabel: it.location,
+              source: "itinerary",
+            });
+        }
+      }
+    }
+
+    // Program events (this season) with a time inside the trip's day range.
+    const { data: evRows } = await supabase
+      .from("events")
+      .select("starts_at, title, location, kind")
+      .eq("program_id", program.id)
+      .eq("season_id", trip.season_id)
+      .not("starts_at", "is", null)
+      .order("starts_at", { ascending: true });
+    for (const e of (evRows as
+      | { starts_at: string; title: string; location: string | null; kind: string }[]
+      | null) ?? []) {
+      const bucket = entriesByDay.get(zonedDateKey(e.starts_at, tz));
+      if (bucket)
+        bucket.push({
+          startsAt: e.starts_at,
+          label: e.title,
+          sublabel: e.location,
+          source: "event",
+        });
+    }
+
+    scheduleByDay = dayKeys.map((k) => ({
+      key: k,
+      label: formatDayHeadingInTz(`${k}T12:00:00Z`, tz),
+      entries: (entriesByDay.get(k) ?? []).sort((a, b) =>
+        a.startsAt.localeCompare(b.startsAt),
+      ),
+    }));
+  }
 
   return (
     <section className="stack">
@@ -297,6 +418,95 @@ export default async function TripPage({
       )}
       {sp.error === "chaperone" && (
         <p className="alert-error">Pick a guardian or type a name for the chaperone.</p>
+      )}
+
+      {/* Trip schedule (G2.5) — read-only per-day view for multi-day trips. */}
+      {isMultiDay && (
+        <section className="stack trip-schedule" style={{ width: "100%" }}>
+          <h2>Trip schedule</h2>
+          <p className="muted">
+            What happens each day — the linked competition&apos;s published
+            itinerary and this season&apos;s events, merged by day. Add park days,
+            meals, and free time as events and they&apos;ll show here on the right
+            day.
+          </p>
+          {scheduleByDay.map((day) => (
+            <div key={day.key} className="stack" style={{ gap: "0.35rem" }}>
+              <h3 className="itinerary-day-heading">{day.label}</h3>
+              {day.entries.length === 0 ? (
+                <p className="muted">—  nothing scheduled yet</p>
+              ) : (
+                <ul className="stack" style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                  {day.entries.map((e, i) => (
+                    <li key={i} className="row-inline" style={{ gap: "0.5rem" }}>
+                      <strong>{formatTimeInTz(e.startsAt, tz)}</strong>
+                      <span>{e.label}</span>
+                      <span className="chip">{e.source === "event" ? "event" : "itinerary"}</span>
+                      {e.sublabel && <span className="muted">· {e.sublabel}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* ============ H1: bulk-fill tap-chip queue (active target) ============ */}
+      {/* Drag-free bus/room loading for phones: with a target picked, the whole
+          unassigned queue (for that kind) becomes big tap-chips. One tap = one
+          rider placed; the page re-renders from server data and the sticky bar
+          below keeps the target up. Renders for every viewport (great on desktop
+          too) and sits alongside — not replacing — the two-pane flow. */}
+      {fillGroup && (
+        <section className="travel-fill-queue stack">
+          <h2>
+            Tap a name to add to {fillGroup.label}
+          </h2>
+          {fillChips.length === 0 ? (
+            <p className="alert-ok">
+              Everyone who still needs a{" "}
+              {GROUP_KIND_LABEL[fillGroup.kind].toLowerCase()} is placed.
+            </p>
+          ) : (
+            <div className="travel-chip-grid">
+              {fillChips.map((s) => {
+                const isAbsent = absent.has(s.id);
+                const needs = neededOf(s.id);
+                return (
+                  <form
+                    key={s.id}
+                    action={assignStudent}
+                    className="travel-chip-form"
+                  >
+                    <input type="hidden" name="programId" value={program.id} />
+                    <input type="hidden" name="slug" value={slug} />
+                    <input type="hidden" name="tripId" value={tripId} />
+                    <input type="hidden" name="travelGroupId" value={fillGroup.id} />
+                    <input type="hidden" name="studentId" value={s.id} />
+                    <input type="hidden" name="kind" value={fillGroup.kind} />
+                    <input type="hidden" name="fill" value={fillGroup.id} />
+                    <button
+                      type="submit"
+                      className="travel-chip"
+                      style={{ opacity: isAbsent ? 0.6 : 1 }}
+                    >
+                      <span className="travel-chip-name">{studentName(s)}</span>
+                      <span className="travel-chip-badges">
+                        {isAbsent && <span className="chip danger">absent</span>}
+                        {needs.map((k) => (
+                          <span key={k} className="chip">
+                            needs {GROUP_KIND_LABEL[k].toLowerCase()}
+                          </span>
+                        ))}
+                      </span>
+                    </button>
+                  </form>
+                );
+              })}
+            </div>
+          )}
+        </section>
       )}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", width: "100%" }}>
@@ -391,6 +601,7 @@ export default async function TripPage({
                       ? (studentKinds.get(selId)?.has(kind) ?? false)
                       : false;
                     const canAssignHere = selStudent != null && selNeeds.includes(kind);
+                    const isFillTarget = fillGroup?.id === g.id;
                     return (
                       <div
                         key={g.id}
@@ -398,7 +609,13 @@ export default async function TripPage({
                         style={{
                           flex: "1 1 15rem",
                           minWidth: "13rem",
-                          border: `1px solid ${over ? "var(--warn)" : "var(--border)"}`,
+                          border: `1px solid ${
+                            isFillTarget
+                              ? "var(--accent)"
+                              : over
+                                ? "var(--warn)"
+                                : "var(--border)"
+                          }`,
                           background: over ? "rgba(217,119,6,0.08)" : undefined,
                           borderRadius: 8,
                           padding: "0.75rem",
@@ -413,6 +630,26 @@ export default async function TripPage({
                           </span>
                         </div>
                         {g.notes && <p className="muted">{g.notes}</p>}
+
+                        {/* H1: fill affordance — make this group the active target.
+                            Tapping switches the sticky bar + chip queue to it;
+                            when it's already active, "Done" drops ?fill=. */}
+                        {canWrite &&
+                          (isFillTarget ? (
+                            <Link
+                              href={`/${slug}/travel/${tripId}`}
+                              className="travel-fill-toggle is-active"
+                            >
+                              Filling this {GROUP_KIND_LABEL[kind].toLowerCase()} — Done
+                            </Link>
+                          ) : (
+                            <Link
+                              href={`/${slug}/travel/${tripId}?fill=${g.id}`}
+                              className="travel-fill-toggle"
+                            >
+                              Fill this {GROUP_KIND_LABEL[kind].toLowerCase()}
+                            </Link>
+                          ))}
 
                         {/* Members */}
                         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -587,7 +824,7 @@ export default async function TripPage({
 
                         {/* Edit / delete group */}
                         {canWrite && (
-                          <details>
+                          <details open={confirmDeleteGroup === g.id}>
                             <summary className="muted">Edit {GROUP_KIND_LABEL[kind].toLowerCase()}</summary>
                             <form action={updateGroup} className="stack" style={{ gap: "0.35rem", marginTop: "0.5rem" }}>
                               <input type="hidden" name="programId" value={program.id} />
@@ -612,15 +849,34 @@ export default async function TripPage({
                               </label>
                               <button type="submit" className="secondary">Save</button>
                             </form>
-                            <form action={deleteGroup} style={{ marginTop: "0.5rem" }}>
-                              <input type="hidden" name="programId" value={program.id} />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="tripId" value={tripId} />
-                              <input type="hidden" name="groupId" value={g.id} />
-                              <button type="submit" className="linklike danger">
-                                Delete this {GROUP_KIND_LABEL[kind].toLowerCase()} (and its assignments)
-                              </button>
-                            </form>
+                            {confirmDeleteGroup === g.id ? (
+                              <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
+                                <p>
+                                  Delete {g.label}? Its rider assignments and chaperones are
+                                  removed too.
+                                </p>
+                                <form action={deleteGroup} className="row-inline">
+                                  <input type="hidden" name="programId" value={program.id} />
+                                  <input type="hidden" name="slug" value={slug} />
+                                  <input type="hidden" name="tripId" value={tripId} />
+                                  <input type="hidden" name="groupId" value={g.id} />
+                                  <button type="submit" className="danger">
+                                    Confirm delete
+                                  </button>
+                                  <Link href={`/${slug}/travel/${tripId}`}>Cancel</Link>
+                                </form>
+                              </div>
+                            ) : (
+                              <p style={{ marginTop: "0.5rem" }}>
+                                <Link
+                                  className="linklike danger"
+                                  href={`/${slug}/travel/${tripId}?confirm=deletegroup&groupId=${g.id}`}
+                                >
+                                  Delete this {GROUP_KIND_LABEL[kind].toLowerCase()} (and its
+                                  assignments)
+                                </Link>
+                              </p>
+                            )}
                           </details>
                         )}
                       </div>
@@ -662,19 +918,57 @@ export default async function TripPage({
         </div>
       </div>
 
-      {/* Danger zone — delete trip */}
+      {/* Danger zone — delete trip (two-tap confirm-box idiom) */}
       {canWrite && (
-        <details>
+        <details open={confirmDeleteTrip}>
           <summary className="muted">Delete trip</summary>
-          <form action={deleteTrip} style={{ marginTop: "0.5rem" }}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="tripId" value={tripId} />
-            <button type="submit" className="linklike danger">
-              Delete this trip and all its groups, assignments, and chaperones
-            </button>
-          </form>
+          {confirmDeleteTrip ? (
+            <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
+              <p>Delete this trip? All its buses, rooms, and assignments go with it.</p>
+              <form action={deleteTrip} className="row-inline">
+                <input type="hidden" name="programId" value={program.id} />
+                <input type="hidden" name="slug" value={slug} />
+                <input type="hidden" name="tripId" value={tripId} />
+                <button type="submit" className="danger">
+                  Confirm delete trip
+                </button>
+                <Link href={`/${slug}/travel/${tripId}`}>Cancel</Link>
+              </form>
+            </div>
+          ) : (
+            <p style={{ marginTop: "0.5rem" }}>
+              <Link
+                className="linklike danger"
+                href={`/${slug}/travel/${tripId}?confirm=deletetrip`}
+              >
+                Delete this trip and all its groups, assignments, and chaperones
+              </Link>
+            </p>
+          )}
         </details>
+      )}
+
+      {/* H1: sticky target bar — pinned to the viewport bottom while a group is
+          being filled. Styled like the mobile tab bar. Count/capacity re-derive
+          from server data every render; over-capacity warns (never blocks). The
+          "Done" control is a real link that drops ?fill= and returns to browse. */}
+      {fillGroup && (
+        <div className="travel-fill-bar">
+          <span className="travel-fill-bar-label">
+            Filling <strong>{fillGroup.label}</strong>
+            <span className={fillOver ? "chip danger" : "chip"}>
+              {fillCount}
+              {fillGroup.capacity != null ? ` / ${fillGroup.capacity}` : ""}
+              {fillOver ? " over" : ""}
+            </span>
+          </span>
+          <Link
+            href={`/${slug}/travel/${tripId}`}
+            className="travel-fill-bar-done"
+          >
+            Done
+          </Link>
+        </div>
       )}
     </section>
   );

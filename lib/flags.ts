@@ -17,7 +17,8 @@ export type FlagKey =
   | "shifts"
   | "events"
   | "archive"
-  | "support_access";
+  | "support_access"
+  | "hosting";
 
 interface FlagDefinition {
   description: string;
@@ -73,6 +74,11 @@ export const flagRegistry: Record<FlagKey, FlagDefinition> = {
     description: "Read-only support impersonation view.",
     default: false,
   },
+  hosting: {
+    description:
+      "Host-mode: run your own invitational — visiting schools, homerooms, schedule, packets.",
+    default: false,
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -101,6 +107,12 @@ export const flagRegistry: Record<FlagKey, FlagDefinition> = {
 // never by a program's tier — so it stays at its registry default (off) unless a
 // per-program override flips it. Tier bundles decide PRODUCT surface, not the
 // cross-tenant support path.
+//
+// NOTE: `hosting` (Wave I host-mode) is likewise NOT in any tier bundle — same
+// posture as support_access. Running your own invitational is a pilot capability
+// enabled per-program via feature_overrides, not a tier entitlement yet, so it
+// stays at its registry default (off) until a per-program override turns it on.
+// This is a deliberate product decision, recorded in specs/002-roadmap-wave-2 I1.
 
 export type ProgramTier = "prep" | "varsity" | "program";
 

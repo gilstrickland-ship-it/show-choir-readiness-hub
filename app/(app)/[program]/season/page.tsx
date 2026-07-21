@@ -3,7 +3,11 @@ import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { createClient } from "@/lib/supabase/server";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
+import { SETTINGS_ROLES } from "@/lib/nav";
+import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { loadCompReadiness } from "@/lib/readiness";
+import { activeShareLinks, seasonCalendarUrl } from "@/lib/tokens";
+import { regenerateSeasonCalendarShareLink } from "./actions";
 import {
   zonedWallToUtc,
   zonedDateKey,
@@ -39,7 +43,7 @@ function monthAbbr(instant: Date, timeZone: string): string {
     .toUpperCase();
 }
 
-type ItemKind = "comp" | "event" | "trip";
+type ItemKind = "comp" | "event" | "trip" | "hosting";
 
 interface SeasonItem {
   key: string;
@@ -78,7 +82,7 @@ export default async function SeasonPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ filter?: string }>;
+  searchParams: Promise<{ filter?: string; calShare?: string; calError?: string }>;
 }) {
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
@@ -99,12 +103,31 @@ export default async function SeasonPage({
   const base = `/${slug}`;
   const seasonId = season?.id ?? null;
 
-  const { filter: filterParam } = await searchParams;
+  const { filter: filterParam, calShare, calError } = await searchParams;
   const filter: Filter = FILTERS.includes(filterParam as Filter)
     ? (filterParam as Filter)
     : "everything";
 
   const supabase = await createClient();
+
+  // Season-calendar subscribe box (Wave G / G1) — director/admin (∪ comp-write,
+  // same role set). The subscribable feed URL is knowable only at mint time
+  // (hash-only storage), so it rides ?calShare= once; otherwise we show that a
+  // link is active + a rotate button. Listed/revoked in Settings → Share links.
+  const canManageCalendar =
+    SETTINGS_ROLES.includes(role) || COMPETITION_WRITE_ROLES.includes(role);
+  const activeSeasonCalLinks =
+    canManageCalendar && season
+      ? (await activeShareLinks(supabase, program.id)).filter(
+          (l) => l.resource === "season_calendar" && l.resource_id === season.id,
+        )
+      : [];
+  const freshSeasonCalUrl = calShare ? seasonCalendarUrl(calShare) : null;
+  // Same feed, scheme swapped: Apple Calendar opens webcal:// straight into its
+  // Subscribe dialog, while Google Calendar wants the https form under "From URL".
+  const freshSeasonCalWebcal = freshSeasonCalUrl
+    ? freshSeasonCalUrl.replace(/^https:\/\//, "webcal://")
+    : null;
 
   // Ensemble names (shared by comp + event meta).
   const ensembleName = new Map<string, string>();
@@ -335,6 +358,35 @@ export default async function SeasonPage({
     }
   }
 
+  // ---- Hosted invitationals (Wave I2) ---------------------------------------
+  // When host-mode is on, the events the program RUNS render as distinguishable
+  // spine rows (a "Hosting" tag, link to the event command center). Lean: queried
+  // only when the flag is on. Undated events have no spine position (omitted).
+  if (flags.hosting && seasonId) {
+    const { data: hostedData } = await supabase
+      .from("hosted_events")
+      .select("id, name, event_date")
+      .eq("program_id", program.id)
+      .eq("season_id", seasonId)
+      .not("event_date", "is", null)
+      .order("event_date", { ascending: true });
+    for (const h of (hostedData as
+      | { id: string; name: string; event_date: string }[]
+      | null) ?? []) {
+      const instant = zonedWallToUtc(`${h.event_date}T00:00`, tz);
+      if (!instant) continue;
+      items.push({
+        key: `hosting-${h.id}`,
+        ...place("hosting", instant),
+        tag: "Hosting",
+        tagClass: "hosting",
+        title: h.name,
+        href: `${base}/hosting/${h.id}`,
+        meta: "Invitational you host",
+      });
+    }
+  }
+
   // Chronological order (program tz).
   items.sort((a, b) => a.instant.getTime() - b.instant.getTime());
 
@@ -373,7 +425,9 @@ export default async function SeasonPage({
   if (flags.events) pills.push({ key: "events", label: "Events" });
   if (flags.travel) pills.push({ key: "trips", label: "Trips" });
 
-  const canFillShifts = flags.shifts && SHIFT_WRITE_ROLES.includes(role);
+  // /comms/shifts requireFlag-gates on BOTH comms AND shifts, so the "Fill
+  // shifts" link only shows when both are on (otherwise it would 404).
+  const canFillShifts = flags.shifts && flags.comms && SHIFT_WRITE_ROLES.includes(role);
 
   return (
     <section className="season">
@@ -418,6 +472,66 @@ export default async function SeasonPage({
           Competitions, events, and travel — one spine, in order.
         </span>
       </div>
+
+      {/* Subscribe in your calendar (Wave G / G1) — director/admin. One live
+          feed of the whole season for Google Calendar / Apple Calendar. */}
+      {canManageCalendar && season && (
+        <div className="confirm-box stack" style={{ width: "100%" }}>
+          <h2>Subscribe in your calendar</h2>
+          {calError === "season" && (
+            <p className="alert-error">Activate a season before creating a calendar link.</p>
+          )}
+          {calError === "mint" && (
+            <p className="alert-error">
+              The old calendar link was retired, but a new one couldn&apos;t be created. Try
+              again.
+            </p>
+          )}
+          {freshSeasonCalUrl ? (
+            <>
+              <p className="muted">
+                A live calendar feed of {season.label} — every competition, event,
+                and trip. Copy it now (for privacy the URL is shown only this once).
+                It stays current all season — new comps and time changes appear
+                automatically.
+              </p>
+              <p className="muted">
+                <strong>Google Calendar:</strong> use the https link (Other calendars →
+                From URL).
+              </p>
+              <code style={{ wordBreak: "break-all" }}>{freshSeasonCalUrl}</code>
+              <p className="muted">
+                <strong>Apple Calendar:</strong> the webcal link opens Subscribe directly.
+              </p>
+              <code style={{ wordBreak: "break-all" }}>{freshSeasonCalWebcal}</code>
+            </>
+          ) : activeSeasonCalLinks.length > 0 ? (
+            <p className="muted">
+              A season calendar link is active for {season.label}. For privacy the
+              URL is only shown once at creation — regenerate to get a fresh copyable
+              link (the old one stops working). Active links are listed in{" "}
+              <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
+            </p>
+          ) : (
+            <p className="muted">
+              Create a live calendar feed of the whole season. Paste it into Google
+              Calendar (<strong>Other calendars → From URL</strong>) or Apple
+              Calendar — it updates itself as the season changes, so you never
+              re-enter a date.
+            </p>
+          )}
+          <form action={regenerateSeasonCalendarShareLink}>
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="seasonId" value={season.id} />
+            <button type="submit" className="secondary">
+              {activeSeasonCalLinks.length > 0
+                ? "Regenerate calendar link"
+                : "Create calendar link"}
+            </button>
+          </form>
+        </div>
+      )}
 
       {undatedCompCount > 0 && (
         <p className="muted season-undated-note">
@@ -524,6 +638,10 @@ export default async function SeasonPage({
                           No trip yet —{" "}
                           <Link href={`${base}/travel`}>create trip</Link>
                         </span>
+                      ) : it.kind === "hosting" ? (
+                        <Link className="season-link" href={it.href ?? `${base}/hosting`}>
+                          Open
+                        </Link>
                       ) : it.kind === "trip" ? (
                         <Link className="season-link" href={it.href ?? `${base}/travel`}>
                           Plan

@@ -8,8 +8,14 @@ import { TREASURY_ROLES } from "@/lib/nav";
 import {
   formatCents,
   sumActuals,
+  listMonthsWithEntries,
+  monthKeyForDate,
+  reconciledThroughMonth,
+  formatMonthKey,
+  CATEGORY_DIRECTION_LABELS,
   type CategoryDirection,
   type LedgerDirection,
+  type LedgerMonthRow,
 } from "@/lib/treasury";
 import { TreasuryTabs } from "../TreasuryTabs";
 
@@ -35,6 +41,7 @@ interface EntryRow {
   budget_line_id: string | null;
   competition_id: string | null;
   trip_id: string | null;
+  entry_date: string;
 }
 interface NamedRow {
   id: string;
@@ -93,7 +100,7 @@ export default async function ReportsPage({
         supabase
           .from("ledger_entries")
           .select(
-            "direction, amount_cents, voided_at, budget_line_id, competition_id, trip_id",
+            "direction, amount_cents, voided_at, budget_line_id, competition_id, trip_id, entry_date",
           )
           .eq("program_id", program.id)
           .eq("season_id", season.id)
@@ -130,7 +137,6 @@ export default async function ReportsPage({
 
   const lineName = new Map(lines.map((l) => [l.id, l.name]));
   const lineCat = new Map(lines.map((l) => [l.id, l.category_id]));
-  const catById = new Map(cats.map((c) => [c.id, c]));
 
   // ---- Board snapshot rollups ----------------------------------------------
   const snapshot = sumActuals(entries);
@@ -149,6 +155,22 @@ export default async function ReportsPage({
     }
   }
   const asOf = formatDateTimeInTz(new Date(), program.timezone);
+
+  // "Reconciled through" (Wave L): the latest contiguous month whose books were
+  // checked against the bank statement. `entries` is already void-free.
+  const monthsWithEntries = listMonthsWithEntries(entries as LedgerMonthRow[]);
+  let reconciledThroughLabel: string | null = null;
+  if (season && monthsWithEntries.length > 0) {
+    const { data: recRows } = await supabase
+      .from("ledger_reconciliations")
+      .select("month")
+      .eq("program_id", program.id);
+    const reconciledKeys = ((recRows as { month: string }[] | null) ?? [])
+      .map((r) => monthKeyForDate(r.month))
+      .filter((k): k is string => k !== null);
+    const through = reconciledThroughMonth(monthsWithEntries, reconciledKeys);
+    reconciledThroughLabel = through ? formatMonthKey(through) : null;
+  }
 
   // ---- Per-event cost report ------------------------------------------------
   const kind = event?.startsWith("comp:")
@@ -285,6 +307,11 @@ export default async function ReportsPage({
               board is a fiduciary norm — and the treasurer&apos;s protection.
               As of {asOf}.
             </p>
+            <p className="muted">
+              {reconciledThroughLabel
+                ? `Reconciled through ${reconciledThroughLabel}.`
+                : "No months reconciled yet."}
+            </p>
 
             <div className="detail-list">
               <div>
@@ -316,7 +343,7 @@ export default async function ReportsPage({
                 {cats.map((c) => (
                   <tr key={c.id}>
                     <td>{c.name}</td>
-                    <td>{catById.get(c.id)?.direction}</td>
+                    <td>{CATEGORY_DIRECTION_LABELS[c.direction]}</td>
                     <td className="num">{formatCents(catActual.get(c.id) ?? 0)}</td>
                   </tr>
                 ))}

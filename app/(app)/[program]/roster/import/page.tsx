@@ -35,6 +35,9 @@ export default async function RosterImportPage({
         Health and medical columns are detected by their header and skipped
         entirely — this product does not store that information.
       </p>
+      <p className="muted">
+        Exports from Charms or CutTime work as-is — no cleanup needed.
+      </p>
 
       <ImportClient programId={program.id} />
     </section>

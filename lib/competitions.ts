@@ -18,6 +18,14 @@ export const ATTENDANCE_WRITE_ROLES: readonly Role[] = [
 export const COMPETITION_STATUSES = ["planned", "confirmed", "done"] as const;
 export type CompetitionStatus = (typeof COMPETITION_STATUSES)[number];
 
+// Friendly labels for the competition status enum. The stored value is unchanged;
+// only the displayed text differs (mirrors the treasury/hosting label-map idiom).
+export const COMPETITION_STATUS_LABELS: Record<CompetitionStatus, string> = {
+  planned: "Planned",
+  confirmed: "Confirmed",
+  done: "Done",
+};
+
 export const ATTENDANCE_STATUSES = ["expected", "absent", "partial"] as const;
 export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
 

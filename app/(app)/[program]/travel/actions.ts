@@ -171,6 +171,12 @@ export async function assignStudent(formData: FormData): Promise<void> {
   const groupId = str(formData, "travelGroupId");
   const studentId = str(formData, "studentId");
   const kind = str(formData, "kind");
+  // H1 bulk-fill flow: when a fill target is active the chip submits carry the
+  // group id in `fill`. Preserve it through every redirect so the page re-renders
+  // with the sticky "Filling …" bar still up and the next chip a tap away — the
+  // ?sel= precedent, threaded through success/conflict/error alike.
+  const fill = str(formData, "fill");
+  const fillQ = fill ? `fill=${fill}` : "";
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
   const supabase = await createClient();
@@ -184,13 +190,21 @@ export async function assignStudent(formData: FormData): Promise<void> {
     // One-room-one-bus (or duplicate) — surface kindly with enough context for the
     // page to name the student and the group they're already in (§6).
     redirect(
-      `/${slug}/travel/${tripId}?conflict=${studentId}&conflictKind=${kind}`,
+      `/${slug}/travel/${tripId}?conflict=${studentId}&conflictKind=${kind}${
+        fillQ ? `&${fillQ}` : ""
+      }`,
     );
   }
-  if (error) redirect(`/${slug}/travel/${tripId}?error=assign&sel=${studentId}`);
+  if (error) {
+    redirect(
+      `/${slug}/travel/${tripId}?error=assign&sel=${studentId}${
+        fillQ ? `&${fillQ}` : ""
+      }`,
+    );
+  }
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}`);
+  redirect(`/${slug}/travel/${tripId}${fillQ ? `?${fillQ}` : ""}`);
 }
 
 export async function unassignStudent(formData: FormData): Promise<void> {

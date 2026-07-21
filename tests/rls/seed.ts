@@ -85,6 +85,21 @@ insert into absence_requests (id, program_id, competition_id, student_id, guardi
 insert into events (id, program_id, season_id, title, kind) values
   ('${p.event}', '${p.program}', '${p.seasonActive}', 'Rehearsal', 'rehearsal');
 
+-- Host-mode (Wave I): one hosted invitational + a visiting school + a slot, so
+-- the isolation sweep has cross-tenant rows for all three hosting tables. Only
+-- adult professional contact + a performer COUNT — never visiting students.
+insert into hosted_events (id, program_id, season_id, name, event_date, status) values
+  ('${p.hostedEvent}', '${p.program}', '${p.seasonActive}', '${prefix} Invitational', current_date, 'planning');
+
+insert into hosted_schools
+  (id, program_id, hosted_event_id, school_name, ensemble_name, director_name, director_email, performer_count, division, homeroom, sort_order) values
+  ('${p.hostedSchool}', '${p.program}', '${p.hostedEvent}', '${prefix} Visiting HS', 'Varsity Singers',
+   '${prefix} Visiting Director', '${prefix}-visiting@example.test', 42, 'Large Mixed', 'Rm 214', 0);
+
+insert into hosted_slots
+  (id, program_id, hosted_event_id, hosted_school_id, kind, label, duration_minutes, sort_order) values
+  ('${p.hostedSlot}', '${p.program}', '${p.hostedEvent}', '${p.hostedSchool}', 'perform', '${prefix} Visiting HS — Perform', 25, 0);
+
 insert into costume_sets (id, program_id, season_id, ensemble_id, name) values
   ('${p.costumeSet}', '${p.program}', '${p.seasonActive}', '${p.ensemble}', 'Opener');
 
@@ -124,6 +139,12 @@ insert into ledger_entries (id, program_id, season_id, direction, amount_cents, 
 
 insert into ledger_audit (id, program_id, entry_id, action, actor) values
   ('${p.ledgerAudit}', '${p.program}', '${p.ledgerLive}', 'create', '${p.treasurer}');
+
+-- Monthly reconciliation record (Wave L): one reconciled month per program so the
+-- isolation sweep + role spec have cross-tenant rows. Treasurer-marked; a fixed
+-- past month keeps it clear of any current-month collisions the role spec inserts.
+insert into ledger_reconciliations (id, program_id, month, reconciled_by) values
+  ('${p.ledgerReconciliation}', '${p.program}', '2026-06-01', '${p.treasurer}');
 
 insert into shifts (id, program_id, season_id, competition_id, title) values
   ('${p.shift}', '${p.program}', '${p.seasonActive}', '${p.competition}', 'Concessions');
@@ -183,6 +204,11 @@ insert into ledger_entries
 
 insert into ledger_audit (id, program_id, entry_id, action, actor) values
   ('${p.ledgerAuditExtra}', '${p.program}', '${p.ledgerVoided}', 'void', '${p.treasurer}');
+
+-- Archived-season hosted event: reads still succeed; writes to it (and to any
+-- school/slot under it) are frozen (archive.spec exercises the rejection).
+insert into hosted_events (id, program_id, season_id, name, event_date, status) values
+  ('${p.hostedEventArchived}', '${p.program}', '${p.seasonArchived}', 'Archived Invitational', null, 'done');
 `;
 }
 

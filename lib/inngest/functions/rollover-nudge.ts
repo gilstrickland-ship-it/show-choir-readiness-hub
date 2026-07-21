@@ -3,6 +3,7 @@ import { inngest } from "@/lib/inngest/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email";
 import { appBaseUrl } from "@/lib/tokens";
+import { formatDateInTz } from "@/lib/datetime";
 
 // Season rollover-nudge cron (§10 Inngest list, T037). A spring reminder: for
 // each program whose ACTIVE season ends within ~90 days and that has NOT already
@@ -18,6 +19,7 @@ interface ProgramRow {
   id: string;
   name: string;
   slug: string;
+  timezone: string;
 }
 
 interface SeasonRow {
@@ -40,7 +42,9 @@ export const rolloverNudgeCron = inngest.createFunction(
       const horizonKey = horizon.toISOString().slice(0, 10);
       const todayKey = now.toISOString().slice(0, 10);
 
-      const { data: progRows } = await supabase.from("programs").select("id, name, slug");
+      const { data: progRows } = await supabase
+        .from("programs")
+        .select("id, name, slug, timezone");
       const programs = (progRows as ProgramRow[] | null) ?? [];
 
       let nudged = 0;
@@ -97,7 +101,7 @@ export const rolloverNudgeCron = inngest.createFunction(
           const res = await sendEmail({
             to,
             subject: `Time to plan next season for ${p.name}`,
-            html: `<p>Your current season wraps up soon (ends ${active.ends_on}) and you haven't started next season yet.</p>
+            html: `<p>Your current season wraps up soon (ends ${formatDateInTz(`${active.ends_on}T12:00:00Z`, p.timezone)}) and you haven't started next season yet.</p>
 <p>When you're ready, the <a href="${rolloverUrl}">season rollover wizard</a> carries your ensembles forward, lets you pick returning students, and re-points costume sets — then you activate the new season.</p>
 <p>No rush, and nothing changes until you do it.</p>`,
           });

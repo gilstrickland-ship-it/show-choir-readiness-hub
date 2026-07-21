@@ -8,7 +8,7 @@
 // ============================================================================
 
 import { describe, test, expect } from "vitest";
-import { escapeLike } from "@/lib/email";
+import { escapeLike, fromDomainMatchesBrand } from "@/lib/email";
 
 describe("escapeLike", () => {
   test("leaves an ordinary address untouched", () => {
@@ -43,5 +43,35 @@ describe("escapeLike", () => {
     const escaped = escapeLike("100%_off@x.io");
     // No `%` or `_` remains unpreceded by a backslash.
     expect(/(?<!\\)[%_]/.test(escaped)).toBe(false);
+  });
+});
+
+describe("fromDomainMatchesBrand", () => {
+  test("passes when the From domain is exactly the brand domain", () => {
+    expect(fromDomainMatchesBrand("boosters.org", "boosters.org")).toBe(true);
+  });
+
+  test("passes for a dedicated sending subdomain of the brand domain", () => {
+    expect(fromDomainMatchesBrand("mail.boosters.org", "boosters.org")).toBe(true);
+    expect(fromDomainMatchesBrand("send.mail.boosters.org", "boosters.org")).toBe(true);
+  });
+
+  test("is case-insensitive", () => {
+    expect(fromDomainMatchesBrand("Mail.Boosters.ORG", "boosters.org")).toBe(true);
+  });
+
+  test("rejects an unrelated domain and a lookalike suffix", () => {
+    expect(fromDomainMatchesBrand("evil.org", "boosters.org")).toBe(false);
+    // Not a subdomain — must be preceded by a dot, not just end with the string.
+    expect(fromDomainMatchesBrand("notboosters.org", "boosters.org")).toBe(false);
+  });
+
+  test("rejects an unverifiable .example placeholder on either side", () => {
+    expect(fromDomainMatchesBrand("octv.example", "octv.example")).toBe(false);
+    expect(fromDomainMatchesBrand("mail.octv.example", "octv.example")).toBe(false);
+  });
+
+  test("rejects an empty From domain", () => {
+    expect(fromDomainMatchesBrand("", "boosters.org")).toBe(false);
   });
 });

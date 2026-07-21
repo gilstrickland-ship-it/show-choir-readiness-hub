@@ -14,7 +14,11 @@ import {
   zonedDateKey,
   calendarDaysBetween,
   formatTimeZoneLabel,
+  nextDateKey,
+  dateKeyRange,
+  formatDayHeadingInTz,
 } from "@/lib/datetime";
+import { groupItemsByDay } from "@/lib/itinerary-days";
 
 describe("zonedWallToUtc", () => {
   test("Central Daylight Time (summer): CDT is UTC-5", () => {
@@ -119,5 +123,108 @@ describe("formatTimeZoneLabel", () => {
     expect(formatTimeZoneLabel("America/Indiana/Indianapolis")).toBe("Indianapolis");
     expect(formatTimeZoneLabel("Pacific/Pago_Pago")).toBe("Pago Pago");
     expect(formatTimeZoneLabel("UTC")).toBe("UTC");
+  });
+});
+
+describe("nextDateKey", () => {
+  test("advances one calendar day, DST-safe (date keys carry no offset)", () => {
+    expect(nextDateKey("2026-04-10")).toBe("2026-04-11");
+    expect(nextDateKey("2026-02-28")).toBe("2026-03-01"); // 2026 not a leap year
+    expect(nextDateKey("2026-12-31")).toBe("2027-01-01");
+    // US spring-forward day still advances by exactly one calendar day.
+    expect(nextDateKey("2026-03-08")).toBe("2026-03-09");
+  });
+  test("null / invalid input yields null", () => {
+    expect(nextDateKey(null)).toBeNull();
+    expect(nextDateKey("nope")).toBeNull();
+  });
+});
+
+describe("dateKeyRange (inclusive)", () => {
+  test("enumerates every day from start to end inclusive", () => {
+    expect(dateKeyRange("2026-05-07", "2026-05-10")).toEqual([
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-09",
+      "2026-05-10",
+    ]);
+  });
+  test("single-day range is just that day; inverted/empty is []", () => {
+    expect(dateKeyRange("2026-05-07", "2026-05-07")).toEqual(["2026-05-07"]);
+    expect(dateKeyRange("2026-05-10", "2026-05-07")).toEqual([]);
+    expect(dateKeyRange(null, "2026-05-07")).toEqual([]);
+  });
+});
+
+describe("formatDayHeadingInTz", () => {
+  test("full weekday + short month + day, no year, in program tz", () => {
+    // 2026-04-10 13:15 UTC is still Apr 10 in US Central.
+    expect(
+      formatDayHeadingInTz("2026-04-10T13:15:00Z", "America/Chicago"),
+    ).toBe("Friday, Apr 10");
+  });
+  test("buckets by PROGRAM tz, not UTC (late-night instant)", () => {
+    // 2026-04-11 02:30 UTC is still Apr 10 (21:30) in US Central.
+    expect(
+      formatDayHeadingInTz("2026-04-11T02:30:00Z", "America/Chicago"),
+    ).toBe("Friday, Apr 10");
+  });
+});
+
+describe("groupItemsByDay (Wave G / G2)", () => {
+  const tz = "America/Chicago";
+  const it = (id: string, starts_at: string | null) => ({ id, starts_at });
+
+  test("single calendar day → not multiDay, one group, flat render intended", () => {
+    const { multiDay, groups } = groupItemsByDay(
+      [it("a", "2026-04-10T13:00:00Z"), it("b", "2026-04-10T15:00:00Z")],
+      tz,
+      (i) => i.starts_at,
+    );
+    expect(multiDay).toBe(false);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items.map((i) => i.id)).toEqual(["a", "b"]);
+  });
+
+  test("spanning two days → multiDay, day groups in ascending order with labels", () => {
+    const { multiDay, groups } = groupItemsByDay(
+      [
+        it("fri", "2026-04-10T14:00:00Z"),
+        it("sat", "2026-04-11T14:00:00Z"),
+      ],
+      tz,
+      (i) => i.starts_at,
+    );
+    expect(multiDay).toBe(true);
+    expect(groups.map((g) => g.key)).toEqual(["2026-04-10", "2026-04-11"]);
+    expect(groups[0].label).toBe("Friday, Apr 10");
+    expect(groups[1].label).toBe("Saturday, Apr 11");
+  });
+
+  test("untimed items bucket last under an 'Untimed' label", () => {
+    const { multiDay, groups } = groupItemsByDay(
+      [
+        it("sat", "2026-04-11T14:00:00Z"),
+        it("none", null),
+        it("fri", "2026-04-10T14:00:00Z"),
+      ],
+      tz,
+      (i) => i.starts_at,
+    );
+    expect(multiDay).toBe(true);
+    expect(groups.map((g) => g.key)).toEqual(["2026-04-10", "2026-04-11", ""]);
+    expect(groups[2].label).toBe("Untimed");
+    expect(groups[2].items.map((i) => i.id)).toEqual(["none"]);
+  });
+
+  test("untimed-only list is not multiDay (no timed days to span)", () => {
+    const { multiDay, groups } = groupItemsByDay(
+      [it("x", null), it("y", null)],
+      tz,
+      (i) => i.starts_at,
+    );
+    expect(multiDay).toBe(false);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe("Untimed");
   });
 });

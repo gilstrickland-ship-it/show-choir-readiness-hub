@@ -74,13 +74,22 @@ export interface ParseResult {
 // Column mapping
 // ----------------------------------------------------------------------------
 
+// A guardian column may carry a split first/last name (Charms/CutTime "Adult 1
+// First Name" / "Adult 1 Last Name"), which we concatenate into `name` at parse.
+type GuardianField = keyof ParsedGuardian | "nameFirst" | "nameLast";
+
+// Per-row, per-index accumulator for a guardian while a row is being read. Holds
+// the split name halves until they are concatenated into the final `name`.
+type GuardianAccum = Partial<Record<GuardianField, string>>;
+
 type ColumnMap =
   | { type: "first" }
   | { type: "last" }
   | { type: "name_combined" }
   | { type: "grad" }
+  | { type: "grade" }
   | { type: "size"; key: string }
-  | { type: "guardian"; index: number; field: keyof ParsedGuardian }
+  | { type: "guardian"; index: number; field: GuardianField }
   | { type: "health" }
   | { type: "unknown" };
 
@@ -97,7 +106,16 @@ function guardianIndex(n: string): number {
 
 function isHealthHeader(header: string): boolean {
   const lower = header.toLowerCase();
-  return HEALTH_HEADER_KEYWORDS.some((kw) => lower.includes(kw));
+  // A guardian "Email Address" / "Adult 1 Email Address" column is contact data,
+  // not the sensitive mailing-address column: the "address" keyword must not
+  // claim a header that also references an email. Real address columns
+  // ("Home Address", "Street Address", "Mailing Address") carry no "email"/
+  // "e-mail" token, so they still match and are dropped whole (Constitution III).
+  const mentionsEmail = /e-?mail/.test(lower);
+  return HEALTH_HEADER_KEYWORDS.some((kw) => {
+    if (kw === "address" && mentionsEmail) return false;
+    return lower.includes(kw);
+  });
 }
 
 function mapSizeColumn(n: string, sizeKeys: readonly string[]): ColumnMap | null {
@@ -111,14 +129,57 @@ function mapSizeColumn(n: string, sizeKeys: readonly string[]): ColumnMap | null
   return null;
 }
 
-function mapGuardianField(n: string): keyof ParsedGuardian | null {
+function mapGuardianField(n: string): GuardianField | null {
   // relationship BEFORE name/email so "guardianrelationship" isn't caught as name.
   if (n.includes("relation") || n.includes("relationship")) return "relationship";
   if (n.includes("email") || n.includes("mail")) return "email";
   if (n.includes("phone") || n.includes("cell") || n.includes("mobile") || n.includes("tel"))
     return "phone";
+  // Split first/last name columns ("Adult 1 First Name") BEFORE the generic
+  // "name" catch — otherwise both halves collapse onto the single `name` field.
+  if (n.includes("first")) return "nameFirst";
+  if (n.includes("last")) return "nameLast";
   if (n.includes("name")) return "name";
   return null;
+}
+
+// Grade → graduation year. The senior (12th) class graduates NEXT calendar year
+// during the fall term (Aug–Dec) and THIS calendar year during the spring term
+// (Jan–Jul); every lower grade adds one more year. `now` is an explicit param so
+// the mapping is deterministic and unit-testable. Grades outside 9–12 (and any
+// unparseable value) return null — the caller treats that as an invalid grade.
+export function gradYearFromGrade(
+  grade: string | number,
+  now: Date,
+  timeZone?: string,
+): number | null {
+  const g =
+    typeof grade === "number"
+      ? grade
+      : parseInt(String(grade).match(/(\d+)/)?.[1] ?? "", 10);
+  if (!Number.isFinite(g) || g < 9 || g > 12) return null;
+  // The term boundary (fall Aug–Dec vs spring Jan–Jul) must be read in the
+  // program's own timezone, not the server's — a Jul-31-evening import in Chicago
+  // is still the spring term even though it is already Aug 1 in UTC. When a zone
+  // is given, derive month/year there via Intl (like lib/datetime.ts); with no
+  // zone the original server-local behavior is preserved (deterministic for the
+  // unit tests, which pass local-time Date anchors).
+  let year: number;
+  let monthIndex: number; // 0 = January
+  if (timeZone) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "numeric",
+    }).formatToParts(now);
+    year = Number(parts.find((p) => p.type === "year")?.value);
+    monthIndex = Number(parts.find((p) => p.type === "month")?.value) - 1;
+  } else {
+    year = now.getFullYear();
+    monthIndex = now.getMonth();
+  }
+  const seniorGradYear = year + (monthIndex >= 7 ? 1 : 0);
+  return seniorGradYear + (12 - g);
 }
 
 // Health check runs FIRST so a "guardian medical notes" column is dropped, never
@@ -129,12 +190,29 @@ function mapColumn(header: string, sizeKeys: readonly string[]): ColumnMap {
   const n = norm(header);
   if (!n) return { type: "unknown" };
 
-  const isGuardianish = n.includes("guardian") || n.includes("parent") || n.includes("contact");
+  // "adult" covers Charms/CutTime "Adult 1 …" / "Adult 2 …" contact groups.
+  const isGuardianish =
+    n.includes("guardian") || n.includes("parent") || n.includes("contact") || n.includes("adult");
   if (isGuardianish) {
     const field = mapGuardianField(n);
     if (field) return { type: "guardian", index: guardianIndex(n), field };
     // "Guardian" / "Guardian 2" bare header → treat as that guardian's name.
     return { type: "guardian", index: guardianIndex(n), field: "name" };
+  }
+
+  // Bare adult-contact columns without a "guardian"/"adult" prefix, as Charms
+  // and CutTime emit them ("Home Phone", "Cell Phone", "E-mail"). The product
+  // stores no student phone/email, so any such column is guardian-1 contact.
+  if (
+    n === "homephone" ||
+    n === "cellphone" ||
+    n === "mobilephone" ||
+    n === "phone" ||
+    n === "email" ||
+    n === "emailaddress"
+  ) {
+    const field = mapGuardianField(n);
+    if (field) return { type: "guardian", index: 1, field };
   }
 
   // Combined name column ("Student Name", "Full Name", "Name").
@@ -165,6 +243,13 @@ function mapColumn(header: string, sizeKeys: readonly string[]): ColumnMap {
     n === "year"
   ) {
     return { type: "grad" };
+  }
+
+  // "Grade" (school grade 9–12, Charms/CutTime) is NOT a graduation year — it is
+  // converted via gradYearFromGrade at parse. Kept distinct from the grad-year
+  // branch so a value like "11" is never mis-read as the 2-digit year 2011.
+  if (n === "grade" || n === "gradelevel" || n === "currentgrade") {
+    return { type: "grade" };
   }
 
   const size = mapSizeColumn(n, sizeKeys);
@@ -282,6 +367,8 @@ function trimOrNull(v: string | undefined): string | null {
 export function parseRosterCsv(
   text: string,
   sizeKeys: readonly string[] = DEFAULT_SIZE_KEYS,
+  now: Date = new Date(),
+  timeZone?: string,
 ): ParseResult {
   const grid = parseCsv(text);
   const errors: RowError[] = [];
@@ -316,8 +403,9 @@ export function parseRosterCsv(
     let first = "";
     let last = "";
     let gradRaw = "";
+    let gradeRaw = "";
     const sizes: Record<string, string> = {};
-    const guardianByIndex = new Map<number, Partial<ParsedGuardian>>();
+    const guardianByIndex = new Map<number, GuardianAccum>();
 
     cells.forEach((cellRaw, ci) => {
       const map = maps[ci];
@@ -340,6 +428,9 @@ export function parseRosterCsv(
         case "grad":
           if (cell) gradRaw = cell;
           break;
+        case "grade":
+          if (cell) gradeRaw = cell;
+          break;
         case "size":
           if (cell) sizes[map.key] = cell;
           break;
@@ -358,14 +449,34 @@ export function parseRosterCsv(
     const rowGuardians: ParsedGuardian[] = [];
     for (const idx of [...guardianByIndex.keys()].sort((a, b) => a - b)) {
       const g = guardianByIndex.get(idx)!;
-      if (g.name || g.email || g.phone || g.relationship) {
+      // A whole "name" column wins; otherwise concatenate split first/last halves.
+      const name =
+        (g.name ?? "").trim() ||
+        [g.nameFirst, g.nameLast]
+          .map((s) => (s ?? "").trim())
+          .filter(Boolean)
+          .join(" ");
+      if (name || g.email || g.phone || g.relationship) {
         rowGuardians.push({
-          name: (g.name ?? "").trim(),
-          email: trimOrNull(g.email ?? undefined),
-          phone: trimOrNull(g.phone ?? undefined),
-          relationship: trimOrNull(g.relationship ?? undefined),
+          name,
+          email: trimOrNull(g.email),
+          phone: trimOrNull(g.phone),
+          relationship: trimOrNull(g.relationship),
         });
       }
+    }
+
+    // Resolve grad year from either a graduation-year column or a school-grade
+    // column (never both meaningfully populated in real exports; grad-year wins).
+    const gradOmitted = gradRaw.trim() === "" && gradeRaw.trim() === "";
+    let gradResult: number | null | "invalid";
+    if (gradRaw.trim() !== "") {
+      gradResult = parseGradYear(gradRaw);
+    } else if (gradeRaw.trim() !== "") {
+      const gy = gradYearFromGrade(gradeRaw, now, timeZone);
+      gradResult = gy === null ? "invalid" : gy;
+    } else {
+      gradResult = null;
     }
 
     const hasStudentIdentity = first !== "" || last !== "";
@@ -403,7 +514,8 @@ export function parseRosterCsv(
     // Case B — identity repeats the student being built (same first + last, and
     // a grad year that matches or is omitted): repeated-row continuation.
     const gradMatchesCurrent =
-      current !== null && (gradRaw.trim() === "" || parseGradYear(gradRaw) === current.gradYear);
+      current !== null &&
+      (gradOmitted || (typeof gradResult === "number" && gradResult === current.gradYear));
     const identityMatchesCurrent =
       current !== null &&
       first.toLowerCase() === current.firstName.toLowerCase() &&
@@ -424,15 +536,15 @@ export function parseRosterCsv(
       continue;
     }
 
-    const grad = parseGradYear(gradRaw);
-    if (grad === "invalid") {
+    if (gradResult === "invalid") {
       errors.push({
         row: dataRow,
-        message: `Invalid grad year "${gradRaw.trim()}" — row excluded.`,
+        message: `Invalid grad year "${(gradRaw || gradeRaw).trim()}" — row excluded.`,
       });
       current = null;
       continue;
     }
+    const grad = gradResult;
 
     const student: ParsedStudent = {
       sourceRows: [dataRow],

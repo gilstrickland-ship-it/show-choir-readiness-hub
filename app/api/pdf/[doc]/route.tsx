@@ -1,17 +1,22 @@
 import { renderToBuffer, type DocumentProps } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser, getMembership } from "@/lib/auth";
-import { TREASURY_ROLES } from "@/lib/nav";
+import { TREASURY_ROLES, HOSTING_ROLES } from "@/lib/nav";
+import { flag, type FlaggableProgram } from "@/lib/flags";
 import {
   loadTripDoc,
   loadBoardSnapshot,
   loadMealData,
+  loadHostEventDoc,
 } from "@/lib/pdf/queries";
 import {
   BusManifest,
   RoomSheet,
   BoardSnapshot,
   MealCount,
+  HostSchedule,
+  HostDoorSigns,
+  HostPacket,
 } from "@/lib/pdf/documents";
 import { renderParentPacket } from "@/lib/pdf/render";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -33,7 +38,7 @@ function text(body: string, status: number): Response {
 
 async function resolveProgramId(
   supabase: SupabaseClient,
-  table: "trips" | "competitions" | "seasons",
+  table: "trips" | "competitions" | "seasons" | "hosted_events",
   id: string,
 ): Promise<string | null> {
   const { data } = await supabase
@@ -130,6 +135,40 @@ export async function GET(
     const data = await loadBoardSnapshot(supabase, seasonId);
     if (!data) return text("Season not found", 404);
     return pdf(<BoardSnapshot data={data} />, `board-snapshot-${seasonId}.pdf`);
+  }
+
+  if (doc === "host-schedule" || doc === "host-doorsigns" || doc === "host-packet") {
+    const eventId = url.searchParams.get("event");
+    if (!eventId) return text("Missing ?event=", 400);
+    const programId = await resolveProgramId(supabase, "hosted_events", eventId);
+    if (!programId) return text("Event not found", 404);
+    const membership = await getMembership(programId, user.id);
+    // Hosting nav read is director/admin/board_member (§I1) — NOT treasurer/costume.
+    if (!membership || !HOSTING_ROLES.includes(membership.role)) {
+      return text("Forbidden", 403);
+    }
+    // Flag gate: a program without host-mode never renders these (Constitution VIII).
+    const { data: progRow } = await supabase
+      .from("programs")
+      .select("tier, feature_overrides")
+      .eq("id", programId)
+      .maybeSingle();
+    const hostingOn = flag(
+      (progRow as FlaggableProgram | null) ?? { tier: "prep", feature_overrides: null },
+      "hosting",
+    );
+    if (!hostingOn) return text("Not found", 404);
+
+    const data = await loadHostEventDoc(supabase, eventId);
+    if (!data) return text("Event not found", 404);
+
+    if (doc === "host-schedule") {
+      return pdf(<HostSchedule data={data} />, `host-schedule-${eventId}.pdf`);
+    }
+    if (doc === "host-doorsigns") {
+      return pdf(<HostDoorSigns data={data} />, `host-door-signs-${eventId}.pdf`);
+    }
+    return pdf(<HostPacket data={data} />, `host-packets-${eventId}.pdf`);
   }
 
   return text(`Unknown document "${doc}".`, 404);

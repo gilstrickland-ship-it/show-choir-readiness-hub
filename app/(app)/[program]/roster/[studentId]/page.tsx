@@ -16,6 +16,7 @@ import {
   resetGuardianEmailStatus,
 } from "../actions";
 import { guardianLinks } from "@/lib/tokens";
+import { STUDENT_STATUS_LABELS } from "@/lib/roster/students";
 
 // Student detail — edit name/grad-year/status/sizes, manage guardians, and
 // soft-delete (deactivate) with the §9 invariant-1 cascade. board_member reads;
@@ -236,7 +237,7 @@ export default async function StudentDetailPage({
           <dt>Grad year</dt>
           <dd>{student.grad_year ?? "—"}</dd>
           <dt>Status</dt>
-          <dd>{student.status}</dd>
+          <dd>{STUDENT_STATUS_LABELS[student.status]}</dd>
           {sizeKeys.map((key) => (
             <div key={key}>
               <dt>{key}</dt>

@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
@@ -10,6 +11,7 @@ import {
   type ItineraryItemKind,
 } from "@/lib/competitions";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
+import { groupItemsByDay, changedItemsSincePublish } from "@/lib/itinerary-days";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CompetitionTabs } from "../CompetitionTabs";
 import {
@@ -43,25 +45,6 @@ interface ItemRow {
   details: string | null;
   sort_order: number;
   updated_at: string | null;
-}
-
-// Edits within a minute of publish (the publish write itself, last-second tidy)
-// don't count as a post-publish change (C2-2) — mirrors the parent page epsilon
-// so the two surfaces agree on whether families are seeing something new.
-const PUBLISH_JITTER_MS = 60_000;
-
-function changedItemsSincePublish(
-  items: ItemRow[],
-  publishedAt: string | null,
-): number {
-  if (!publishedAt) return 0;
-  const threshold = new Date(publishedAt).getTime() + PUBLISH_JITTER_MS;
-  if (Number.isNaN(threshold)) return 0;
-  return items.filter((i) => {
-    if (!i.updated_at) return false;
-    const t = new Date(i.updated_at).getTime();
-    return !Number.isNaN(t) && t > threshold;
-  }).length;
 }
 
 export default async function ItineraryPage({
@@ -128,10 +111,11 @@ export default async function ItineraryPage({
 
   // C2-2: when times have changed since publishing, families already see the
   // update (the parent page is live) — but nobody is notified automatically.
-  // Calm nudge, not an alarm.
+  // Calm nudge, not an alarm. Reachable now that published itineraries stay
+  // editable in place (T055) — no unpublish/republish round-trip resets it.
   const changedSincePublish =
     itinerary?.status === "published"
-      ? changedItemsSincePublish(items, itinerary.published_at)
+      ? changedItemsSincePublish(items, itinerary.published_at).count
       : 0;
 
   // Uploaded host packet alongside the editor (§5 step 6 / T014).
@@ -165,6 +149,106 @@ export default async function ItineraryPage({
       )
     : [];
   const freshShareUrl = sp.share ? shareLinkUrl(sp.share) : null;
+
+  // Day grouping (Wave G / G2): headers only when items span >1 calendar day.
+  const { multiDay, groups: dayGroups } = groupItemsByDay(
+    items,
+    tz,
+    (i) => i.starts_at,
+  );
+  const bodyColSpan = canWrite ? 5 : 4;
+
+  // One item → one <tr> (inline edit form for writers, else read-only row).
+  // Writers edit in both draft AND published states (T055): schedules drift on
+  // competition day, and publish is the parent-visibility gate — not a freeze.
+  const renderItem = (item: ItemRow) =>
+    canWrite ? (
+      <tr key={item.id}>
+        <td colSpan={5}>
+          <form action={updateItineraryItem} className="row-inline">
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="competitionId" value={competitionId} />
+            <input type="hidden" name="itemId" value={item.id} />
+            <input type="hidden" name="tz" value={tz} />
+            <input
+              type="number"
+              name="sort_order"
+              className="num"
+              defaultValue={item.sort_order}
+              aria-label="Sort order"
+              style={{ width: "3.5rem" }}
+            />
+            <input
+              type="datetime-local"
+              name="starts_at"
+              defaultValue={toZonedInputValue(item.starts_at, tz)}
+              aria-label="Starts at"
+            />
+            <input
+              type="datetime-local"
+              name="ends_at"
+              defaultValue={toZonedInputValue(item.ends_at, tz)}
+              aria-label="Ends at"
+            />
+            <select name="kind" defaultValue={item.kind} aria-label="Kind">
+              {ITINERARY_ITEM_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {ITINERARY_ITEM_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              name="title"
+              defaultValue={item.title ?? ""}
+              aria-label="Title"
+            />
+            <input
+              type="text"
+              name="location"
+              defaultValue={item.location ?? ""}
+              placeholder="Location"
+              aria-label="Location"
+            />
+            <input
+              type="text"
+              name="details"
+              defaultValue={item.details ?? ""}
+              placeholder="Details"
+              aria-label="Details"
+            />
+            <button type="submit" className="secondary">
+              Save
+            </button>
+          </form>
+        </td>
+        <td>
+          <form action={deleteItineraryItem}>
+            <input type="hidden" name="programId" value={program.id} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="competitionId" value={competitionId} />
+            <input type="hidden" name="itemId" value={item.id} />
+            <button type="submit" className="linklike danger">
+              Delete
+            </button>
+          </form>
+        </td>
+      </tr>
+    ) : (
+      <tr key={item.id}>
+        <td>{item.sort_order}</td>
+        <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
+        <td>
+          {ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ?? item.kind}
+        </td>
+        <td>
+          {item.title}
+          {item.location ? <span className="muted"> · {item.location}</span> : null}
+        </td>
+        {canWrite && <td></td>}
+      </tr>
+    );
 
   return (
     <section className="stack">
@@ -231,8 +315,8 @@ export default async function ItineraryPage({
 
       {itinerary && (
         <p className="muted">
-          Status: <span className="badge">{itinerary.status}</span> · source{" "}
-          {itinerary.source}
+          Status: <span className="badge">{itinerary.status}</span> ·{" "}
+          {itinerary.source === "parsed" ? "from host packet" : "entered by hand"}
           {itinerary.status === "published" && itinerary.published_at
             ? ` · published ${formatDateTimeInTz(itinerary.published_at, tz)}`
             : ""}
@@ -261,98 +345,21 @@ export default async function ItineraryPage({
               </tr>
             </thead>
             <tbody>
-              {items.map((item) =>
-                canWrite && itinerary?.status === "draft" ? (
-                  <tr key={item.id}>
-                    <td colSpan={5}>
-                      <form action={updateItineraryItem} className="row-inline">
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="competitionId" value={competitionId} />
-                        <input type="hidden" name="itemId" value={item.id} />
-                        <input type="hidden" name="tz" value={tz} />
-                        <input
-                          type="number"
-                          name="sort_order"
-                          className="num"
-                          defaultValue={item.sort_order}
-                          aria-label="Sort order"
-                          style={{ width: "3.5rem" }}
-                        />
-                        <input
-                          type="datetime-local"
-                          name="starts_at"
-                          defaultValue={toZonedInputValue(item.starts_at, tz)}
-                          aria-label="Starts at"
-                        />
-                        <input
-                          type="datetime-local"
-                          name="ends_at"
-                          defaultValue={toZonedInputValue(item.ends_at, tz)}
-                          aria-label="Ends at"
-                        />
-                        <select name="kind" defaultValue={item.kind} aria-label="Kind">
-                          {ITINERARY_ITEM_KINDS.map((k) => (
-                            <option key={k} value={k}>
-                              {ITINERARY_ITEM_KIND_LABELS[k]}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          name="title"
-                          defaultValue={item.title ?? ""}
-                          aria-label="Title"
-                        />
-                        <input
-                          type="text"
-                          name="location"
-                          defaultValue={item.location ?? ""}
-                          placeholder="Location"
-                          aria-label="Location"
-                        />
-                        <input
-                          type="text"
-                          name="details"
-                          defaultValue={item.details ?? ""}
-                          placeholder="Details"
-                          aria-label="Details"
-                        />
-                        <button type="submit" className="secondary">
-                          Save
-                        </button>
-                      </form>
-                    </td>
-                    {canWrite && (
-                      <td>
-                        <form action={deleteItineraryItem}>
-                          <input type="hidden" name="programId" value={program.id} />
-                          <input type="hidden" name="slug" value={slug} />
-                          <input type="hidden" name="competitionId" value={competitionId} />
-                          <input type="hidden" name="itemId" value={item.id} />
-                          <button type="submit" className="linklike danger">
-                            Delete
-                          </button>
-                        </form>
-                      </td>
-                    )}
-                  </tr>
-                ) : (
-                  <tr key={item.id}>
-                    <td>{item.sort_order}</td>
-                    <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
-                    <td>{ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ?? item.kind}</td>
-                    <td>
-                      {item.title}
-                      {item.location ? <span className="muted"> · {item.location}</span> : null}
-                    </td>
-                    {canWrite && <td></td>}
-                  </tr>
-                ),
-              )}
+              {multiDay
+                ? dayGroups.map((g) => (
+                    <Fragment key={g.key || "untimed"}>
+                      <tr className="itinerary-day-head">
+                        <td colSpan={bodyColSpan}>
+                          <strong>{g.label}</strong>
+                        </td>
+                      </tr>
+                      {g.items.map(renderItem)}
+                    </Fragment>
+                  ))
+                : items.map(renderItem)}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={canWrite ? 5 : 4} className="muted">
+                  <td colSpan={bodyColSpan} className="muted">
                     No items yet.
                   </td>
                 </tr>
@@ -360,7 +367,17 @@ export default async function ItineraryPage({
             </tbody>
           </table>
 
-          {canWrite && itinerary && itinerary.status === "draft" && (
+          {/* Live-edit caution (T055): when published, edits reach families at
+              once. Muted, not alarmist. The changed-since-publish nudge above
+              carries the announcements link, so this line doesn't repeat it. */}
+          {canWrite && isPublished && (
+            <p className="muted">
+              This itinerary is live to families — changes show on their page
+              immediately. Send an announcement if a time moves.
+            </p>
+          )}
+
+          {canWrite && itinerary && (
             <>
               <h2>Add an item</h2>
               <form action={addItineraryItem} className="stack">

@@ -12,6 +12,8 @@
 // an injectable DTSTAMP — so tests/unit covers it directly and deterministically.
 // ============================================================================
 
+import { nextDateKey } from "@/lib/datetime";
+
 export interface IcsItem {
   // Stable per-item id → the VEVENT UID (a re-download of an unchanged item
   // updates the same calendar entry instead of duplicating it).
@@ -24,10 +26,23 @@ export interface IcsItem {
   endsAt: string | null;
   location: string | null;
   details: string | null;
+  // All-day (RFC 5545 DATE-valued) event support (Wave G / G1). When `allDay` is
+  // true the event is emitted with DTSTART;VALUE=DATE / DTEND;VALUE=DATE from the
+  // date keys below (startsAt/endsAt are ignored). `allDayStart` is the inclusive
+  // first calendar day ("YYYY-MM-DD"); `allDayEnd` is the inclusive LAST day
+  // (defaults to allDayStart). DTEND is emitted as the day AFTER allDayEnd, since
+  // an all-day DTEND is exclusive per RFC 5545 §3.6.1. Used for competitions with
+  // no published call time (all-day on the comp date) and for multi-day trips.
+  allDay?: boolean;
+  allDayStart?: string | null;
+  allDayEnd?: string | null;
 }
 
 export interface IcsCalendarInput {
-  competitionName: string;
+  // Appended to each event's SUMMARY as "{title} — {competitionName}" for the
+  // per-competition itinerary feed. OMIT for a mixed feed (the season calendar),
+  // where each item's title already stands on its own.
+  competitionName?: string;
   // Constitution IX — the only source of the product name. Flows into PRODID.
   brandName: string;
   // Host part of each VEVENT UID (e.g. the brand domain). Keeps UIDs globally
@@ -36,6 +51,15 @@ export interface IcsCalendarInput {
   items: IcsItem[];
   // Injectable generation stamp (defaults to now) — deterministic in tests.
   dtstamp?: Date;
+  // PRODID product segment (defaults to "Itinerary"). The season feed passes
+  // "Season Calendar" so the calendar's origin reads sensibly.
+  productName?: string;
+  // Optional calendar display name → X-WR-CALNAME + NAME (RFC 7986). Calendar
+  // apps show this as the subscribed calendar's title.
+  calendarName?: string;
+  // Optional refresh hint for a SUBSCRIBED feed (RFC 7986 REFRESH-INTERVAL +
+  // the widely-honored X-PUBLISHED-TTL). An ISO 8601 duration, e.g. "PT12H".
+  refreshInterval?: string;
 }
 
 // Escape a text value per RFC 5545 §3.3.11. Order matters: backslash first so we
@@ -59,6 +83,16 @@ export function formatIcsUtc(iso: string | null | undefined): string | null {
     `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}` +
     `T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`
   );
+}
+
+// A "YYYY-MM-DD" date key → "YYYYMMDD" (RFC 5545 DATE value). Invalid/empty
+// yields null so the caller can skip the property. Accepts a full ISO string too
+// (uses its date portion) for convenience.
+export function formatIcsDate(key: string | null | undefined): string | null {
+  if (!key) return null;
+  const m = key.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return `${m[1]}${m[2]}${m[3]}`;
 }
 
 // Fold one content line to ≤75 octets (RFC 5545 §3.1). Continuation lines begin
@@ -93,8 +127,8 @@ function foldLine(line: string): string {
 
 // Neutral PRODID (Constitution IX — no hardcoded product name; the brand flows
 // in). The "//EN" language tag and "-//" (non-registered) prefix are RFC idiom.
-function prodId(brandName: string): string {
-  return `-//${brandName}//Itinerary//EN`;
+function prodId(brandName: string, productName: string): string {
+  return `-//${brandName}//${productName}//EN`;
 }
 
 // Build a VCALENDAR string with one VEVENT per TIMED item. Returns a valid
@@ -105,18 +139,55 @@ export function buildIcs(input: IcsCalendarInput): string {
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    `PRODID:${prodId(input.brandName)}`,
+    `PRODID:${prodId(input.brandName, input.productName ?? "Itinerary")}`,
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
   ];
+  // Subscribed-feed metadata (RFC 7986). A calendar name + refresh cadence so a
+  // client shows a sensible title and re-polls the live feed on its own.
+  if (input.calendarName && input.calendarName.trim()) {
+    lines.push(`NAME:${escapeIcsText(input.calendarName)}`);
+    lines.push(`X-WR-CALNAME:${escapeIcsText(input.calendarName)}`);
+  }
+  if (input.refreshInterval && input.refreshInterval.trim()) {
+    lines.push(`REFRESH-INTERVAL;VALUE=DURATION:${input.refreshInterval}`);
+    lines.push(`X-PUBLISHED-TTL:${input.refreshInterval}`);
+  }
 
   for (const item of input.items) {
-    const dtstart = formatIcsUtc(item.startsAt);
-    if (!dtstart) continue; // untimed rows are not calendar events.
-
     const summarySource =
       (item.title && item.title.trim()) || item.kind || "Itinerary item";
-    const summary = `${summarySource} — ${input.competitionName}`;
+    const summary = input.competitionName
+      ? `${summarySource} — ${input.competitionName}`
+      : summarySource;
+
+    // Two shapes: an all-day DATE event, or a timed UTC-instant event. Untimed
+    // rows (no start of either kind) are skipped, never emitted at 00:00.
+    if (item.allDay) {
+      const startDate = formatIcsDate(item.allDayStart);
+      if (!startDate) continue;
+      // DTEND is exclusive for all-day events (§3.6.1): day after the last day.
+      const endInclusive = item.allDayEnd || item.allDayStart;
+      const endDate = formatIcsDate(nextDateKey(endInclusive)) ?? undefined;
+
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:${item.id}@${input.uidDomain}`);
+      lines.push(`DTSTAMP:${stamp}`);
+      lines.push(`DTSTART;VALUE=DATE:${startDate}`);
+      if (endDate) lines.push(`DTEND;VALUE=DATE:${endDate}`);
+      lines.push(`SUMMARY:${escapeIcsText(summary)}`);
+      if (item.location && item.location.trim()) {
+        lines.push(`LOCATION:${escapeIcsText(item.location)}`);
+      }
+      if (item.details && item.details.trim()) {
+        lines.push(`DESCRIPTION:${escapeIcsText(item.details)}`);
+      }
+      lines.push("END:VEVENT");
+      continue;
+    }
+
+    const dtstart = formatIcsUtc(item.startsAt);
+    if (!dtstart) continue; // untimed rows are not calendar events.
 
     lines.push("BEGIN:VEVENT");
     lines.push(`UID:${item.id}@${input.uidDomain}`);

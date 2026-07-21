@@ -14,7 +14,13 @@ import {
   lineVariance,
   actualForLine,
   sumActuals,
+  monthKeyForDate,
+  firstOfMonth,
+  formatMonthKey,
+  listMonthsWithEntries,
+  reconciledThroughMonth,
   type LedgerAmountRow,
+  type LedgerMonthRow,
 } from "@/lib/treasury";
 
 describe("parseDollarsToCents", () => {
@@ -157,5 +163,47 @@ describe("sumActuals / actualForLine", () => {
     expect(actualForLine("L2", "expense", rows)).toBe(4000);
     // wrong direction contributes nothing
     expect(actualForLine("L1", "expense", rows)).toBe(0);
+  });
+});
+
+describe("monthly reconciliation helpers (Wave L)", () => {
+  test("monthKeyForDate takes the plain year-month prefix (no tz math)", () => {
+    expect(monthKeyForDate("2026-07-21")).toBe("2026-07");
+    expect(monthKeyForDate("2026-01-01T00:00:00Z")).toBe("2026-01");
+    expect(monthKeyForDate(null)).toBeNull();
+    expect(monthKeyForDate("nonsense")).toBeNull();
+  });
+
+  test("firstOfMonth appends -01", () => {
+    expect(firstOfMonth("2026-07")).toBe("2026-07-01");
+  });
+
+  test("formatMonthKey spells out the month", () => {
+    expect(formatMonthKey("2026-07")).toBe("July 2026");
+    expect(formatMonthKey("2025-12")).toBe("December 2025");
+    expect(formatMonthKey(null)).toBe("—");
+    expect(formatMonthKey("bad")).toBe("bad");
+  });
+
+  test("listMonthsWithEntries: distinct months of non-voided entries, newest first", () => {
+    const rows: LedgerMonthRow[] = [
+      { entry_date: "2026-05-03", voided_at: null },
+      { entry_date: "2026-05-20", voided_at: null }, // same month, dedup
+      { entry_date: "2026-07-01", voided_at: null },
+      { entry_date: "2026-06-15", voided_at: "2026-06-16" }, // voided → excluded
+    ];
+    expect(listMonthsWithEntries(rows)).toEqual(["2026-07", "2026-05"]);
+  });
+
+  test("reconciledThroughMonth returns the latest contiguous reconciled month", () => {
+    const active = ["2026-05", "2026-06", "2026-07"];
+    // all three reconciled → through July
+    expect(reconciledThroughMonth(active, ["2026-05", "2026-06", "2026-07"])).toBe("2026-07");
+    // a gap at June stops the run at May (July reconciled but not contiguous)
+    expect(reconciledThroughMonth(active, ["2026-05", "2026-07"])).toBe("2026-05");
+    // earliest active month unreconciled → nothing
+    expect(reconciledThroughMonth(active, ["2026-06", "2026-07"])).toBeNull();
+    // none reconciled → null
+    expect(reconciledThroughMonth(active, [])).toBeNull();
   });
 });

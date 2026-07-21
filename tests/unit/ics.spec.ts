@@ -11,6 +11,7 @@ import {
   buildIcs,
   escapeIcsText,
   formatIcsUtc,
+  formatIcsDate,
   slugifyForFilename,
   type IcsItem,
 } from "@/lib/ics";
@@ -130,6 +131,144 @@ describe("buildIcs", () => {
     const ics = buildIcs({ ...base, items: [item({ startsAt: null })] });
     expect(ics).toContain("BEGIN:VCALENDAR");
     expect(ics).not.toContain("BEGIN:VEVENT");
+  });
+});
+
+describe("formatIcsDate (RFC 5545 DATE)", () => {
+  test("emits YYYYMMDD from a date key or an ISO string", () => {
+    expect(formatIcsDate("2026-04-10")).toBe("20260410");
+    expect(formatIcsDate("2026-04-10T13:15:00Z")).toBe("20260410");
+  });
+  test("null / invalid input yields null", () => {
+    expect(formatIcsDate(null)).toBeNull();
+    expect(formatIcsDate("nope")).toBeNull();
+  });
+});
+
+describe("buildIcs — all-day (DATE-valued) events", () => {
+  const base = {
+    brandName: "Season OS",
+    uidDomain: "example.test",
+    dtstamp: DTSTAMP,
+  };
+
+  test("single-day all-day event: DTSTART;VALUE=DATE + exclusive next-day DTEND", () => {
+    const ics = buildIcs({
+      ...base,
+      items: [
+        {
+          id: "comp-1",
+          title: "Spring Invitational",
+          kind: "competition",
+          startsAt: null,
+          endsAt: null,
+          location: null,
+          details: null,
+          allDay: true,
+          allDayStart: "2026-04-10",
+          allDayEnd: "2026-04-10",
+        },
+      ],
+    });
+    expect(ics).toContain("DTSTART;VALUE=DATE:20260410");
+    // DTEND is exclusive → the day AFTER the last day (RFC 5545 §3.6.1).
+    expect(ics).toContain("DTEND;VALUE=DATE:20260411");
+    expect(ics).not.toContain("DTSTART:20260410"); // never a timed instant
+  });
+
+  test("multi-day span: DTEND is the day after the inclusive last day", () => {
+    const ics = buildIcs({
+      ...base,
+      items: [
+        {
+          id: "trip-1",
+          title: "Nationals",
+          kind: "trip",
+          startsAt: null,
+          endsAt: null,
+          location: null,
+          details: null,
+          allDay: true,
+          allDayStart: "2026-05-07",
+          allDayEnd: "2026-05-10",
+        },
+      ],
+    });
+    expect(ics).toContain("DTSTART;VALUE=DATE:20260507");
+    expect(ics).toContain("DTEND;VALUE=DATE:20260511");
+  });
+
+  test("allDayEnd defaults to allDayStart when omitted", () => {
+    const ics = buildIcs({
+      ...base,
+      items: [
+        {
+          id: "e",
+          title: "One day",
+          kind: "event",
+          startsAt: null,
+          endsAt: null,
+          location: null,
+          details: null,
+          allDay: true,
+          allDayStart: "2026-04-10",
+        },
+      ],
+    });
+    expect(ics).toContain("DTSTART;VALUE=DATE:20260410");
+    expect(ics).toContain("DTEND;VALUE=DATE:20260411");
+  });
+
+  test("timed and all-day items coexist in one calendar", () => {
+    const ics = buildIcs({
+      ...base,
+      items: [
+        item({ id: "timed", startsAt: "2026-04-11T13:15:00Z" }),
+        {
+          id: "allday",
+          title: "Comp",
+          kind: "competition",
+          startsAt: null,
+          endsAt: null,
+          location: null,
+          details: null,
+          allDay: true,
+          allDayStart: "2026-04-10",
+        },
+      ],
+    });
+    expect((ics.match(/BEGIN:VEVENT/g) ?? []).length).toBe(2);
+    expect(ics).toContain("DTSTART:20260411T131500Z");
+    expect(ics).toContain("DTSTART;VALUE=DATE:20260410");
+  });
+});
+
+describe("buildIcs — feed metadata + summary suffix", () => {
+  const base = {
+    brandName: "Season OS",
+    uidDomain: "example.test",
+    dtstamp: DTSTAMP,
+  };
+
+  test("omitting competitionName yields a bare title SUMMARY (no ' — ' suffix)", () => {
+    const ics = buildIcs({ ...base, items: [item({ title: "Warm-up" })] });
+    expect(ics).toContain("SUMMARY:Warm-up");
+    expect(ics).not.toContain("SUMMARY:Warm-up —");
+  });
+
+  test("calendarName + refreshInterval emit RFC 7986 feed metadata", () => {
+    const ics = buildIcs({
+      ...base,
+      productName: "Season Calendar",
+      calendarName: "Central HS — 2026",
+      refreshInterval: "PT12H",
+      items: [item({})],
+    });
+    expect(ics).toContain("PRODID:-//Season OS//Season Calendar//EN");
+    expect(ics).toContain("X-WR-CALNAME:Central HS — 2026");
+    expect(ics).toContain("NAME:Central HS — 2026");
+    expect(ics).toContain("REFRESH-INTERVAL;VALUE=DURATION:PT12H");
+    expect(ics).toContain("X-PUBLISHED-TTL:PT12H");
   });
 });
 

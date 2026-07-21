@@ -86,3 +86,15 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 - [X] T045 Parent-surface UX: add-to-calendar ICS for published itineraries, changed-since-publish banners (parent + staff nudge), enumeration-safe self-service link recovery, 44px token-page tap targets, absence history as cards.
 - [X] T046 Staff workflow: first-run setup guide on Today, first-season wizard framing, mobile nav promotes Wardrobe + comp-week hallway shortcuts, fair-share card, bus-manifest Released column + chaperone ratio lines, one-tap travel assignment, parent-page date anchors.
 - [X] T047 Final hardening: e2e suite reconciled with redesigned flows, confirm-box on reset-links + guardian/member removal, LIKE-metacharacter-safe address matching everywhere, undated-competition note on Season.
+
+## Phase 11 — Wave 2 roadmap (July 2026)
+
+- [X] T048 Wave F: deliverability runbook + Settings email-health card (F1); Charms/CutTime header synonym packs + grade→grad-year helper + import hint + landing migration card (F2).
+- [X] T049 Wave G: season_calendar share links + subscribable staff ICS feed + all-day ICS support (G1); day-grouped itineraries (editor, parent, packet PDF) + multi-day trip schedule view (G2).
+- [X] T050 Wave H: travel bulk-assignment flow — fill-target sticky bar + tap-chip queue (querystring-driven, server-rendered), existing flows preserved.
+- [X] T051 Wave I1: hosting foundation — migration 0011 (hosted_events/schools/slots + enums + RLS + archived-season freeze), fixtures + isolation/role/archive coverage, hosting flag (default off, no tier bundle), Hosting nav slot + route stub, lib/hosting.ts types.
+- [X] T052 Wave I2: hosting surfaces — event list/create, schools + homerooms (dup warn), schedule builder (deterministic generator + shift-remaining), master schedule / door signs / director packet PDFs, Season spine rows, volunteer seam.
+- [X] T053 Live-preview QA fixes: truthful link-lifecycle copy on parent expired-link + link-help pages; magic-link unknown-account response made indistinguishable from success (anti-enumeration).
+- [X] T054 Wave J convergence fixes: email-address import collision, schedule-generator cadence, host day-of contact (migration 0012), slot/trip/group delete confirms, runbook + email-health subdomain corrections, comms-flag-aware shift links, remaining enum labels, mint error surfacing, webcal variant, tap targets, tz-aware grade mapping, single-source hosting roles.
+- [X] T055 Living itinerary made real: published itineraries editable in place (publish stays the visibility gate), changed-since-publish nudge/banner now reachable, extracted + unit-tested change detection, plain-language source labels.
+- [X] T056 Wave L: monthly ledger reconciliation record (migration 0013, treasurer-only marks, board-visible "reconciled through" on snapshot + reports), shift overbooking hint, review convergence statement.

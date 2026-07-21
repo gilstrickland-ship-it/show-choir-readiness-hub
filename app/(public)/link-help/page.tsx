@@ -36,8 +36,8 @@ export default async function LinkHelpPage({
                 fresh links is on its way.
               </p>
               <p className="muted">
-                It can take a few minutes to arrive. Check your spam folder, and
-                open the link in the newest email — earlier links stop working.
+                It can take a few minutes to arrive. Check your spam folder. The
+                links in your newest email always work.
               </p>
             </>
           ) : (

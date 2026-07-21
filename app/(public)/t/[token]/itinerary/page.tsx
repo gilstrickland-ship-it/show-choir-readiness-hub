@@ -2,6 +2,11 @@ import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatDateInTz, formatTimeInTz, formatDateTimeInTz } from "@/lib/datetime";
+import {
+  groupItemsByDay,
+  changedItemsSincePublish,
+  type ChangedSincePublish,
+} from "@/lib/itinerary-days";
 import { TokenFooter } from "../parts";
 
 // Published itineraries on the tokenized surface (§8a, invariant §9.3). Guardian
@@ -18,34 +23,6 @@ interface ItemRow {
   details: string | null;
   sort_order: number;
   updated_at: string | null;
-}
-
-// Ignore edits within this window of publish so the publish write itself (and
-// any near-simultaneous last-second tidy) never trips the "updated" banner
-// (C2-2). Anything edited more than a minute after publish is a real change.
-const PUBLISH_JITTER_MS = 60_000;
-
-// The latest genuine post-publish change to a block's items, if any — the signal
-// for the "living itinerary" banner.
-function lastChangedAfterPublish(
-  items: ItemRow[],
-  publishedAt: string | null,
-): { at: string; count: number } | null {
-  if (!publishedAt) return null;
-  const threshold = new Date(publishedAt).getTime() + PUBLISH_JITTER_MS;
-  if (Number.isNaN(threshold)) return null;
-
-  let latest = 0;
-  let count = 0;
-  for (const item of items) {
-    if (!item.updated_at) continue;
-    const t = new Date(item.updated_at).getTime();
-    if (!Number.isNaN(t) && t > threshold) {
-      count += 1;
-      if (t > latest) latest = t;
-    }
-  }
-  return count > 0 ? { at: new Date(latest).toISOString(), count } : null;
 }
 
 export default async function PublicItineraryPage({
@@ -108,7 +85,7 @@ export default async function PublicItineraryPage({
     competitionName: string;
     date: string | null;
     items: ItemRow[];
-    changed: { at: string; count: number } | null;
+    changed: ChangedSincePublish;
   }> = [];
 
   if (competitionIds.length > 0) {
@@ -138,7 +115,7 @@ export default async function PublicItineraryPage({
         competitionName: it.competition?.name ?? "Competition",
         date: it.competition?.date ?? null,
         items: itemRows,
-        changed: lastChangedAfterPublish(itemRows, it.published_at),
+        changed: changedItemsSincePublish(itemRows, it.published_at),
       });
     }
   }
@@ -159,13 +136,13 @@ export default async function PublicItineraryPage({
               <span className="muted"> · {formatDateInTz(`${block.date}T12:00:00Z`, tz)}</span>
             )}
           </h2>
-          {block.changed && (
+          {block.changed.count > 0 && block.changed.lastChangedAt && (
             /* Living itinerary (C2-2): hosts compress schedules day-of, so a
                parent must be able to trust that what they see is current. This
                page always reads live data; the banner just points at the change. */
             <p className="token-notice" role="status">
-              Updated {formatDateTimeInTz(block.changed.at, tz)} — times can shift
-              on competition day; this page always shows the latest.
+              Updated {formatDateTimeInTz(block.changed.lastChangedAt, tz)} — times
+              can shift on competition day; this page always shows the latest.
             </p>
           )}
           <p className="itinerary-links">
@@ -181,20 +158,45 @@ export default async function PublicItineraryPage({
           {block.items.length === 0 ? (
             <p className="muted">No schedule items.</p>
           ) : (
-            <ul className="stack" style={{ listStyle: "none", paddingLeft: 0 }}>
-              {block.items.map((item, ii) => (
+            (() => {
+              // Day headers only when this competition's items span >1 calendar
+              // day (Wave G / G2) — multi-day trips read clearly; single-day
+              // itineraries render flat, unchanged.
+              const { multiDay, groups } = groupItemsByDay(
+                block.items,
+                tz,
+                (i) => i.starts_at,
+              );
+              const renderRow = (item: ItemRow, ii: number) => (
                 <li key={ii} style={{ width: "100%" }}>
                   <strong>
                     {item.starts_at ? formatTimeInTz(item.starts_at, tz) : "—"}
                   </strong>{" "}
                   {item.title ?? item.kind}
-                  {item.location && (
-                    <div className="muted">{item.location}</div>
-                  )}
+                  {item.location && <div className="muted">{item.location}</div>}
                   {item.details && <div className="muted">{item.details}</div>}
                 </li>
-              ))}
-            </ul>
+              );
+              return multiDay ? (
+                <div className="stack" style={{ width: "100%" }}>
+                  {groups.map((g) => (
+                    <div key={g.key || "untimed"} style={{ width: "100%" }}>
+                      <h3 className="itinerary-day-heading">{g.label}</h3>
+                      <ul
+                        className="stack"
+                        style={{ listStyle: "none", paddingLeft: 0 }}
+                      >
+                        {g.items.map((item, ii) => renderRow(item, ii))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <ul className="stack" style={{ listStyle: "none", paddingLeft: 0 }}>
+                  {block.items.map((item, ii) => renderRow(item, ii))}
+                </ul>
+              );
+            })()
           )}
         </div>
       ))}
