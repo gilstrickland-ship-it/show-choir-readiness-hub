@@ -42,15 +42,26 @@ export interface EmailHealth {
   fromDomainOk: boolean;
 }
 
+// True when a From-address domain is acceptable for the brand: either the brand
+// domain itself OR a dedicated sending SUBDOMAIN of it (e.g. mail.example.org),
+// which the deliverability runbook recommends to keep sending reputation separate
+// from the main domain. An unverifiable `*.example` placeholder never passes.
+// Pure (domains passed in) so it is directly unit-tested.
+export function fromDomainMatchesBrand(fromDomain: string, brandDomain: string): boolean {
+  const fd = fromDomain.toLowerCase();
+  const bd = brandDomain.toLowerCase();
+  if (fd.length === 0) return false;
+  if (/\.example$/.test(fd) || /\.example$/.test(bd)) return false;
+  return fd === bd || fd.endsWith(`.${bd}`);
+}
+
 export function emailHealth(): EmailHealth {
   const address = process.env.BRAND_EMAIL_FROM_ADDRESS ?? `no-reply@${brand.domain}`;
   const fromDomain = (address.split("@")[1] ?? "").toLowerCase();
-  const brandDomain = brand.domain.toLowerCase();
-  const isPlaceholder = /\.example$/.test(fromDomain) || /\.example$/.test(brandDomain);
   return {
     sendingConfigured: Boolean(process.env.RESEND_API_KEY),
     webhookSigning: Boolean(process.env.RESEND_WEBHOOK_SECRET),
-    fromDomainOk: fromDomain.length > 0 && fromDomain === brandDomain && !isPlaceholder,
+    fromDomainOk: fromDomainMatchesBrand(fromDomain, brand.domain),
   };
 }
 

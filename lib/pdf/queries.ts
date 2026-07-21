@@ -513,6 +513,7 @@ export interface HostEventDocData {
   eventName: string;
   date: string | null; // event_date (all-day)
   venueNotes: string | null;
+  hostContact: string | null; // day-of contact line for visiting directors
   schools: HostSchoolData[];
   slots: HostSlotData[]; // master schedule, ordered by starts_at then sort_order
   awardsSlots: { startsAt: string | null; label: string | null }[];
@@ -523,6 +524,7 @@ interface HostEventBase {
   name: string;
   event_date: string | null;
   venue_notes: string | null;
+  host_contact: string | null;
 }
 
 export async function loadHostEventDoc(
@@ -531,7 +533,7 @@ export async function loadHostEventDoc(
 ): Promise<HostEventDocData | null> {
   const { data: eventRow } = await supabase
     .from("hosted_events")
-    .select("program_id, name, event_date, venue_notes")
+    .select("program_id, name, event_date, venue_notes, host_contact")
     .eq("id", eventId)
     .maybeSingle();
   const event = eventRow as HostEventBase | null;
@@ -634,6 +636,7 @@ export async function loadHostEventDoc(
     eventName: event.name,
     date: event.event_date,
     venueNotes: event.venue_notes,
+    hostContact: event.host_contact,
     schools,
     slots,
     awardsSlots,

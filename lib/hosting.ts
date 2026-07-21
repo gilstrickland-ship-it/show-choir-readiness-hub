@@ -1,5 +1,3 @@
-import type { Role } from "@/lib/auth";
-
 // Host-mode module (Wave I / I1). Shared row types, enum tuples, and friendly
 // label maps for the hosting surface. Kept out of any "use server" actions
 // module (a server-actions file may only export async functions) so pages,
@@ -14,9 +12,11 @@ import type { Role } from "@/lib/auth";
 export const NO_HEALTH_LABEL = "Do not enter health or medical information.";
 
 // Write is director/admin (RLS hosted_*_write). board_member reads (mirrors the
-// read-only money seat); treasurer/costume_manager have no hosting access.
-// Re-export the nav constants' shape here so I2 actions can import either module.
-export const HOSTING_WRITE_ROLES: readonly Role[] = ["director", "admin"];
+// read-only money seat); treasurer/costume_manager have no hosting access. The
+// canonical definition lives in lib/nav.ts alongside the other role constants;
+// re-exported here so the I2 actions (which import domain constants from this
+// module) get it from one source.
+export { HOSTING_WRITE_ROLES } from "@/lib/nav";
 
 // ---------------------------------------------------------------------------
 // hosted_event_status
@@ -71,6 +71,7 @@ export interface HostedEventRow {
   name: string;
   event_date: string | null;
   venue_notes: string | null;
+  host_contact: string | null;
   status: HostedEventStatus;
   created_at: string;
   updated_at: string;
@@ -118,14 +119,17 @@ export interface HostedSlotRow {
 // the ladder is offset arithmetic only, which is exactly what makes it testable.
 //
 // Ladder (spec I1): each school gets a warm-up slot immediately followed by a
-// perform slot; the NEXT school's warm-up begins when the CURRENT school's
-// perform begins. Concretely, for school i (0-based in sort_order):
-//   warmup[i].start  = start + i * warmupMinutes
+// perform slot, and its warm-up leads its own perform by warmupMinutes. The
+// CADENCE between consecutive schools is the LONGER of the two durations, so a
+// perform slot never starts before the previous school's perform has finished.
+// Concretely, for school i (0-based in sort_order), with cadence = max(w, p):
+//   warmup[i].start  = start + i * cadence
 //   perform[i].start = warmup[i].start + warmupMinutes   (perform follows warmup)
-// so warm-up[i+1] == perform[i] (the "warm-ups lead performances by one slot"
-// pipeline). warmupMinutes drives the cadence; performMinutes is each perform
-// slot's DURATION. With the 25/25 defaults the two coincide into a seamless
-// back-to-back pipeline. The director reorders/edits after — this only seeds.
+// With the 25/25 defaults cadence == warmupMinutes, so warm-up[i+1] == perform[i]
+// and the schedule is a seamless back-to-back pipeline. When perform is LONGER
+// than warm-up (e.g. 15/30) the cadence widens to the perform length, keeping
+// every school's stage time from colliding. The director reorders/edits after —
+// this only seeds.
 
 export interface GeneratedSlotInput {
   hosted_school_id: string;
@@ -145,9 +149,12 @@ export function generateHostSchedule(opts: {
   const { startUtcMs, schools, warmupMinutes, performMinutes } = opts;
   const w = Math.max(0, Math.round(warmupMinutes));
   const p = Math.max(0, Math.round(performMinutes));
+  // Cadence between consecutive schools is the longer of the two durations, so no
+  // two perform slots overlap even when a performance runs longer than warm-up.
+  const cadence = Math.max(w, p);
   const out: GeneratedSlotInput[] = [];
   schools.forEach((school, i) => {
-    const warmupStart = startUtcMs + i * w * 60_000;
+    const warmupStart = startUtcMs + i * cadence * 60_000;
     const performStart = warmupStart + w * 60_000;
     out.push({
       hosted_school_id: school.id,

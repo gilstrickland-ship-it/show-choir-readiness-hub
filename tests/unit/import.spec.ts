@@ -207,6 +207,15 @@ describe('gradYearFromGrade helper', () => {
     expect(gradYearFromGrade('', FALL)).toBeNull();
     expect(gradYearFromGrade('senior', FALL)).toBeNull();
   });
+
+  test('a timezone param reads the term boundary in that zone (Jul-31-evening Chicago)', () => {
+    // 2026-08-01T01:00Z = 2026-07-31 20:00 in America/Chicago (CDT, UTC-5) — still
+    // the spring term there, so grade 12 = class of 2026. Read in UTC it is already
+    // August (fall) → 2027; the zone param is what prevents that off-by-one.
+    const instant = new Date('2026-08-01T01:00:00.000Z');
+    expect(gradYearFromGrade(12, instant, 'America/Chicago')).toBe(2026);
+    expect(gradYearFromGrade(12, instant, 'UTC')).toBe(2027);
+  });
 });
 
 describe('Charms/CutTime import presets', () => {
@@ -313,6 +322,40 @@ describe('collision safety (Constitution III + student/guardian mapping)', () =>
       FALL,
     );
     expect(rows[0].gradYear).toBe(2028);
+  });
+
+  test('"Email Address" imports as a guardian email, not dropped as an address column', () => {
+    const { rows, skippedColumns, errors } = parseRosterCsv(
+      'First,Last,Email Address\nAva,Nguyen,bly@example.com',
+    );
+    expect(skippedColumns).toHaveLength(0);
+    expect(errors).toHaveLength(0);
+    expect(rows[0].guardians).toHaveLength(1);
+    expect(rows[0].guardians[0].email).toBe('bly@example.com');
+  });
+
+  test('"Adult 1 Email Address" and "Parent Email Address" map to guardian emails', () => {
+    const adult = parseRosterCsv(
+      'First,Last,Adult 1 Email Address\nAva,Nguyen,adult@example.com',
+    );
+    expect(adult.skippedColumns).toHaveLength(0);
+    expect(adult.rows[0].guardians[0].email).toBe('adult@example.com');
+
+    const parent = parseRosterCsv(
+      'First,Last,Parent Email Address\nAva,Nguyen,parent@example.com',
+    );
+    expect(parent.skippedColumns).toHaveLength(0);
+    expect(parent.rows[0].guardians[0].email).toBe('parent@example.com');
+  });
+
+  test('true mailing-address columns are still dropped whole (Constitution III)', () => {
+    for (const header of ['Home Address', 'Address', 'Mailing Address', 'Street Address']) {
+      const { skippedColumns, rows } = parseRosterCsv(
+        `First,Last,${header}\nAva,Nguyen,123 Main St`,
+      );
+      expect(skippedColumns.map((s) => s.header)).toContain(header);
+      expect(JSON.stringify(rows[0])).not.toContain('123 Main');
+    }
   });
 });
 

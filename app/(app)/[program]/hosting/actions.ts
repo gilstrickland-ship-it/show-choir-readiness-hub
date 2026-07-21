@@ -114,6 +114,7 @@ export async function updateHostedEvent(formData: FormData): Promise<void> {
       name,
       event_date: nullable(formData, "event_date"),
       venue_notes: nullable(formData, "venue_notes"),
+      host_contact: nullable(formData, "host_contact"),
       status: HOSTED_EVENT_STATUSES.includes(status) ? status : "planning",
     })
     .eq("id", eventId)

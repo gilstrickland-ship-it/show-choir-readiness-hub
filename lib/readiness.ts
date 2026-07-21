@@ -60,7 +60,10 @@ export async function loadCompReadiness(
   { programId, comp, flags, role, base }: CompReadinessArgs,
 ): Promise<CompReadiness> {
   // Per-check gates (flag on AND role has read access), mirroring the dashboard.
-  const showShifts = flags.shifts && SHIFT_WRITE_ROLES.includes(role);
+  // The shifts check links to /comms/shifts, which requireFlag-gates on BOTH
+  // comms AND shifts — so the link (and its backing query) only appear when both
+  // flags are on, otherwise the "Fill shifts" href would 404.
+  const showShifts = flags.shifts && flags.comms && SHIFT_WRITE_ROLES.includes(role);
   const showPacket = flags.competitions && flags.packet_parse;
 
   // ---- Itinerary (+ earliest call time) -------------------------------------

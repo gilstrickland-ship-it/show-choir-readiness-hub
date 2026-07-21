@@ -8,6 +8,7 @@ import { TREASURY_ROLES } from "@/lib/nav";
 import {
   formatCents,
   sumActuals,
+  CATEGORY_DIRECTION_LABELS,
   type CategoryDirection,
   type LedgerDirection,
 } from "@/lib/treasury";
@@ -130,7 +131,6 @@ export default async function ReportsPage({
 
   const lineName = new Map(lines.map((l) => [l.id, l.name]));
   const lineCat = new Map(lines.map((l) => [l.id, l.category_id]));
-  const catById = new Map(cats.map((c) => [c.id, c]));
 
   // ---- Board snapshot rollups ----------------------------------------------
   const snapshot = sumActuals(entries);
@@ -316,7 +316,7 @@ export default async function ReportsPage({
                 {cats.map((c) => (
                   <tr key={c.id}>
                     <td>{c.name}</td>
-                    <td>{catById.get(c.id)?.direction}</td>
+                    <td>{CATEGORY_DIRECTION_LABELS[c.direction]}</td>
                     <td className="num">{formatCents(catActual.get(c.id) ?? 0)}</td>
                   </tr>
                 ))}

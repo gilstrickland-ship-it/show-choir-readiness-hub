@@ -7,6 +7,7 @@ import {
   COMPETITION_WRITE_ROLES,
   ATTENDANCE_WRITE_ROLES,
   COMMON_CAPTIONS,
+  COMPETITION_STATUS_LABELS,
   activeCaptions,
 } from "@/lib/competitions";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
@@ -851,7 +852,7 @@ export default async function CompetitionCommandCenter({
                 <dt>Venue</dt>
                 <dd>{comp.venue_address ?? "—"}</dd>
                 <dt>Status</dt>
-                <dd>{comp.status}</dd>
+                <dd>{COMPETITION_STATUS_LABELS[comp.status]}</dd>
               </dl>
             )}
           </section>

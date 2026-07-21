@@ -65,6 +65,7 @@ export default async function HostingEventPage({
     error?: string;
     confirm?: string;
     schoolId?: string;
+    slotId?: string;
   }>;
 }) {
   const { program: slug, eventId } = await params;
@@ -82,7 +83,7 @@ export default async function HostingEventPage({
   const { data: eventData } = await supabase
     .from("hosted_events")
     .select(
-      "id, program_id, season_id, name, event_date, venue_notes, status, created_at, updated_at, seasons(label, archived_at)",
+      "id, program_id, season_id, name, event_date, venue_notes, host_contact, status, created_at, updated_at, seasons(label, archived_at)",
     )
     .eq("id", eventId)
     .eq("program_id", program.id)
@@ -133,6 +134,7 @@ export default async function HostingEventPage({
 
   const hasSlots = slots.length > 0;
   const confirmRemoveSchool = sp.confirm === "removeschool" && canWrite ? sp.schoolId : null;
+  const confirmDeleteSlot = sp.confirm === "deleteslot" && canWrite ? sp.slotId : null;
   const confirmReplace = sp.confirm === "replace" && canWrite;
 
   const statusLabel = HOSTED_EVENT_STATUS_LABELS[event.status];
@@ -231,6 +233,15 @@ export default async function HostingEventPage({
                 </select>
               </label>
             </div>
+            <label>
+              Day-of contact for visiting directors
+              <input
+                type="text"
+                name="host_contact"
+                placeholder="Jane Smith · 555-0100"
+                defaultValue={event.host_contact ?? ""}
+              />
+            </label>
             <label>
               Venue notes
               <textarea name="venue_notes" rows={2} defaultValue={event.venue_notes ?? ""} />
@@ -434,15 +445,30 @@ export default async function HostingEventPage({
                           Shift remaining
                         </button>
                       </form>
-                      <form action={removeHostedSlot}>
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="eventId" value={eventId} />
-                        <input type="hidden" name="slotId" value={slot.id} />
-                        <button type="submit" className="linklike">
-                          Delete slot
-                        </button>
-                      </form>
+                      {confirmDeleteSlot === slot.id ? (
+                        <div className="confirm-box stack">
+                          <p>Delete this slot? It&apos;s removed from the schedule.</p>
+                          <form action={removeHostedSlot} className="row-inline">
+                            <input type="hidden" name="programId" value={program.id} />
+                            <input type="hidden" name="slug" value={slug} />
+                            <input type="hidden" name="eventId" value={eventId} />
+                            <input type="hidden" name="slotId" value={slot.id} />
+                            <button type="submit" className="danger">
+                              Confirm delete
+                            </button>
+                            <Link href={`${eventBase}#schedule`}>Cancel</Link>
+                          </form>
+                        </div>
+                      ) : (
+                        <p>
+                          <Link
+                            className="linklike"
+                            href={`${eventBase}?confirm=deleteslot&slotId=${slot.id}#schedule`}
+                          >
+                            Delete slot
+                          </Link>
+                        </p>
+                      )}
                     </details>
                   </div>
                 )}
@@ -726,8 +752,9 @@ function GenerateForm({
         </label>
       </div>
       <p className="muted">
-        Lays a warm-up then perform slot for each school in order — the next school warms up as
-        the last one takes the stage. Reorder or edit any slot afterward.
+        Lays a warm-up then perform slot for each school in order. The longer of the warm-up and
+        perform durations sets how far apart schools run, so no two performances overlap. Reorder
+        or edit any slot afterward.
       </p>
       <button type="submit">{replace ? "Replace with generated schedule" : "Generate schedule"}</button>
     </form>

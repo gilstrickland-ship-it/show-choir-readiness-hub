@@ -84,6 +84,27 @@ describe("generateHostSchedule", () => {
     expect(slots[1].starts_at).toBe(new Date(START + 20 * 60_000).toISOString());
   });
 
+  test("cadence is the longer duration: a 15/30 schedule never overlaps perform slots", () => {
+    const slots = generateHostSchedule({
+      startUtcMs: START,
+      schools,
+      warmupMinutes: 15,
+      performMinutes: 30,
+    });
+    const performs = slots.filter((s) => s.kind === "perform");
+    // No perform starts before the previous perform finishes.
+    for (let i = 1; i < performs.length; i++) {
+      const prevEnd =
+        Date.parse(performs[i - 1].starts_at) +
+        performs[i - 1].duration_minutes * 60_000;
+      expect(Date.parse(performs[i].starts_at)).toBeGreaterThanOrEqual(prevEnd);
+    }
+    // Concretely: cadence = max(15, 30) = 30; each perform leads by warm-up (15).
+    expect(performs[0].starts_at).toBe(new Date(START + 15 * 60_000).toISOString());
+    expect(performs[1].starts_at).toBe(new Date(START + 45 * 60_000).toISOString());
+    expect(performs[2].starts_at).toBe(new Date(START + 75 * 60_000).toISOString());
+  });
+
   test("no schools yields no slots", () => {
     expect(
       generateHostSchedule({

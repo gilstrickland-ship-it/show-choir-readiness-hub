@@ -44,10 +44,13 @@ export async function regenerateSeasonCalendarShareLink(
     resource: "season_calendar",
     resourceId: seasonId,
   });
-  const share = "raw" in minted ? minted.raw : "";
 
   revalidatePath(seasonPath(slug));
-  redirect(
-    `${seasonPath(slug)}${share ? `?calShare=${encodeURIComponent(share)}` : ""}`,
-  );
+  // Mint runs AFTER the revoke above, so a mint failure would otherwise leave the
+  // program with no working link and no signal. Surface it explicitly instead of
+  // redirecting silently.
+  if (!("raw" in minted)) {
+    redirect(`${seasonPath(slug)}?calError=mint`);
+  }
+  redirect(`${seasonPath(slug)}?calShare=${encodeURIComponent(minted.raw)}`);
 }

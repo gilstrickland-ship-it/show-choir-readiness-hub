@@ -3628,6 +3628,9 @@
 
   .travel-fill-toggle {
     align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     padding: 0.4rem 0.7rem;
     border: 1px solid var(--accent);
     border-radius: var(--radius-pill);

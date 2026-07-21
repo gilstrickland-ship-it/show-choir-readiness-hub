@@ -2,7 +2,6 @@ import React from "react";
 import { Document, View, Text, DocPage, styles } from "./components";
 import { formatDateInTz, formatTimeInTz } from "@/lib/datetime";
 import { groupItemsByDay } from "@/lib/itinerary-days";
-import { brand } from "@/lib/brand";
 import {
   formatCents,
   type TripDocData,
@@ -519,8 +518,9 @@ function TotalRow({ label, planned, actual }: { label: string; planned: number; 
 // ============================ HOST-MODE DOCUMENTS ============================
 // Three day-of documents for the program running its own invitational (Wave I2),
 // all derived from one hosted event's schools + slots (Constitution VI). Times
-// render in program tz; host contact is the brand support email + program name
-// (Constitution IX). NO visiting-school student data exists to print (III).
+// render in program tz; the "Your host" line is the program name plus the event's
+// own day-of contact (host_contact), never the platform support email. NO
+// visiting-school student data exists to print (III).
 
 function hostEventSubtitle(data: HostEventDocData): string {
   const dateStr = data.date ? formatDateInTz(`${data.date}T12:00:00Z`, data.tz) : "";
@@ -693,7 +693,8 @@ export function HostPacket({ data }: { data: HostEventDocData }) {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Your host</Text>
               <Text>
-                {data.programName} · {brand.supportEmail}
+                {data.programName}
+                {data.hostContact ? ` · ${data.hostContact}` : ""}
               </Text>
             </View>
 

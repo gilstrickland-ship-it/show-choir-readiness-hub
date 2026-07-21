@@ -106,7 +106,16 @@ function guardianIndex(n: string): number {
 
 function isHealthHeader(header: string): boolean {
   const lower = header.toLowerCase();
-  return HEALTH_HEADER_KEYWORDS.some((kw) => lower.includes(kw));
+  // A guardian "Email Address" / "Adult 1 Email Address" column is contact data,
+  // not the sensitive mailing-address column: the "address" keyword must not
+  // claim a header that also references an email. Real address columns
+  // ("Home Address", "Street Address", "Mailing Address") carry no "email"/
+  // "e-mail" token, so they still match and are dropped whole (Constitution III).
+  const mentionsEmail = /e-?mail/.test(lower);
+  return HEALTH_HEADER_KEYWORDS.some((kw) => {
+    if (kw === "address" && mentionsEmail) return false;
+    return lower.includes(kw);
+  });
 }
 
 function mapSizeColumn(n: string, sizeKeys: readonly string[]): ColumnMap | null {
@@ -139,13 +148,37 @@ function mapGuardianField(n: string): GuardianField | null {
 // (Jan–Jul); every lower grade adds one more year. `now` is an explicit param so
 // the mapping is deterministic and unit-testable. Grades outside 9–12 (and any
 // unparseable value) return null — the caller treats that as an invalid grade.
-export function gradYearFromGrade(grade: string | number, now: Date): number | null {
+export function gradYearFromGrade(
+  grade: string | number,
+  now: Date,
+  timeZone?: string,
+): number | null {
   const g =
     typeof grade === "number"
       ? grade
       : parseInt(String(grade).match(/(\d+)/)?.[1] ?? "", 10);
   if (!Number.isFinite(g) || g < 9 || g > 12) return null;
-  const seniorGradYear = now.getFullYear() + (now.getMonth() >= 7 ? 1 : 0);
+  // The term boundary (fall Aug–Dec vs spring Jan–Jul) must be read in the
+  // program's own timezone, not the server's — a Jul-31-evening import in Chicago
+  // is still the spring term even though it is already Aug 1 in UTC. When a zone
+  // is given, derive month/year there via Intl (like lib/datetime.ts); with no
+  // zone the original server-local behavior is preserved (deterministic for the
+  // unit tests, which pass local-time Date anchors).
+  let year: number;
+  let monthIndex: number; // 0 = January
+  if (timeZone) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "numeric",
+    }).formatToParts(now);
+    year = Number(parts.find((p) => p.type === "year")?.value);
+    monthIndex = Number(parts.find((p) => p.type === "month")?.value) - 1;
+  } else {
+    year = now.getFullYear();
+    monthIndex = now.getMonth();
+  }
+  const seniorGradYear = year + (monthIndex >= 7 ? 1 : 0);
   return seniorGradYear + (12 - g);
 }
 
@@ -335,6 +368,7 @@ export function parseRosterCsv(
   text: string,
   sizeKeys: readonly string[] = DEFAULT_SIZE_KEYS,
   now: Date = new Date(),
+  timeZone?: string,
 ): ParseResult {
   const grid = parseCsv(text);
   const errors: RowError[] = [];
@@ -439,7 +473,7 @@ export function parseRosterCsv(
     if (gradRaw.trim() !== "") {
       gradResult = parseGradYear(gradRaw);
     } else if (gradeRaw.trim() !== "") {
-      const gy = gradYearFromGrade(gradeRaw, now);
+      const gy = gradYearFromGrade(gradeRaw, now, timeZone);
       gradResult = gy === null ? "invalid" : gy;
     } else {
       gradResult = null;

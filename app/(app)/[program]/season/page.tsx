@@ -123,6 +123,11 @@ export default async function SeasonPage({
         )
       : [];
   const freshSeasonCalUrl = calShare ? seasonCalendarUrl(calShare) : null;
+  // Same feed, scheme swapped: Apple Calendar opens webcal:// straight into its
+  // Subscribe dialog, while Google Calendar wants the https form under "From URL".
+  const freshSeasonCalWebcal = freshSeasonCalUrl
+    ? freshSeasonCalUrl.replace(/^https:\/\//, "webcal://")
+    : null;
 
   // Ensemble names (shared by comp + event meta).
   const ensembleName = new Map<string, string>();
@@ -420,7 +425,9 @@ export default async function SeasonPage({
   if (flags.events) pills.push({ key: "events", label: "Events" });
   if (flags.travel) pills.push({ key: "trips", label: "Trips" });
 
-  const canFillShifts = flags.shifts && SHIFT_WRITE_ROLES.includes(role);
+  // /comms/shifts requireFlag-gates on BOTH comms AND shifts, so the "Fill
+  // shifts" link only shows when both are on (otherwise it would 404).
+  const canFillShifts = flags.shifts && flags.comms && SHIFT_WRITE_ROLES.includes(role);
 
   return (
     <section className="season">
@@ -474,16 +481,29 @@ export default async function SeasonPage({
           {calError === "season" && (
             <p className="alert-error">Activate a season before creating a calendar link.</p>
           )}
+          {calError === "mint" && (
+            <p className="alert-error">
+              The old calendar link was retired, but a new one couldn&apos;t be created. Try
+              again.
+            </p>
+          )}
           {freshSeasonCalUrl ? (
             <>
               <p className="muted">
                 A live calendar feed of {season.label} — every competition, event,
-                and trip. Copy it now (for privacy the URL is shown only this once),
-                then in Google Calendar choose <strong>Other calendars → From URL</strong>{" "}
-                and paste it. It stays current all season — new comps and time
-                changes appear automatically.
+                and trip. Copy it now (for privacy the URL is shown only this once).
+                It stays current all season — new comps and time changes appear
+                automatically.
+              </p>
+              <p className="muted">
+                <strong>Google Calendar:</strong> use the https link (Other calendars →
+                From URL).
               </p>
               <code style={{ wordBreak: "break-all" }}>{freshSeasonCalUrl}</code>
+              <p className="muted">
+                <strong>Apple Calendar:</strong> the webcal link opens Subscribe directly.
+              </p>
+              <code style={{ wordBreak: "break-all" }}>{freshSeasonCalWebcal}</code>
             </>
           ) : activeSeasonCalLinks.length > 0 ? (
             <p className="muted">

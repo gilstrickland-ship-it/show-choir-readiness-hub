@@ -93,6 +93,8 @@ export default async function TripPage({
     conflict?: string;
     conflictKind?: string;
     error?: string;
+    confirm?: string;
+    groupId?: string;
   }>;
 }) {
   const { program: slug, tripId } = await params;
@@ -247,6 +249,12 @@ export default async function TripPage({
   const fillGroup =
     canWrite && sp.fill ? (groups.find((g) => g.id === sp.fill) ?? null) : null;
   const fillKind = fillGroup?.kind ?? null;
+
+  // Cascade-delete confirmations (the ?confirm= confirm-box idiom used across the
+  // app): a group or the whole trip is only removed on the second, explicit tap.
+  const confirmDeleteTrip = sp.confirm === "deletetrip" && canWrite;
+  const confirmDeleteGroup =
+    sp.confirm === "deletegroup" && canWrite ? sp.groupId : null;
   const fillMembers = fillGroup
     ? (assignmentsByGroup.get(fillGroup.id) ?? [])
     : [];
@@ -816,7 +824,7 @@ export default async function TripPage({
 
                         {/* Edit / delete group */}
                         {canWrite && (
-                          <details>
+                          <details open={confirmDeleteGroup === g.id}>
                             <summary className="muted">Edit {GROUP_KIND_LABEL[kind].toLowerCase()}</summary>
                             <form action={updateGroup} className="stack" style={{ gap: "0.35rem", marginTop: "0.5rem" }}>
                               <input type="hidden" name="programId" value={program.id} />
@@ -841,15 +849,34 @@ export default async function TripPage({
                               </label>
                               <button type="submit" className="secondary">Save</button>
                             </form>
-                            <form action={deleteGroup} style={{ marginTop: "0.5rem" }}>
-                              <input type="hidden" name="programId" value={program.id} />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="tripId" value={tripId} />
-                              <input type="hidden" name="groupId" value={g.id} />
-                              <button type="submit" className="linklike danger">
-                                Delete this {GROUP_KIND_LABEL[kind].toLowerCase()} (and its assignments)
-                              </button>
-                            </form>
+                            {confirmDeleteGroup === g.id ? (
+                              <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
+                                <p>
+                                  Delete {g.label}? Its rider assignments and chaperones are
+                                  removed too.
+                                </p>
+                                <form action={deleteGroup} className="row-inline">
+                                  <input type="hidden" name="programId" value={program.id} />
+                                  <input type="hidden" name="slug" value={slug} />
+                                  <input type="hidden" name="tripId" value={tripId} />
+                                  <input type="hidden" name="groupId" value={g.id} />
+                                  <button type="submit" className="danger">
+                                    Confirm delete
+                                  </button>
+                                  <Link href={`/${slug}/travel/${tripId}`}>Cancel</Link>
+                                </form>
+                              </div>
+                            ) : (
+                              <p style={{ marginTop: "0.5rem" }}>
+                                <Link
+                                  className="linklike danger"
+                                  href={`/${slug}/travel/${tripId}?confirm=deletegroup&groupId=${g.id}`}
+                                >
+                                  Delete this {GROUP_KIND_LABEL[kind].toLowerCase()} (and its
+                                  assignments)
+                                </Link>
+                              </p>
+                            )}
                           </details>
                         )}
                       </div>
@@ -891,18 +918,33 @@ export default async function TripPage({
         </div>
       </div>
 
-      {/* Danger zone — delete trip */}
+      {/* Danger zone — delete trip (two-tap confirm-box idiom) */}
       {canWrite && (
-        <details>
+        <details open={confirmDeleteTrip}>
           <summary className="muted">Delete trip</summary>
-          <form action={deleteTrip} style={{ marginTop: "0.5rem" }}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="tripId" value={tripId} />
-            <button type="submit" className="linklike danger">
-              Delete this trip and all its groups, assignments, and chaperones
-            </button>
-          </form>
+          {confirmDeleteTrip ? (
+            <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
+              <p>Delete this trip? All its buses, rooms, and assignments go with it.</p>
+              <form action={deleteTrip} className="row-inline">
+                <input type="hidden" name="programId" value={program.id} />
+                <input type="hidden" name="slug" value={slug} />
+                <input type="hidden" name="tripId" value={tripId} />
+                <button type="submit" className="danger">
+                  Confirm delete trip
+                </button>
+                <Link href={`/${slug}/travel/${tripId}`}>Cancel</Link>
+              </form>
+            </div>
+          ) : (
+            <p style={{ marginTop: "0.5rem" }}>
+              <Link
+                className="linklike danger"
+                href={`/${slug}/travel/${tripId}?confirm=deletetrip`}
+              >
+                Delete this trip and all its groups, assignments, and chaperones
+              </Link>
+            </p>
+          )}
         </details>
       )}
 

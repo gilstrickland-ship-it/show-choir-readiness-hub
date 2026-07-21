@@ -61,8 +61,11 @@ Set these on your deployment and redeploy:
 | --- | --- | --- |
 | `RESEND_API_KEY` | Server-side send key (Resend → API Keys). | Sending any email at all. |
 | `RESEND_WEBHOOK_SECRET` | Svix signing secret from the Resend webhook you create in step 4. | Verified-signed bounce / complaint / unsubscribe events. |
-| `BRAND_DOMAIN` | Your real domain — drives the From address and every link in email. | Delivery + working links. |
+| `APP_BASE_URL` | The canonical control for the host every email link resolves to (full URL, e.g. `https://boosters.example.org`). Set this to your real deployment origin. | Working links in email. |
+| `BRAND_DOMAIN` | Your real domain — drives the From address, and is the **fallback link host** when neither `APP_BASE_URL` nor Vercel's `VERCEL_PROJECT_PRODUCTION_URL` is set. | Delivery (From address). |
 | `BRAND_EMAIL_FROM_ADDRESS` | *(optional)* Full From address if it differs from `no-reply@BRAND_DOMAIN`. | Custom From. |
+
+> Email link host resolves in this order: `APP_BASE_URL` → `VERCEL_PROJECT_PRODUCTION_URL` (set automatically on Vercel) → `https://BRAND_DOMAIN`. On Vercel you can rely on the middle fallback; anywhere else, set `APP_BASE_URL` explicitly so tokenized parent links point at your real origin.
 
 Never commit these values. The app reads presence only — no env value is ever displayed in the UI.
 
@@ -102,7 +105,7 @@ Do not blast the entire parent population as the very first send off a cold doma
 Confirm the full loop before you rely on it:
 
 1. **Send reaches an inbox.** From the app, send an announcement to your own address. Confirm it arrives, the From name/address is correct, and links resolve to your deployment (not the placeholder domain).
-2. **Bounce flips status.** Send to a guaranteed-bounce address (`bounced@resend.dev` is Resend's sink for testing, or any address at a domain that hard-bounces). Within a moment the webhook should fire and that guardian's `email_status` should flip to `bounced`. It then appears on **People → Email deliverability** and is skipped on future sends.
+2. **Bounce flips status.** Send to a guaranteed-bounce address (`bounced@resend.dev` is Resend's sink for testing, or any address at a domain that hard-bounces). Within a moment the webhook should fire and that guardian's `email_status` should flip to `bounced`. It then appears under the Email health card's **Review addresses that need attention** link (Settings → Program) and is skipped on future sends.
 3. **Unsubscribe flips status.** Use the one-click unsubscribe footer link on a guardian message; confirm that guardian flips to `unsubscribed` and drops out of subsequent announcement/digest sends.
 4. **Check the in-app health card.** Settings → Program → Email health should now show: Sending configured ✓, Webhook signing ✓, From-address domain matches ✓, and a guardian inbox-health count. Any `–` there points straight back to the step above that is still open.
 
@@ -116,4 +119,4 @@ Confirm the full loop before you rely on it:
 | Mail goes to spam | Cold domain / no warm-up / `p=quarantine` set too early | Warm up (step 5); keep DMARC at `p=none` until clean. |
 | Bounces never update guardian status | Webhook not wired or secret missing | Add the endpoint + `RESEND_WEBHOOK_SECRET` (step 4). |
 | Health card flags From-domain mismatch | `BRAND_DOMAIN` is still `octv.example` or a domain you have not verified | Set a real, Resend-verified domain (steps 0–1). |
-| Links in email point at the wrong host | `BRAND_DOMAIN` / app URL misconfigured | Point them at your real deployment origin, redeploy. |
+| Links in email point at the wrong host | `APP_BASE_URL` unset (falling back to Vercel host or `BRAND_DOMAIN`) | Set `APP_BASE_URL` to your real deployment origin, redeploy. |

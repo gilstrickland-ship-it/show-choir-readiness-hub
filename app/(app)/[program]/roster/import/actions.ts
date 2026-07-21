@@ -13,15 +13,25 @@ export interface PreviewResult extends ParseResult {
   sizeKeys: string[];
 }
 
-async function sizeKeysFor(programId: string): Promise<string[]> {
+// The program's size keys AND timezone in one read. The timezone drives the
+// grade→grad-year term boundary (fall vs spring) so a late-July evening import
+// is read in the program's own wall clock, not the server's UTC.
+async function importContextFor(
+  programId: string,
+): Promise<{ sizeKeys: string[]; timeZone: string }> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("programs")
-    .select("size_fields")
+    .select("size_fields, timezone")
     .eq("id", programId)
     .maybeSingle();
-  const keys = (data as { size_fields?: unknown } | null)?.size_fields;
-  return Array.isArray(keys) && keys.length > 0 ? (keys as string[]) : [...DEFAULT_SIZE_KEYS];
+  const row = data as { size_fields?: unknown; timezone?: string } | null;
+  const keys = row?.size_fields;
+  return {
+    sizeKeys:
+      Array.isArray(keys) && keys.length > 0 ? (keys as string[]) : [...DEFAULT_SIZE_KEYS],
+    timeZone: row?.timezone ?? "UTC",
+  };
 }
 
 // Parse-only: no writes. Returns the preview (valid rows, per-row errors, and
@@ -31,8 +41,8 @@ export async function previewImport(
   text: string,
 ): Promise<PreviewResult> {
   await requireRole(programId, ROSTER_WRITE_ROLES);
-  const sizeKeys = await sizeKeysFor(programId);
-  const parsed = parseRosterCsv(text, sizeKeys);
+  const { sizeKeys, timeZone } = await importContextFor(programId);
+  const parsed = parseRosterCsv(text, sizeKeys, new Date(), timeZone);
   return { ...parsed, sizeKeys };
 }
 
@@ -52,8 +62,8 @@ export async function commitImport(
   text: string,
 ): Promise<CommitResult> {
   await requireRole(programId, ROSTER_WRITE_ROLES);
-  const sizeKeys = await sizeKeysFor(programId);
-  const { rows, errors } = parseRosterCsv(text, sizeKeys);
+  const { sizeKeys, timeZone } = await importContextFor(programId);
+  const { rows, errors } = parseRosterCsv(text, sizeKeys, new Date(), timeZone);
 
   const supabase = await createClient();
   let studentsCreated = 0;
