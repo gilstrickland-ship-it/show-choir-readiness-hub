@@ -2,6 +2,7 @@ import React from "react";
 import { Document, View, Text, DocPage, styles } from "./components";
 import { formatDateInTz, formatTimeInTz } from "@/lib/datetime";
 import { groupItemsByDay } from "@/lib/itinerary-days";
+import { formatHostedDateRange } from "@/lib/hosting";
 import {
   formatCents,
   type TripDocData,
@@ -523,13 +524,47 @@ function TotalRow({ label, planned, actual }: { label: string; planned: number; 
 // visiting-school student data exists to print (III).
 
 function hostEventSubtitle(data: HostEventDocData): string {
-  const dateStr = data.date ? formatDateInTz(`${data.date}T12:00:00Z`, data.tz) : "";
+  const dateStr = formatHostedDateRange(data.date, data.endDate, data.tz);
   return `${data.programName}${dateStr ? ` · ${dateStr}` : ""}`;
 }
 
+// One master-schedule row (Time · School / Label · Kind) — shared by the flat and
+// day-grouped layouts.
+function HostScheduleRow({
+  slot,
+  tz,
+  index,
+}: {
+  slot: HostEventDocData["slots"][number];
+  tz: string;
+  index: number;
+}) {
+  return (
+    <View style={styles.tableRow} key={index} wrap={false}>
+      <Text style={{ width: 90 }}>
+        {slot.startsAt ? formatTimeInTz(slot.startsAt, tz) : "—"}
+      </Text>
+      <Text style={{ flexGrow: 1, flexShrink: 1 }}>
+        {slot.label ?? slot.schoolName ?? slot.kindLabel}
+        {slot.durationMinutes != null ? (
+          <Text style={styles.muted}> · {slot.durationMinutes} min</Text>
+        ) : null}
+      </Text>
+      <Text style={{ width: 90 }}>{slot.kindLabel}</Text>
+    </View>
+  );
+}
+
 // Shared master-schedule table (Time · School / Label · Kind). Reused by the
-// schedule doc and appended to each director packet.
+// schedule doc and appended to each director packet. Day subheadings appear only
+// when the slots span more than one program-tz calendar day (Wave N) — the same
+// threshold as the itinerary packet; a single-day schedule renders flat.
 function MasterScheduleTable({ data }: { data: HostEventDocData }) {
+  const { multiDay, groups } = groupItemsByDay(
+    data.slots,
+    data.tz,
+    (s) => s.startsAt,
+  );
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Master schedule</Text>
@@ -540,20 +575,23 @@ function MasterScheduleTable({ data }: { data: HostEventDocData }) {
       </View>
       {data.slots.length === 0 ? (
         <Text style={styles.muted}>No schedule built yet.</Text>
+      ) : multiDay ? (
+        groups.map((g) => (
+          <View key={g.key || "untimed"}>
+            <Text
+              style={[styles.bold, { marginTop: 8, marginBottom: 2 }]}
+              wrap={false}
+            >
+              {g.label}
+            </Text>
+            {g.items.map((s, i) => (
+              <HostScheduleRow key={i} slot={s} tz={data.tz} index={i} />
+            ))}
+          </View>
+        ))
       ) : (
         data.slots.map((s, i) => (
-          <View style={styles.tableRow} key={i} wrap={false}>
-            <Text style={{ width: 90 }}>
-              {s.startsAt ? formatTimeInTz(s.startsAt, data.tz) : "—"}
-            </Text>
-            <Text style={{ flexGrow: 1, flexShrink: 1 }}>
-              {s.label ?? s.schoolName ?? s.kindLabel}
-              {s.durationMinutes != null ? (
-                <Text style={styles.muted}> · {s.durationMinutes} min</Text>
-              ) : null}
-            </Text>
-            <Text style={{ width: 90 }}>{s.kindLabel}</Text>
-          </View>
+          <HostScheduleRow key={i} slot={s} tz={data.tz} index={i} />
         ))
       )}
     </View>

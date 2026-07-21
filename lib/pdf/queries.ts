@@ -519,6 +519,7 @@ export interface HostEventDocData {
   tz: string;
   eventName: string;
   date: string | null; // event_date (all-day)
+  endDate: string | null; // last day when multi-day (Wave N); null = single-day
   venueNotes: string | null;
   hostContact: string | null; // day-of contact line for visiting directors
   schools: HostSchoolData[];
@@ -530,6 +531,7 @@ interface HostEventBase {
   program_id: string;
   name: string;
   event_date: string | null;
+  end_date: string | null;
   venue_notes: string | null;
   host_contact: string | null;
 }
@@ -540,7 +542,7 @@ export async function loadHostEventDoc(
 ): Promise<HostEventDocData | null> {
   const { data: eventRow } = await supabase
     .from("hosted_events")
-    .select("program_id, name, event_date, venue_notes, host_contact")
+    .select("program_id, name, event_date, end_date, venue_notes, host_contact")
     .eq("id", eventId)
     .maybeSingle();
   const event = eventRow as HostEventBase | null;
@@ -642,6 +644,7 @@ export async function loadHostEventDoc(
     tz: program?.timezone ?? "UTC",
     eventName: event.name,
     date: event.event_date,
+    endDate: event.end_date,
     venueNotes: event.venue_notes,
     hostContact: event.host_contact,
     schools,

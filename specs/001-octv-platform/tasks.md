@@ -105,3 +105,4 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 - [X] T058 Role journey panel on Today (director/admin, treasurer, costume manager, board orientation), full/pill/dismissed states, Getting-started reopen links, setup-guide absorbed with e2e contract intact.
 - [X] T059 Intro strips on the eight complex surfaces with "?" re-triggers (?help=1), per-member Got-it state.
 - [X] T060 Parent welcome card (token_events-derived first visits, ?welcome=1 re-show, footer link), e2e reconciled.
+- [X] T062 Multi-day hosted invitationals: end_date (0015), range rendering (list/header/season), day-grouped schedule + PDFs, day-scoped shift-remaining, per-day generate hint.

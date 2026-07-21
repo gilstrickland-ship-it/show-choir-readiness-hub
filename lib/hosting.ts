@@ -9,6 +9,8 @@
 // fields (venue_notes, arrival_notes, costume_colors, label) surface the
 // standing no-health label below.
 
+import { formatDateInTz, zonedDateKey } from "@/lib/datetime";
+
 export const NO_HEALTH_LABEL = "Do not enter health or medical information.";
 
 // Write is director/admin (RLS hosted_*_write). board_member reads (mirrors the
@@ -70,11 +72,32 @@ export interface HostedEventRow {
   season_id: string;
   name: string;
   event_date: string | null;
+  // Last day of a multi-day invitational (Wave N). Null = single-day. Always
+  // >= event_date and never equal to it (an equal value is normalized to null in
+  // the actions), so `end_date != null` is exactly "spans more than one day".
+  end_date: string | null;
   venue_notes: string | null;
   host_contact: string | null;
   status: HostedEventStatus;
   created_at: string;
   updated_at: string;
+}
+
+// A hosted event's date, rendered in program tz — a single day, or an
+// event_date–end_date range when the invitational spans more than one day (Wave
+// N). Noon-anchored (Constitution VII) exactly like the trip date range so an
+// all-day date never slips a day across a tz boundary. Empty string when undated
+// (callers substitute their own placeholder). Shared by the hosting list, the
+// event header, the Season spine, and the day-of PDFs so all four read alike.
+export function formatHostedDateRange(
+  eventDate: string | null,
+  endDate: string | null,
+  timeZone: string,
+): string {
+  if (!eventDate) return "";
+  const start = formatDateInTz(`${eventDate}T12:00:00Z`, timeZone);
+  if (!endDate || endDate === eventDate) return start;
+  return `${start} – ${formatDateInTz(`${endDate}T12:00:00Z`, timeZone)}`;
 }
 
 export interface HostedSchoolRow {
@@ -178,24 +201,35 @@ export function generateHostSchedule(opts: {
 
 // "Shift remaining" (I2) — the "running 20 minutes behind" one-tap fix. Given the
 // event's slots, a pivot slot id, and ±minutes, return the new starts_at for the
-// pivot AND every slot at or after it (by starts_at). Pure so the arithmetic is
-// unit-tested; the action applies the returned updates in one transaction. Slots
-// with no starts_at can't be shifted (nothing to move) and are skipped. Positive
-// pushes later, negative pulls earlier — reversible by shifting back.
+// pivot AND every later slot ON THE SAME PROGRAM-TZ CALENDAR DAY as the pivot.
+// Pure so the arithmetic is unit-tested; the action applies the returned updates
+// in one transaction. Slots with no starts_at can't be shifted (nothing to move)
+// and are skipped. Positive pushes later, negative pulls earlier — reversible by
+// shifting back.
+//
+// Day boundary (Wave N): a multi-day invitational runs one ladder per day. Running
+// behind on Friday must not drag Saturday's schedule too — so only slots whose
+// starts_at falls on the pivot's calendar day (in `timeZone`, Constitution VII)
+// are shifted. A single-day event has every slot on one day, so this is a no-op
+// there and the original behavior is preserved exactly.
 export function computeShiftRemaining(
   slots: { id: string; starts_at: string | null }[],
   pivotId: string,
   deltaMinutes: number,
+  timeZone: string,
 ): { id: string; starts_at: string }[] {
   const pivot = slots.find((s) => s.id === pivotId);
   if (!pivot || !pivot.starts_at) return [];
   const threshold = new Date(pivot.starts_at).getTime();
+  const pivotDay = zonedDateKey(pivot.starts_at, timeZone);
   const deltaMs = Math.round(deltaMinutes) * 60_000;
   const out: { id: string; starts_at: string }[] = [];
   for (const s of slots) {
     if (!s.starts_at) continue;
     const ms = new Date(s.starts_at).getTime();
     if (Number.isNaN(ms) || ms < threshold) continue;
+    // Same calendar day as the pivot only — a later day's ladder stays put.
+    if (zonedDateKey(s.starts_at, timeZone) !== pivotDay) continue;
     out.push({ id: s.id, starts_at: new Date(ms + deltaMs).toISOString() });
   }
   return out;
