@@ -40,6 +40,11 @@ const insertCostumePiece: [string, unknown[]] = [
   [A.program],
 ];
 
+const insertHostedEvent: [string, unknown[]] = [
+  `insert into hosted_events (program_id, season_id, name) values ($1, $2, 'Test Invitational')`,
+  [A.program, A.seasonActive],
+];
+
 describe.skipIf(rlsSkipped())('§2 role matrix', () => {
   describe('ledger write = treasurer only', () => {
     test('admin CANNOT insert ledger_entries', async () => {
@@ -81,6 +86,28 @@ describe.skipIf(rlsSkipped())('§2 role matrix', () => {
       expect(await costume().count(`select 1 from ledger_entries where program_id = $1`, [A.program])).toBe(
         0,
       );
+    });
+  });
+
+  describe('hosting write = director/admin only (Wave I)', () => {
+    test('admin CAN insert hosted_events', async () => {
+      expect(await admin().allows(...insertHostedEvent)).toBe(true);
+    });
+
+    test('treasurer CANNOT insert hosted_events', async () => {
+      const err = await treasurer().expectDenied(...insertHostedEvent);
+      expect(err.code).toBe(RLS_DENIED);
+    });
+
+    test('costume_manager CANNOT insert hosted_events', async () => {
+      const err = await costume().expectDenied(...insertHostedEvent);
+      expect(err.code).toBe(RLS_DENIED);
+    });
+
+    test('board reads hosting rows (read-only seat)', async () => {
+      expect(
+        await board().count(`select 1 from hosted_events where program_id = $1`, [A.program]),
+      ).toBeGreaterThan(0);
     });
   });
 

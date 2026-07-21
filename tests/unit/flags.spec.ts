@@ -69,8 +69,11 @@ describe("varsity tier — most on", () => {
 
 describe("program tier — all product features on", () => {
   test("every product flag resolves on", () => {
+    // support_access and hosting are deliberately NOT tier-driven (per-program
+    // pilot capabilities); every other flag is a product surface the top tier ships.
+    const nonTierDriven: FlagKey[] = ["support_access", "hosting"];
     const productKeys = (Object.keys(flagRegistry) as FlagKey[]).filter(
-      (k) => k !== "support_access",
+      (k) => !nonTierDriven.includes(k),
     );
     for (const key of productKeys) {
       expect(flag(prog("program"), key)).toBe(true);
@@ -88,6 +91,19 @@ describe("support_access is never tier-driven", () => {
 
   test("a per-program override can still turn it on", () => {
     expect(flag(prog("prep", { support_access: true }), "support_access")).toBe(true);
+  });
+});
+
+describe("hosting is never tier-driven (Wave I pilot posture)", () => {
+  test("stays at its registry default (off) for every tier", () => {
+    for (const tier of ["prep", "varsity", "program"] as ProgramTier[]) {
+      expect(TIER_BUNDLES[tier].hosting).toBeUndefined();
+      expect(flag(prog(tier), "hosting")).toBe(false);
+    }
+  });
+
+  test("a per-program override enables the pilot", () => {
+    expect(flag(prog("program", { hosting: true }), "hosting")).toBe(true);
   });
 });
 

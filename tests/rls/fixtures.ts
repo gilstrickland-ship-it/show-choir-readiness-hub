@@ -62,6 +62,9 @@ const SLOT = {
   packet_parse: 47,
   absence_request: 48,
   event: 49,
+  hosted_event: 50,
+  hosted_school: 51,
+  hosted_slot: 52,
   // A-only archived-season extras + ledger states (slots ≥ 60)
   competition_archived: 60,
   costume_set_archived: 61,
@@ -70,6 +73,7 @@ const SLOT = {
   budget_line_archived: 64,
   ledger_voided: 65,
   ledger_audit_extra: 66,
+  hosted_event_archived: 67,
   // Octv support user (is_support = true, NOT a member of any program). Slot in
   // both A and B id-spaces resolves to the same person only via the `S` export;
   // kept ≥ 70 so it never collides with per-program slots.
@@ -128,6 +132,9 @@ export interface ProgramIds {
   packetParse: string;
   absenceRequest: string;
   event: string;
+  hostedEvent: string;
+  hostedSchool: string;
+  hostedSlot: string;
   // A-only
   competitionArchived: string;
   costumeSetArchived: string;
@@ -136,6 +143,7 @@ export interface ProgramIds {
   budgetLineArchived: string;
   ledgerVoided: string;
   ledgerAuditExtra: string;
+  hostedEventArchived: string;
 }
 
 function build(prefix: 'a' | 'b'): ProgramIds {
@@ -190,6 +198,9 @@ function build(prefix: 'a' | 'b'): ProgramIds {
     packetParse: g('packet_parse'),
     absenceRequest: g('absence_request'),
     event: g('event'),
+    hostedEvent: g('hosted_event'),
+    hostedSchool: g('hosted_school'),
+    hostedSlot: g('hosted_slot'),
     competitionArchived: g('competition_archived'),
     costumeSetArchived: g('costume_set_archived'),
     budgetArchived: g('budget_archived'),
@@ -197,6 +208,7 @@ function build(prefix: 'a' | 'b'): ProgramIds {
     budgetLineArchived: g('budget_line_archived'),
     ledgerVoided: g('ledger_voided'),
     ledgerAuditExtra: g('ledger_audit_extra'),
+    hostedEventArchived: g('hosted_event_archived'),
   };
 }
 
