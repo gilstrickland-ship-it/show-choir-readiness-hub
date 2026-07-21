@@ -1102,7 +1102,11 @@ export default async function TripPage({
                                 name="travelGroupId"
                                 value={g.id}
                               />
-                              <select name="guardian_id" defaultValue="">
+                              <select
+                                name="guardian_id"
+                                defaultValue=""
+                                aria-label="Chaperone — pick a guardian"
+                              >
                                 <option value="">— parent (guardian)…</option>
                                 {guardians.map((gd) => (
                                   <option key={gd.id} value={gd.id}>
@@ -1117,6 +1121,7 @@ export default async function TripPage({
                                 type="text"
                                 name="name_override"
                                 placeholder="…or type a one-off helper's name"
+                                aria-label="Chaperone — or type a one-off helper's name"
                               />
                               <button type="submit" className="secondary">
                                 Add chaperone
