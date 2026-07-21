@@ -119,6 +119,7 @@ export default async function MealsPage({
           <input type="hidden" name="competitionId" value={competitionId} />
           <textarea
             name="meal_note"
+            aria-label="Meal note for families"
             rows={3}
             defaultValue={data.mealNote ?? ""}
             placeholder="e.g. Boxed lunches from Jimmy's — served in cafeteria at 12:30, pick up at north door."

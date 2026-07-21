@@ -376,7 +376,12 @@
     font-size: 0.88rem;
   }
 
-  .danger {
+  /* Destructive TEXT utility (spans, links). Scoped away from <button>: this
+     components-layer rule outranks the base layer regardless of specificity,
+     so an unscoped `.danger` repaints `button.danger` (solid alert pill,
+     paper text — base layer) as alert-on-alert, i.e. red text on a red fill.
+     Same cascade-collision family as the button.linklike.danger fix (T061). */
+  .danger:not(button) {
     color: var(--alert-text);
   }
 
