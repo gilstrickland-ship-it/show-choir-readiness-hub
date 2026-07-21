@@ -17,13 +17,21 @@ function isStuck(createdAt: string): boolean {
 }
 
 // Map known parse-failure strings to guidance (F8b). The AI client throws the
-// literal "ANTHROPIC_API_KEY is not set" when the deployment has no key; other
-// failures (bad JSON, download errors) pass through as-is.
-function friendlyParseError(raw: string): string {
+// literal "ANTHROPIC_API_KEY is not set" when the deployment has no key; every
+// other failure (bad JSON, download errors) gets a plain-language sentence with
+// the raw detail tucked into a collapsible block so support can still see it.
+function friendlyParseError(raw: string): { message: string; detail?: string } {
   if (raw.includes("ANTHROPIC_API_KEY is not set")) {
-    return "AI parsing isn't configured for this deployment — enter the itinerary manually.";
+    return {
+      message:
+        "Automatic reading isn't set up for this deployment — enter the itinerary by hand.",
+    };
   }
-  return raw;
+  return {
+    message:
+      "The upload couldn't be read automatically. You can try again, or enter the itinerary by hand — the PDF stays available either way.",
+    detail: raw,
+  };
 }
 
 // Packet tab (§5, T015). Upload a host packet (PDF/image); when the packet_parse
@@ -158,9 +166,22 @@ export default async function PacketPage({
                   ) : (
                     <span className="muted">no parse</span>
                   )}
-                  {p?.status === "failed" && p.error ? (
-                    <div className="muted">{friendlyParseError(p.error)}</div>
-                  ) : null}
+                  {p?.status === "failed" && p.error
+                    ? (() => {
+                        const fe = friendlyParseError(p.error);
+                        return (
+                          <div className="muted">
+                            {fe.message}
+                            {fe.detail ? (
+                              <details>
+                                <summary>Technical details</summary>
+                                {fe.detail}
+                              </details>
+                            ) : null}
+                          </div>
+                        );
+                      })()
+                    : null}
                 </td>
                 <td>
                   {p && (p.status === "review" || p.status === "accepted") && (

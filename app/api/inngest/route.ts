@@ -9,11 +9,13 @@ import { exportAllFn } from "@/lib/inngest/functions/export";
 import { rolloverNudgeCron } from "@/lib/inngest/functions/rollover-nudge";
 import { announcementSendFn } from "@/lib/inngest/functions/announcement";
 import { digestSendFn } from "@/lib/inngest/functions/digest-send";
+import { shiftReminderCron } from "@/lib/inngest/functions/shift-reminder";
 
 // Inngest serve handler (§10). Registers every background function: packet/parse,
 // the weekly digest crons (draft on Sun, reminder on Wed — never auto-send,
-// T025), async export-all (T036), the spring rollover-nudge cron (T037), and the
-// announcement/digest send jobs (T038). Without INNGEST_SIGNING_KEY the endpoint
+// T025), async export-all (T036), the spring rollover-nudge cron (T037), the
+// announcement/digest send jobs (T038), and the day-before volunteer-shift
+// reminder cron (T044). Without INNGEST_SIGNING_KEY the endpoint
 // still mounts for local dev; production signing is env-driven.
 
 export const { GET, POST, PUT } = serve({
@@ -26,5 +28,6 @@ export const { GET, POST, PUT } = serve({
     rolloverNudgeCron,
     announcementSendFn,
     digestSendFn,
+    shiftReminderCron,
   ],
 });

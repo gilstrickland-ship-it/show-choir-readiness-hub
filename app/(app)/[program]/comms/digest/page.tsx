@@ -147,9 +147,10 @@ export default async function DigestPage({
 
       {!emailConfigured() && (
         <p className="alert-error">
-          Email sending is not configured (no RESEND_API_KEY). Digests can be
-          drafted and approved, but sends are marked &ldquo;skipped&rdquo; until
-          email is set up.
+          Email sending isn&apos;t set up for this deployment yet, so nothing can
+          be emailed from here. Digests can still be drafted and approved — sends
+          are marked &ldquo;skipped&rdquo; until email setup is finished. (Whoever
+          hosts your program&apos;s site can finish email setup.)
         </p>
       )}
 
@@ -161,8 +162,9 @@ export default async function DigestPage({
         (emailConfigured() ? (
           <p className="alert-ok">The digest is sending in the background.</p>
         ) : (
-          <p style={{ color: "#b45309" }}>
-            Queued, but email isn&apos;t configured — recipients will be skipped.
+          <p className="alert-error">
+            Approved, but email sending isn&apos;t set up — recipients will be
+            skipped for now.
           </p>
         ))}
       {sp.done && !sp.queued && (
@@ -203,9 +205,8 @@ export default async function DigestPage({
             </form>
           ) : (
             <p className="muted">
-              The AI digest feature is turned off for this program (flag{" "}
-              <code>digest</code>). Existing drafts remain reviewable; enable the
-              flag to draft new ones.
+              The weekly digest isn&apos;t turned on for this program. Existing
+              drafts remain reviewable.
             </p>
           )}
         </div>
@@ -227,7 +228,11 @@ export default async function DigestPage({
               <span className="badge">{d.status}</span>
             </div>
             <div className="muted">
-              {d.model ? `${d.model} · ${d.prompt_version}` : "manual"}
+              {d.model ? (
+                <span title={`${d.model} · ${d.prompt_version}`}>AI-drafted</span>
+              ) : (
+                "Written by hand"
+              )}
               {d.sent_at ? ` · sent ${formatDateTimeInTz(d.sent_at, tz)}` : ""}
               {parts.length > 0 ? ` · ${parts.join(", ")}` : ""}
             </div>
@@ -242,8 +247,11 @@ export default async function DigestPage({
                   <input type="text" name="subject" defaultValue={d.subject ?? ""} required />
                 </label>
                 <label style={{ width: "100%" }}>
-                  Body (markdown)
+                  Body
                   <textarea name="body_md" rows={12} defaultValue={d.body_md ?? ""} required />
+                  <span className="muted">
+                    Plain text works — leave a blank line between paragraphs.
+                  </span>
                 </label>
                 <button type="submit" className="secondary">
                   Save edits

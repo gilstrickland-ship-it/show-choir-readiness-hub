@@ -104,8 +104,7 @@ async function QuickChangeGrid({
     return (
       <p className="muted">
         This competition has no ensemble set, so there is no student list to build a
-        quick-change sheet from. Set its ensemble on the competition&apos;s Overview
-        tab.
+        quick-change sheet from. Set its ensemble on the competition page.
       </p>
     );
   }

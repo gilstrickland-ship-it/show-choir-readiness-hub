@@ -22,14 +22,23 @@ interface RequestRow {
   id: string;
   status: "pending" | "confirmed" | "dismissed";
   created_at: string;
+  note: string | null;
   student: { first_name: string; last_name: string } | null;
   competition: { name: string; date: string | null } | null;
 }
 
+// Status → the badge/chip class the card uses. Mirrors the mapping the table
+// used: confirmed reads as a settled badge, dismissed as muted, pending as a chip.
+const STATUS_CLASS: Record<RequestRow["status"], string> = {
+  pending: "chip",
+  confirmed: "badge",
+  dismissed: "muted",
+};
+
 const STATUS_LABEL: Record<RequestRow["status"], string> = {
   pending: "Pending review",
   confirmed: "Confirmed",
-  dismissed: "Not approved",
+  dismissed: "Not confirmed — student still expected",
 };
 
 export default async function PublicAbsencePage({
@@ -79,7 +88,7 @@ export default async function PublicAbsencePage({
     const { data: reqData } = await supabase
       .from("absence_requests")
       .select(
-        "id, status, created_at, student:students(first_name, last_name), competition:competitions(name, date)",
+        "id, status, created_at, note, student:students(first_name, last_name), competition:competitions(name, date)",
       )
       .eq("program_id", program.id)
       .in("student_id", studentIds)
@@ -140,42 +149,34 @@ export default async function PublicAbsencePage({
             Check here before submitting again — a report already listed does not
             need to be sent twice.
           </p>
-          <table className="members">
-            <thead>
-              <tr>
-                <th>Student</th>
-                <th>Competition</th>
-                <th>Submitted</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {requests.map((r) => (
-                <tr key={r.id}>
-                  <td>
+          {/* Stacked cards, not a 4-column table — the parent surface is a phone
+              screen, where a wide table squishes to unreadable (C2-4). */}
+          <ul className="token-report-list">
+            {requests.map((r) => (
+              <li key={r.id} className="token-report-card">
+                <div className="token-report-head">
+                  <strong>
                     {r.student
                       ? `${r.student.first_name} ${r.student.last_name}`
                       : "—"}
-                  </td>
-                  <td>{r.competition?.name ?? "—"}</td>
-                  <td>{formatDateInTz(r.created_at, tz)}</td>
-                  <td>
-                    <span
-                      className={
-                        r.status === "confirmed"
-                          ? "badge"
-                          : r.status === "dismissed"
-                            ? "muted"
-                            : "chip"
-                      }
-                    >
-                      {STATUS_LABEL[r.status]}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </strong>
+                  <span className={STATUS_CLASS[r.status]}>
+                    {STATUS_LABEL[r.status]}
+                  </span>
+                </div>
+                <div className="muted">
+                  {r.competition?.name ?? "—"}
+                  {r.competition?.date
+                    ? ` · ${formatDateInTz(`${r.competition.date}T12:00:00Z`, tz)}`
+                    : ""}
+                </div>
+                <div className="token-report-meta">
+                  Submitted {formatDateInTz(r.created_at, tz)}
+                </div>
+                {r.note && <p className="token-report-note">{r.note}</p>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -203,7 +204,7 @@ export default async function PublicAbsencePage({
               {comps.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                  {c.date ? ` — ${formatDateInTz(c.date, tz)}` : ""}
+                  {c.date ? ` — ${formatDateInTz(`${c.date}T12:00:00Z`, tz)}` : ""}
                 </option>
               ))}
             </select>

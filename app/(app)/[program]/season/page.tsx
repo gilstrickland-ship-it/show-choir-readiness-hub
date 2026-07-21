@@ -146,6 +146,11 @@ export default async function SeasonPage({
   let nextCompDays: number | null = null;
   let nextCompOpenSlots = 0;
   let nextCompMeta = "";
+  // Undated competitions have no place on a chronological spine, so they're
+  // omitted below — but a director who added one and can't find it deserves a
+  // pointer. Counted from the comps we already fetch (no extra query), surfaced
+  // as a muted note near the top of the spine.
+  let undatedCompCount = 0;
   if (flags.competitions && seasonId) {
     const { data: compData } = await supabase
       .from("competitions")
@@ -164,6 +169,8 @@ export default async function SeasonPage({
             ensemble_id: string | null;
           }[]
         | null) ?? [];
+
+    undatedCompCount = comps.filter((c) => !c.date).length;
 
     // Results for done comps.
     const placement = new Map<string, string | null>();
@@ -411,6 +418,14 @@ export default async function SeasonPage({
           Competitions, events, and travel — one spine, in order.
         </span>
       </div>
+
+      {undatedCompCount > 0 && (
+        <p className="muted season-undated-note">
+          {undatedCompCount} competition{undatedCompCount === 1 ? "" : "s"} without
+          a date {undatedCompCount === 1 ? "isn't" : "aren't"} shown on the timeline
+          — <Link href={`${base}/competitions`}>set dates on the Competitions page</Link>.
+        </p>
+      )}
 
       {groups.length === 0 ? (
         <p className="muted">Nothing on the season calendar yet.</p>

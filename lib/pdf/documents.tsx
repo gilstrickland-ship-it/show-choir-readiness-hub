@@ -21,6 +21,9 @@ import {
 const MED_BINDER_LINE =
   "Before departure: confirm the school's medical-forms binder is on the bus with the lead chaperone. (Health information lives outside this system — it is not printed here.)";
 
+const RELEASED_LINE =
+  "Riders leaving with their family instead of the bus: check Released and note the adult's name beside the rider.";
+
 function tripDateRange(data: { startsOn: string | null; endsOn: string | null }, tz: string): string {
   if (!data.startsOn) return "";
   const start = formatDateInTz(`${data.startsOn}T12:00:00Z`, tz);
@@ -73,6 +76,7 @@ export function BusManifest({ data }: { data: TripDocData }) {
               <Text style={[styles.bold, { flexGrow: 1 }]}>Rider</Text>
               <Text style={[styles.bold, styles.checkboxCol]}>Out</Text>
               <Text style={[styles.bold, styles.checkboxCol]}>Back</Text>
+              <Text style={[styles.bold, styles.releasedCol]}>Released</Text>
             </View>
             {bus.riders.map((r, ri) => (
               <View style={styles.tableRow} key={ri}>
@@ -86,6 +90,9 @@ export function BusManifest({ data }: { data: TripDocData }) {
                   <View style={styles.checkbox} />
                 </View>
                 <View style={styles.checkboxCol}>
+                  <View style={styles.checkbox} />
+                </View>
+                <View style={styles.releasedCol}>
                   <View style={styles.checkbox} />
                 </View>
               </View>
@@ -107,6 +114,8 @@ export function BusManifest({ data }: { data: TripDocData }) {
               <View style={[styles.checkbox, { marginRight: 8, marginTop: 1 }]} />
               <Text style={{ flexShrink: 1 }}>{MED_BINDER_LINE}</Text>
             </View>
+
+            <Text style={{ marginTop: 8, ...styles.muted }}>{RELEASED_LINE}</Text>
           </DocPage>
         ))
       )}

@@ -8,6 +8,18 @@ import { brand } from "@/lib/brand";
 
 let cachedClient: unknown | null = null;
 
+// Escape LIKE/ILIKE metacharacters (`\`, `%`, `_`) so a value is matched
+// LITERALLY by an ILIKE filter — turning ILIKE into a safe case-insensitive
+// equality test. Without this, an address whose local part contains `_` or `%`
+// (both legal in an email) would be read as a wildcard and widen the match.
+// Used at every address-matching ILIKE site (Resend bounce/complaint webhook,
+// the guardian unsubscribe, the invite lookup on /launch, and self-service link
+// recovery) — PostgREST can't call lower() in a filter, so ILIKE + escaping is
+// how we get case-insensitive exact matching.
+export function escapeLike(value: string): string {
+  return value.replace(/([\\%_])/g, "\\$1");
+}
+
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
 }
@@ -37,11 +49,14 @@ export type SendResult =
   | { status: "failed"; error: string };
 
 // Send one email. Never throws — returns a status the caller records on the
-// per-send row so a single bad address never aborts a batch.
+// per-send row so a single bad address never aborts a batch. Optional `headers`
+// pass straight through to Resend — used for RFC 8058 List-Unsubscribe /
+// List-Unsubscribe-Post one-click headers on every guardian-facing message.
 export async function sendEmail(args: {
   to: string;
   subject: string;
   html: string;
+  headers?: Record<string, string>;
 }): Promise<SendResult> {
   const client = await getClient();
   if (!client) return { status: "skipped_no_key" };
@@ -52,6 +67,7 @@ export async function sendEmail(args: {
       to: args.to,
       subject: args.subject,
       html: args.html,
+      ...(args.headers ? { headers: args.headers } : {}),
     });
     if (error) {
       return { status: "failed", error: String((error as { message?: string })?.message ?? error) };

@@ -150,3 +150,44 @@ export function zonedDateKey(
   // en-CA formats as YYYY-MM-DD.
   return dtf.format(d);
 }
+
+// Whole calendar days from `from` to `to`, counted on `timeZone`'s wall calendar
+// rather than by elapsed 24-hour blocks. A director counting from Thursday 9pm to
+// a Saturday competition says "2 days" even though only ~34 hours elapse; a naive
+// (to - from) / 86.4M floors that to 1. We bucket each instant to its program-tz
+// calendar day (zonedDateKey) and diff the pure calendar dates. Parsing the
+// YYYY-MM-DD keys as UTC midnights is DST-safe precisely because date keys carry
+// no offset. A target day already in the past clamps to 0 ("now", not "-2 days").
+export function calendarDaysBetween(
+  from: Date,
+  to: Date,
+  timeZone: string,
+): number {
+  const fromUtc = Date.parse(`${zonedDateKey(from, timeZone)}T00:00:00Z`);
+  const toUtc = Date.parse(`${zonedDateKey(to, timeZone)}T00:00:00Z`);
+  const days = Math.round((toUtc - fromUtc) / 86_400_000);
+  return days < 0 ? 0 : days;
+}
+
+// Friendly, parent-legible label for an IANA zone. "America/Chicago" reads as
+// "Central Time", not the raw zone name a director would never say aloud. A
+// deterministic Record (no Intl long-name lookups, which vary by engine and
+// locale) keeps this pure and unit-testable. Unmapped zones fall back to the
+// city segment with underscores turned into spaces ("Europe/Paris" → "Paris").
+const TIME_ZONE_LABELS: Record<string, string> = {
+  "America/New_York": "Eastern Time",
+  "America/Detroit": "Eastern Time",
+  "America/Chicago": "Central Time",
+  "America/Denver": "Mountain Time",
+  "America/Phoenix": "Arizona Time",
+  "America/Los_Angeles": "Pacific Time",
+  "America/Anchorage": "Alaska Time",
+  "Pacific/Honolulu": "Hawaii Time",
+};
+
+export function formatTimeZoneLabel(timeZone: string): string {
+  const mapped = TIME_ZONE_LABELS[timeZone];
+  if (mapped) return mapped;
+  const city = timeZone.includes("/") ? timeZone.split("/").pop()! : timeZone;
+  return city.replace(/_/g, " ");
+}

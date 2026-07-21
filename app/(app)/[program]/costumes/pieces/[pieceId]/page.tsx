@@ -10,6 +10,7 @@ import {
   PIECE_KINDS,
   PIECE_CONDITIONS,
   PIECE_KIND_LABELS,
+  PIECE_CONDITION_LABELS,
   NO_HEALTH_LABEL,
   type PieceKind,
   type PieceCondition,
@@ -115,7 +116,7 @@ export default async function PieceDetailPage({
               <select name="condition" defaultValue={piece.condition}>
                 {PIECE_CONDITIONS.map((c) => (
                   <option key={c} value={c}>
-                    {c}
+                    {PIECE_CONDITION_LABELS[c]}
                   </option>
                 ))}
               </select>
@@ -156,7 +157,7 @@ export default async function PieceDetailPage({
           <dt>Color</dt>
           <dd>{piece.color ?? "—"}</dd>
           <dt>Condition</dt>
-          <dd>{piece.condition}</dd>
+          <dd>{PIECE_CONDITION_LABELS[piece.condition] ?? piece.condition}</dd>
           <dt>Storage</dt>
           <dd>{piece.storage_location ?? "—"}</dd>
           <dt>Notes</dt>

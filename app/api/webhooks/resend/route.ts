@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { escapeLike } from "@/lib/email";
 import { verifySvix } from "@/lib/svix";
 
 // Resend deliverability webhook (§8a, T026). Bounce / complaint / unsubscribe
@@ -84,9 +85,10 @@ export async function POST(req: Request): Promise<Response> {
   let matched = 0;
   for (const email of emails) {
     const query = supabase.from("guardians").update({ email_status: newStatus });
-    // Case-insensitive match on the stored address.
+    // Case-insensitive EXACT match on the stored address — escape LIKE
+    // metacharacters so an address with `_`/`%` isn't treated as a wildcard.
     const { data, error } = await query
-      .ilike("email", email)
+      .ilike("email", escapeLike(email))
       .neq("email_status", "unsubscribed")
       .select("id");
     if (!error && data) matched += (data as { id: string }[]).length;

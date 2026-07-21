@@ -9,6 +9,7 @@ import {
   PIECE_KINDS,
   PIECE_CONDITIONS,
   PIECE_KIND_LABELS,
+  PIECE_CONDITION_LABELS,
   NO_HEALTH_LABEL,
   type PieceKind,
   type PieceCondition,
@@ -141,7 +142,7 @@ export default async function CostumesInventoryPage({
             <option value="all">All conditions</option>
             {PIECE_CONDITIONS.map((c) => (
               <option key={c} value={c}>
-                {c}
+                {PIECE_CONDITION_LABELS[c]}
               </option>
             ))}
           </select>
@@ -179,9 +180,9 @@ export default async function CostumesInventoryPage({
               <td>{p.color ?? "—"}</td>
               <td>
                 {p.condition === "retire" ? (
-                  <span className="muted">retired</span>
+                  <span className="muted">Retired</span>
                 ) : (
-                  p.condition
+                  PIECE_CONDITION_LABELS[p.condition] ?? p.condition
                 )}
               </td>
               <td>{p.storage_location ?? "—"}</td>
@@ -246,7 +247,7 @@ export default async function CostumesInventoryPage({
                 <select name="condition" defaultValue="good">
                   {PIECE_CONDITIONS.map((c) => (
                     <option key={c} value={c}>
-                      {c}
+                      {PIECE_CONDITION_LABELS[c]}
                     </option>
                   ))}
                 </select>

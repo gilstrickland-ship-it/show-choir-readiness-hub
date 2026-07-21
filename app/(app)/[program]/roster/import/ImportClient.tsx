@@ -87,7 +87,7 @@ export function ImportClient({ programId }: { programId: string }) {
           )}
 
           <p className="muted">
-            Recognized size fields: {preview.sizeKeys.join(", ") || "none"}.
+            Size columns found: {preview.sizeKeys.join(", ") || "none"}.
           </p>
 
           <h2>
@@ -121,7 +121,12 @@ export function ImportClient({ programId }: { programId: string }) {
                     <td>
                       {r.guardians.length}
                       {r.mergedRowCount > 0 && (
-                        <span className="chip">merged {r.mergedRowCount}</span>
+                        <span
+                          className="chip"
+                          title="This student appeared on more than one row — the extra rows' parent contacts were combined."
+                        >
+                          combined from {r.mergedRowCount} rows
+                        </span>
                       )}
                     </td>
                     <td className="muted">row {r.sourceRows.join(", ")}</td>

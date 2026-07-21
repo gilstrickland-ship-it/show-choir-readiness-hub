@@ -94,18 +94,23 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Assemble the full HTML email: body + the three canonical footer links (§8a).
+// Assemble the full HTML email: body + the three canonical footer links (§8a)
+// plus a per-recipient Unsubscribe link (CAN-SPAM). Every guardian-facing email
+// footers through here, so the unsubscribe affordance is universal and visible.
 export function announcementHtml(args: {
   bodyMd: string;
   links: GuardianLinks;
 }): string {
   const body = bodyToHtml(args.bodyMd);
-  const { itinerary, signup, absence } = args.links;
+  const { itinerary, signup, absence, unsubscribe } = args.links;
   return `${body}
 <hr>
 <p style="font-size:0.85rem;color:#666">
   <a href="${itinerary}">Itinerary</a> &nbsp;·&nbsp;
   <a href="${signup}">Volunteer signup</a> &nbsp;·&nbsp;
   <a href="${absence}">Report an absence</a>
+</p>
+<p style="font-size:0.8rem;color:#999">
+  <a href="${unsubscribe}">Unsubscribe</a> from announcements and weekly digests.
 </p>`;
 }

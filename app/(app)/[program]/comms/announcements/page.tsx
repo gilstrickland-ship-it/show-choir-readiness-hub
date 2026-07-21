@@ -152,9 +152,10 @@ export default async function AnnouncementsPage({
 
       {!emailConfigured() && (
         <p className="alert-error">
-          Email sending is not configured (no RESEND_API_KEY). Announcements can
-          be composed and recorded, but messages are marked
-          &ldquo;skipped&rdquo; until email is set up.
+          Email sending isn&apos;t set up for this deployment yet, so nothing can
+          be emailed from here. Announcements can still be composed and recorded —
+          messages are marked &ldquo;skipped&rdquo; until email setup is finished.
+          (Whoever hosts your program&apos;s site can finish email setup.)
         </p>
       )}
 
@@ -164,8 +165,9 @@ export default async function AnnouncementsPage({
             Announcement recorded — emails are sending in the background.
           </p>
         ) : (
-          <p style={{ color: "#b45309" }}>
-            Queued, but email isn&apos;t configured — recipients will be skipped.
+          <p className="alert-error">
+            Recorded, but email sending isn&apos;t set up — recipients will be
+            skipped for now.
           </p>
         ))}
       {sp.done && !sp.queued && (

@@ -69,8 +69,8 @@ export default async function AttendancePage({
         <p className="muted">
           No attendance rows yet.{" "}
           {comp.ensemble_id
-            ? "Reseed from the Overview tab."
-            : "Set an ensemble on the Overview tab, then reseed."}
+            ? "Reseed from the competition page."
+            : "Set an ensemble on the competition page, then reseed."}
         </p>
       )}
 

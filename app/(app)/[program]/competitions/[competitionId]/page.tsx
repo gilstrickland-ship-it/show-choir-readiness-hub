@@ -845,7 +845,7 @@ export default async function CompetitionCommandCenter({
             ) : (
               <dl className="detail-list">
                 <dt>Date</dt>
-                <dd>{comp.date ?? "—"}</dd>
+                <dd>{comp.date ? formatDateInTz(`${comp.date}T12:00:00Z`, tz) : "—"}</dd>
                 <dt>Host</dt>
                 <dd>{comp.host_school ?? "—"}</dd>
                 <dt>Venue</dt>

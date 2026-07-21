@@ -259,6 +259,32 @@ export async function updateGuardian(formData: FormData): Promise<void> {
   redirect(`/${slug}/roster/${studentId}?saved=1`);
 }
 
+// Resubscribe / clear a deliverability flag: flip a guardian's email_status back
+// to 'ok' so announcement + digest sends reach them again. The path back from a
+// bounce the director has fixed, or from an unsubscribe the family asked to
+// reverse — coherent with the Resend webhook (which sets bounced/unsubscribed)
+// and the guardian unsubscribe page. Director/admin only.
+export async function resetGuardianEmailStatus(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  const studentId = String(formData.get("studentId") ?? "");
+  const guardianId = String(formData.get("guardianId") ?? "");
+  await requireRole(programId, ROSTER_WRITE_ROLES);
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("guardians")
+    .update({ email_status: "ok" })
+    .eq("id", guardianId)
+    .eq("program_id", programId);
+
+  if (error) {
+    redirect(`/${slug}/roster/${studentId}?error=guardian#guardians`);
+  }
+  revalidatePath(`/${slug}/roster/${studentId}`);
+  redirect(`/${slug}/roster/${studentId}?saved=1#guardians`);
+}
+
 export async function removeGuardian(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");

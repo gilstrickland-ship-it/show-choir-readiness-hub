@@ -8,17 +8,19 @@ import { usePathname } from "next/navigation";
 // handoff). Client component for the same reason as ShellNav: the active state
 // needs the current pathname. Receives the layout's already role/flag-filtered
 // nav items (with their new task-oriented labels) and regroups them into the
-// five-slot mobile IA — Today · Season · People · Money · More — so a role that
-// can't see a surface never gets its tab. Everything not promoted to a tab
-// lives in the More sheet, plus a Settings entry when the role allows it (it
-// left the desktop nav for the header). The sheet is the only client state
-// here and closes itself on navigation.
+// five-slot mobile IA — Today · Season · People · Wardrobe · More — so a role
+// that can't see a surface never gets its tab. Wardrobe is promoted over Money
+// because costume checkout / quick-change are phone-first hallway jobs; Money
+// (treasury) is a desk task and drops into the More sheet. Everything not
+// promoted to a tab lives in that sheet, plus a Settings entry when the role
+// allows it (it left the desktop nav for the header). The sheet is the only
+// client state here and closes itself on navigation.
 
 const TAB_SLOTS: readonly string[] = [
   "dashboard",
   "season",
   "roster",
-  "treasury",
+  "costumes",
 ];
 
 export function MobileNav({

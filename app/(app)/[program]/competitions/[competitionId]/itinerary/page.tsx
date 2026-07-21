@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { COMPETITION_WRITE_ROLES, ITINERARY_ITEM_KINDS } from "@/lib/competitions";
+import {
+  COMPETITION_WRITE_ROLES,
+  ITINERARY_ITEM_KINDS,
+  ITINERARY_ITEM_KIND_LABELS,
+  type ItineraryItemKind,
+} from "@/lib/competitions";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CompetitionTabs } from "../CompetitionTabs";
@@ -37,6 +42,26 @@ interface ItemRow {
   location: string | null;
   details: string | null;
   sort_order: number;
+  updated_at: string | null;
+}
+
+// Edits within a minute of publish (the publish write itself, last-second tidy)
+// don't count as a post-publish change (C2-2) — mirrors the parent page epsilon
+// so the two surfaces agree on whether families are seeing something new.
+const PUBLISH_JITTER_MS = 60_000;
+
+function changedItemsSincePublish(
+  items: ItemRow[],
+  publishedAt: string | null,
+): number {
+  if (!publishedAt) return 0;
+  const threshold = new Date(publishedAt).getTime() + PUBLISH_JITTER_MS;
+  if (Number.isNaN(threshold)) return 0;
+  return items.filter((i) => {
+    if (!i.updated_at) return false;
+    const t = new Date(i.updated_at).getTime();
+    return !Number.isNaN(t) && t > threshold;
+  }).length;
 }
 
 export default async function ItineraryPage({
@@ -93,13 +118,21 @@ export default async function ItineraryPage({
   const { data: itemData } = itinerary
     ? await supabase
         .from("itinerary_items")
-        .select("id, starts_at, ends_at, kind, title, location, details, sort_order")
+        .select("id, starts_at, ends_at, kind, title, location, details, sort_order, updated_at")
         .eq("itinerary_id", itinerary.id)
         .eq("program_id", program.id)
         .order("sort_order", { ascending: true })
         .order("starts_at", { ascending: true, nullsFirst: false })
     : { data: null };
   const items = (itemData as ItemRow[] | null) ?? [];
+
+  // C2-2: when times have changed since publishing, families already see the
+  // update (the parent page is live) — but nobody is notified automatically.
+  // Calm nudge, not an alarm.
+  const changedSincePublish =
+    itinerary?.status === "published"
+      ? changedItemsSincePublish(items, itinerary.published_at)
+      : 0;
 
   // Uploaded host packet alongside the editor (§5 step 6 / T014).
   const { data: docData } = await supabase
@@ -142,6 +175,15 @@ export default async function ItineraryPage({
       {sp.accepted && (
         <p className="alert-ok">
           Parsed itinerary applied — review the items below, then publish.
+        </p>
+      )}
+
+      {changedSincePublish > 0 && (
+        <p className="alert-info">
+          You&apos;ve changed times since publishing. Families who open their link
+          see the update immediately — but nobody is notified automatically. Send a
+          quick announcement if the change matters.{" "}
+          <Link href={`/${slug}/comms/announcements`}>Go to announcements →</Link>
         </p>
       )}
 
@@ -252,7 +294,7 @@ export default async function ItineraryPage({
                         <select name="kind" defaultValue={item.kind} aria-label="Kind">
                           {ITINERARY_ITEM_KINDS.map((k) => (
                             <option key={k} value={k}>
-                              {k}
+                              {ITINERARY_ITEM_KIND_LABELS[k]}
                             </option>
                           ))}
                         </select>
@@ -299,7 +341,7 @@ export default async function ItineraryPage({
                   <tr key={item.id}>
                     <td>{item.sort_order}</td>
                     <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
-                    <td>{item.kind}</td>
+                    <td>{ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ?? item.kind}</td>
                     <td>
                       {item.title}
                       {item.location ? <span className="muted"> · {item.location}</span> : null}
@@ -337,7 +379,7 @@ export default async function ItineraryPage({
                     <select name="kind" defaultValue="other">
                       {ITINERARY_ITEM_KINDS.map((k) => (
                         <option key={k} value={k}>
-                          {k}
+                          {ITINERARY_ITEM_KIND_LABELS[k]}
                         </option>
                       ))}
                     </select>

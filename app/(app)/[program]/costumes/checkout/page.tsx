@@ -10,6 +10,7 @@ import {
   type PieceKind,
 } from "@/lib/costumes";
 import { CostumeTabs } from "../CostumeTabs";
+import { formatDateInTz } from "@/lib/datetime";
 import { seedCheckout, toggleCheckout } from "./actions";
 
 // Per-competition checkout (T011). A phone-first tap-to-toggle grid for the
@@ -145,7 +146,7 @@ export default async function CheckoutPage({
               {competitions.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                  {c.date ? ` — ${c.date}` : ""}
+                  {c.date ? ` — ${formatDateInTz(`${c.date}T12:00:00Z`, program.timezone)}` : ""}
                 </option>
               ))}
             </select>

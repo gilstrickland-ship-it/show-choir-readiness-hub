@@ -446,6 +446,50 @@ export default async function TripPage({
                           )}
                         </ul>
 
+                        {/* One-tap add (D7): a per-card picker of unassigned-
+                            queue students who still need THIS kind, posting
+                            straight to assignStudent — no select-then-scroll.
+                            The select-then-"Assign here" flow below stays for
+                            desktop. Offering only students missing this kind
+                            avoids the one-room-one-bus conflict on submit. */}
+                        {canWrite &&
+                          (() => {
+                            const addable = queue.filter((s) =>
+                              neededOf(s.id).includes(kind),
+                            );
+                            return addable.length > 0 ? (
+                              <form
+                                action={assignStudent}
+                                className="row-inline"
+                                style={{ gap: "0.35rem", flexWrap: "wrap" }}
+                              >
+                                <input type="hidden" name="programId" value={program.id} />
+                                <input type="hidden" name="slug" value={slug} />
+                                <input type="hidden" name="tripId" value={tripId} />
+                                <input type="hidden" name="travelGroupId" value={g.id} />
+                                <input type="hidden" name="kind" value={kind} />
+                                <select
+                                  name="studentId"
+                                  defaultValue=""
+                                  required
+                                  aria-label={`Add a student to ${g.label}`}
+                                >
+                                  <option value="">
+                                    Add a student…
+                                  </option>
+                                  {addable.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {studentName(s)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button type="submit" className="secondary">
+                                  Add
+                                </button>
+                              </form>
+                            ) : null;
+                          })()}
+
                         {/* Assign selected student here */}
                         {canWrite && selStudent && (
                           canAssignHere ? (
@@ -497,6 +541,23 @@ export default async function TripPage({
                             ))}
                             {groupChaps.length === 0 && <li className="muted">None yet</li>}
                           </ul>
+                          {/* Chaperone-ratio awareness (D6): purely informational,
+                              never a warning — programs' policies vary (common
+                              guidance is ~1:10 for day trips). Shown only when the
+                              group actually has riders. */}
+                          {count > 0 && (
+                            <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                              {groupChaps.length > 0
+                                ? `1 chaperone per ${Math.ceil(
+                                    count / groupChaps.length,
+                                  )} student${
+                                    Math.ceil(count / groupChaps.length) === 1
+                                      ? ""
+                                      : "s"
+                                  }`
+                                : "No chaperone assigned yet"}
+                            </p>
+                          )}
                           {canWrite && (
                             <form action={addChaperone} className="stack" style={{ gap: "0.35rem" }}>
                               <input type="hidden" name="programId" value={program.id} />

@@ -53,6 +53,15 @@ export const PIECE_KIND_LABELS: Record<PieceKind, string> = {
 export const PIECE_CONDITIONS = ["new", "good", "fair", "retire"] as const;
 export type PieceCondition = (typeof PIECE_CONDITIONS)[number];
 
+// Friendly labels for the condition enum — the dropdown and badges show these
+// instead of the raw stored value. DB values are unchanged.
+export const PIECE_CONDITION_LABELS: Record<PieceCondition, string> = {
+  new: "New",
+  good: "Good",
+  fair: "Fair",
+  retire: "Retire",
+};
+
 export const ALTERATION_STATUSES = [
   "none",
   "needed",

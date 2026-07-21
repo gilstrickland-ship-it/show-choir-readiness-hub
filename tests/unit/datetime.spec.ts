@@ -12,6 +12,8 @@ import {
   zonedWallToUtc,
   toZonedInputValue,
   zonedDateKey,
+  calendarDaysBetween,
+  formatTimeZoneLabel,
 } from "@/lib/datetime";
 
 describe("zonedWallToUtc", () => {
@@ -68,5 +70,54 @@ describe("zonedDateKey", () => {
     expect(zonedDateKey("2026-07-05T01:00:00.000Z", "America/Chicago")).toBe(
       "2026-07-04",
     );
+  });
+});
+
+describe("calendarDaysBetween", () => {
+  test("counts calendar days, not 24-hour blocks (the director's count)", () => {
+    // Thu Feb 5 9pm Central → Sat Feb 7 competition. Only ~27 hours elapse, but a
+    // director counts two calendar steps (Fri, Sat). floor((to-from)/86.4M) = 1.
+    const thuNight = new Date("2026-02-06T03:00:00.000Z"); // Thu Feb 5 9pm CST
+    const satComp = new Date("2026-02-07T06:00:00.000Z"); // Sat Feb 7 12am CST
+    expect(calendarDaysBetween(thuNight, satComp, "America/Chicago")).toBe(2);
+  });
+
+  test("same calendar day is 0", () => {
+    const morning = new Date("2026-02-07T14:00:00.000Z"); // Sat 8am CST
+    const evening = new Date("2026-02-08T03:00:00.000Z"); // Sat 9pm CST
+    expect(calendarDaysBetween(morning, evening, "America/Chicago")).toBe(0);
+  });
+
+  test("negative (target already passed) clamps to 0", () => {
+    const later = new Date("2026-02-10T12:00:00.000Z");
+    const earlier = new Date("2026-02-05T12:00:00.000Z");
+    expect(calendarDaysBetween(later, earlier, "America/Chicago")).toBe(0);
+  });
+
+  test("counted in program tz, not UTC: late-night instant stays on its local day", () => {
+    // 01:00 UTC Feb 6 is still Feb 5 evening in Chicago; target 00:00 UTC Feb 7
+    // is Feb 6 evening in Chicago → one calendar day apart locally.
+    const from = new Date("2026-02-06T01:00:00.000Z"); // Feb 5 (Chicago)
+    const to = new Date("2026-02-07T00:00:00.000Z"); // Feb 6 (Chicago)
+    expect(calendarDaysBetween(from, to, "America/Chicago")).toBe(1);
+  });
+});
+
+describe("formatTimeZoneLabel", () => {
+  test("maps common US zones to friendly labels", () => {
+    expect(formatTimeZoneLabel("America/Chicago")).toBe("Central Time");
+    expect(formatTimeZoneLabel("America/New_York")).toBe("Eastern Time");
+    expect(formatTimeZoneLabel("America/Denver")).toBe("Mountain Time");
+    expect(formatTimeZoneLabel("America/Phoenix")).toBe("Arizona Time");
+    expect(formatTimeZoneLabel("America/Los_Angeles")).toBe("Pacific Time");
+    expect(formatTimeZoneLabel("America/Anchorage")).toBe("Alaska Time");
+    expect(formatTimeZoneLabel("Pacific/Honolulu")).toBe("Hawaii Time");
+  });
+
+  test("falls back to the city segment with underscores as spaces", () => {
+    expect(formatTimeZoneLabel("Europe/Paris")).toBe("Paris");
+    expect(formatTimeZoneLabel("America/Indiana/Indianapolis")).toBe("Indianapolis");
+    expect(formatTimeZoneLabel("Pacific/Pago_Pago")).toBe("Pago Pago");
+    expect(formatTimeZoneLabel("UTC")).toBe("UTC");
   });
 });
