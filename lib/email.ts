@@ -32,6 +32,28 @@ export function emailFrom(): string {
   return `${brand.emailFromName} <${address}>`;
 }
 
+// Server-side email deliverability health (F1). Presence booleans only — no env
+// value is ever returned for display. `fromDomainOk` catches the placeholder /
+// mismatched sending-domain foot-gun: the From address must sit on the brand
+// domain AND that domain must not be an unverifiable `*.example` placeholder.
+export interface EmailHealth {
+  sendingConfigured: boolean;
+  webhookSigning: boolean;
+  fromDomainOk: boolean;
+}
+
+export function emailHealth(): EmailHealth {
+  const address = process.env.BRAND_EMAIL_FROM_ADDRESS ?? `no-reply@${brand.domain}`;
+  const fromDomain = (address.split("@")[1] ?? "").toLowerCase();
+  const brandDomain = brand.domain.toLowerCase();
+  const isPlaceholder = /\.example$/.test(fromDomain) || /\.example$/.test(brandDomain);
+  return {
+    sendingConfigured: Boolean(process.env.RESEND_API_KEY),
+    webhookSigning: Boolean(process.env.RESEND_WEBHOOK_SECRET),
+    fromDomainOk: fromDomain.length > 0 && fromDomain === brandDomain && !isPlaceholder,
+  };
+}
+
 async function getClient(): Promise<{
   emails: { send: (args: unknown) => Promise<{ data: { id: string } | null; error: unknown }> };
 } | null> {

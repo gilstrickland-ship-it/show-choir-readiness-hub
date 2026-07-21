@@ -30,6 +30,10 @@ const FEATURES = [
     title: "A season that hands itself off",
     body: "Rollover wizard, read-only season archive, the trophy case, and a one-click export of everything you own. Officer turnover stops being a data loss event.",
   },
+  {
+    title: "Switching from Charms or CutTime?",
+    body: "Import the roster export you already have — students and parent contacts in one pass, nothing to retype. Health and medical columns are dropped on the way in. Migrate in a weekend.",
+  },
 ];
 
 export default function LandingPage() {

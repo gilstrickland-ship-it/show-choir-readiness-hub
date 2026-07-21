@@ -11,8 +11,13 @@ import {
   parseRosterCsv,
   parseCsv,
   isValidEmail,
+  gradYearFromGrade,
   DEFAULT_SIZE_KEYS,
 } from '@/lib/roster/import';
+
+// Local-time constructors so getMonth()/getFullYear() are tz-stable in CI.
+const FALL = new Date(2026, 8, 1); // Sep 2026 — fall term (Aug–Dec)
+const SPRING = new Date(2026, 2, 1); // Mar 2026 — spring term (Jan–Jul)
 
 describe('parseCsv tokenizer', () => {
   test('handles quoted fields with commas and escaped quotes', () => {
@@ -167,6 +172,147 @@ describe('health-column skip (Constitution III)', () => {
     const { skippedColumns } = parseRosterCsv('First,Last,Health Info\nA,B,x', ['top']);
     expect(skippedColumns).toHaveLength(1);
     expect(skippedColumns[0].reason).toMatch(/does not store health or medical/i);
+  });
+});
+
+describe('gradYearFromGrade helper', () => {
+  test('12th grade graduates NEXT year in the fall term (Aug–Dec)', () => {
+    expect(gradYearFromGrade(12, FALL)).toBe(2027);
+    expect(gradYearFromGrade('12', FALL)).toBe(2027);
+  });
+
+  test('12th grade graduates THIS year in the spring term (Jan–Jul)', () => {
+    expect(gradYearFromGrade(12, SPRING)).toBe(2026);
+  });
+
+  test('every lower grade adds a year (9–12 supported)', () => {
+    // Fall 2026: senior class of 2027, so 11→2028, 10→2029, 9→2030.
+    expect(gradYearFromGrade(11, FALL)).toBe(2028);
+    expect(gradYearFromGrade(10, FALL)).toBe(2029);
+    expect(gradYearFromGrade(9, FALL)).toBe(2030);
+    // Spring 2026: senior class of 2026, so 9→2029.
+    expect(gradYearFromGrade(9, SPRING)).toBe(2029);
+  });
+
+  test('parses messy grade strings ("11th", "Grade 10", "Gr. 9")', () => {
+    expect(gradYearFromGrade('11th', FALL)).toBe(2028);
+    expect(gradYearFromGrade('Grade 10', FALL)).toBe(2029);
+    expect(gradYearFromGrade('Gr. 9', FALL)).toBe(2030);
+  });
+
+  test('grades outside 9–12 and unparseable values are invalid (null)', () => {
+    expect(gradYearFromGrade(8, FALL)).toBeNull();
+    expect(gradYearFromGrade(13, FALL)).toBeNull();
+    expect(gradYearFromGrade('K', FALL)).toBeNull();
+    expect(gradYearFromGrade('', FALL)).toBeNull();
+    expect(gradYearFromGrade('senior', FALL)).toBeNull();
+  });
+});
+
+describe('Charms/CutTime import presets', () => {
+  test('realistic Charms export: colon-split student name, Grade, split adult name, adult contact', () => {
+    const csv =
+      'Student: Last Name,Student: First Name,Grade,Adult 1 First Name,Adult 1 Last Name,Adult 1 E-mail,Home Phone,Cell Phone\n' +
+      'Nguyen,Ava,11,Bly,Nguyen,bly@example.com,555-100-2000,555-100-3000';
+    const { rows, errors, skippedColumns } = parseRosterCsv(csv, DEFAULT_SIZE_KEYS, SPRING);
+    expect(errors).toHaveLength(0);
+    expect(skippedColumns).toHaveLength(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      firstName: 'Ava',
+      lastName: 'Nguyen',
+      gradYear: 2027, // grade 11, spring 2026 → senior 2026 → 11 = 2027
+    });
+    expect(rows[0].guardians).toHaveLength(1);
+    // Split "Adult 1 First/Last Name" concatenated into one guardian name.
+    expect(rows[0].guardians[0]).toMatchObject({
+      name: 'Bly Nguyen',
+      email: 'bly@example.com',
+      // Both Home and Cell map to guardian-1 phone; the later column wins.
+      phone: '555-100-3000',
+    });
+  });
+
+  test('two split-name adults become two guardians via Adult N indexing', () => {
+    const csv =
+      'Student: First Name,Student: Last Name,Adult 1 First Name,Adult 1 Last Name,Adult 1 E-mail,Adult 2 First Name,Adult 2 Last Name,Adult 2 E-mail\n' +
+      'Leo,Park,Dana,Park,dana@example.com,Sam,Park,sam@example.com';
+    const { rows, errors } = parseRosterCsv(csv, DEFAULT_SIZE_KEYS, FALL);
+    expect(errors).toHaveLength(0);
+    expect(rows[0].guardians.map((g) => g.name)).toEqual(['Dana Park', 'Sam Park']);
+    expect(rows[0].guardians.map((g) => g.email)).toEqual([
+      'dana@example.com',
+      'sam@example.com',
+    ]);
+  });
+
+  test('CutTime "Grade" column becomes a grad year, never a 2-digit year', () => {
+    // The old grad path would read "12" as the year 2012; the grade path must not.
+    const { rows } = parseRosterCsv('First,Last,Grade\nAva,Nguyen,12', DEFAULT_SIZE_KEYS, FALL);
+    expect(rows[0].gradYear).toBe(2027);
+    expect(rows[0].gradYear).not.toBe(2012);
+  });
+
+  test('an out-of-range Grade excludes the row with a grad-year error', () => {
+    const { rows, errors } = parseRosterCsv(
+      'First,Last,Grade\nAva,Nguyen,7',
+      DEFAULT_SIZE_KEYS,
+      FALL,
+    );
+    expect(rows).toHaveLength(0);
+    expect(errors[0].message).toMatch(/grad year/i);
+  });
+
+  test('bare Adult contact halves alone still form a guardian (no whole-name column)', () => {
+    const csv = 'First,Last,Adult 1 First Name,Adult 1 Last Name\nAva,Nguyen,Bly,Nguyen';
+    const { rows } = parseRosterCsv(csv, DEFAULT_SIZE_KEYS, FALL);
+    expect(rows[0].guardians).toEqual([
+      { name: 'Bly Nguyen', email: null, phone: null, relationship: null },
+    ]);
+  });
+});
+
+describe('collision safety (Constitution III + student/guardian mapping)', () => {
+  test('"Grade" is NOT caught by any health-keyword filter (not skipped)', () => {
+    const { rows, errors, skippedColumns } = parseRosterCsv(
+      'First,Last,Grade\nAva,Nguyen,12',
+      DEFAULT_SIZE_KEYS,
+      FALL,
+    );
+    expect(skippedColumns).toHaveLength(0);
+    expect(errors).toHaveLength(0);
+    expect(rows[0].gradYear).toBe(2027);
+  });
+
+  test('a real health column alongside Grade is still skipped; Grade survives', () => {
+    const csv =
+      'First,Last,Grade,Medical Notes\nAva,Nguyen,12,peanut allergy';
+    const { rows, skippedColumns } = parseRosterCsv(csv, DEFAULT_SIZE_KEYS, FALL);
+    expect(skippedColumns.map((s) => s.header)).toEqual(['Medical Notes']);
+    expect(rows[0].gradYear).toBe(2027);
+    expect(JSON.stringify(rows[0])).not.toContain('peanut');
+  });
+
+  test('adult split-name columns do NOT collide with student first/last', () => {
+    // Student First/Last and Adult 1 First/Last coexist in one row — the student
+    // identity must come only from the student columns, the guardian only from
+    // the adult columns.
+    const csv =
+      'First Name,Last Name,Adult 1 First Name,Adult 1 Last Name\n' +
+      'Ava,Nguyen,Bly,Contreras';
+    const { rows, errors } = parseRosterCsv(csv, DEFAULT_SIZE_KEYS, FALL);
+    expect(errors).toHaveLength(0);
+    expect(rows[0]).toMatchObject({ firstName: 'Ava', lastName: 'Nguyen' });
+    expect(rows[0].guardians[0].name).toBe('Bly Contreras');
+  });
+
+  test('graduation-year column still works and is not confused with Grade', () => {
+    const { rows } = parseRosterCsv(
+      'First,Last,Graduation Year\nAva,Nguyen,2028',
+      DEFAULT_SIZE_KEYS,
+      FALL,
+    );
+    expect(rows[0].gradYear).toBe(2028);
   });
 });
 

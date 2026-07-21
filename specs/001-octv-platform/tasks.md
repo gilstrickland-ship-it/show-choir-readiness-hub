@@ -86,3 +86,7 @@ P1 → P2 → {P3, P4} → P5; P1 → P6 anytime; {P2, P4} → P7; all → P8. W
 - [X] T045 Parent-surface UX: add-to-calendar ICS for published itineraries, changed-since-publish banners (parent + staff nudge), enumeration-safe self-service link recovery, 44px token-page tap targets, absence history as cards.
 - [X] T046 Staff workflow: first-run setup guide on Today, first-season wizard framing, mobile nav promotes Wardrobe + comp-week hallway shortcuts, fair-share card, bus-manifest Released column + chaperone ratio lines, one-tap travel assignment, parent-page date anchors.
 - [X] T047 Final hardening: e2e suite reconciled with redesigned flows, confirm-box on reset-links + guardian/member removal, LIKE-metacharacter-safe address matching everywhere, undated-competition note on Season.
+
+## Phase 11 — Wave 2 roadmap (July 2026)
+
+- [X] T048 Wave F: deliverability runbook + Settings email-health card (F1); Charms/CutTime header synonym packs + grade→grad-year helper + import hint + landing migration card (F2).
