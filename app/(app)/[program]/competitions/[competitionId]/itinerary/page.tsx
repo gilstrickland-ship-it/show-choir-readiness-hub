@@ -11,9 +11,14 @@ import {
   type ItineraryItemKind,
 } from "@/lib/competitions";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
-import { groupItemsByDay, changedItemsSincePublish } from "@/lib/itinerary-days";
+import {
+  groupItemsByDay,
+  changedItemsSincePublish,
+} from "@/lib/itinerary-days";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CompetitionTabs } from "../CompetitionTabs";
+import { IntroStrip, HelpDot } from "../../../IntroStrip";
+import { loadGuideState } from "@/lib/guide";
 import {
   addItineraryItem,
   updateItineraryItem,
@@ -57,16 +62,25 @@ export default async function ItineraryPage({
     confirm?: string;
     share?: string;
     accepted?: string;
+    help?: string;
   }>;
 }) {
   const { program: slug, competitionId } = await params;
-  const { program, role } = await getTenantContext(slug);
+  const { program, role, flags, membership, isSupport } =
+    await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const tz = program.timezone;
   const sp = await searchParams;
 
   const supabase = await createClient();
+
+  // First-use intro strip (spec 003 §3) — this schedule is the one families see.
+  const showGuide = flags.guide && !isSupport && !!membership.user_id;
+  const guideState =
+    showGuide && membership.user_id
+      ? await loadGuideState(supabase, program.id, membership.user_id)
+      : {};
   const { data: compData } = await supabase
     .from("competitions")
     .select("id, name")
@@ -101,7 +115,9 @@ export default async function ItineraryPage({
   const { data: itemData } = itinerary
     ? await supabase
         .from("itinerary_items")
-        .select("id, starts_at, ends_at, kind, title, location, details, sort_order, updated_at")
+        .select(
+          "id, starts_at, ends_at, kind, title, location, details, sort_order, updated_at",
+        )
         .eq("itinerary_id", itinerary.id)
         .eq("program_id", program.id)
         .order("sort_order", { ascending: true })
@@ -129,7 +145,8 @@ export default async function ItineraryPage({
     .limit(1)
     .maybeSingle();
   let signedUrl: string | null = null;
-  const storagePath = (docData as { storage_path: string } | null)?.storage_path;
+  const storagePath = (docData as { storage_path: string } | null)
+    ?.storage_path;
   if (storagePath) {
     const { data: signed } = await supabase.storage
       .from("documents")
@@ -137,7 +154,8 @@ export default async function ItineraryPage({
     signedUrl = signed?.signedUrl ?? null;
   }
 
-  const showPublishConfirm = sp.confirm === "publish" && canWrite && itinerary?.status === "draft";
+  const showPublishConfirm =
+    sp.confirm === "publish" && canWrite && itinerary?.status === "draft";
 
   // Broadcast share link (FR-002 / §8a). Active links are metadata-only (the raw
   // URL is knowable only at mint time), so the copyable URL is shown once when it
@@ -240,11 +258,14 @@ export default async function ItineraryPage({
         <td>{item.sort_order}</td>
         <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
         <td>
-          {ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ?? item.kind}
+          {ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ??
+            item.kind}
         </td>
         <td>
           {item.title}
-          {item.location ? <span className="muted"> · {item.location}</span> : null}
+          {item.location ? (
+            <span className="muted"> · {item.location}</span>
+          ) : null}
         </td>
         {canWrite && <td></td>}
       </tr>
@@ -252,10 +273,33 @@ export default async function ItineraryPage({
 
   return (
     <section className="stack">
-      <CompetitionTabs slug={slug} competitionId={competitionId} active="itinerary" />
-      <h1>Itinerary</h1>
+      <CompetitionTabs
+        slug={slug}
+        competitionId={competitionId}
+        active="itinerary"
+      />
+      <div className="page-title-row">
+        <h1>Itinerary</h1>
+        {showGuide && (
+          <HelpDot
+            href={`/${slug}/competitions/${competitionId}/itinerary?help=1`}
+          />
+        )}
+      </div>
 
-      {sp.published && <p className="alert-ok">Itinerary published — visible to parents.</p>}
+      {showGuide && (
+        <IntroStrip
+          surfaceKey="itinerary_editor"
+          programId={program.id}
+          selfPath={`/${slug}/competitions/${competitionId}/itinerary`}
+          guideState={guideState}
+          help={sp.help === "1"}
+        />
+      )}
+
+      {sp.published && (
+        <p className="alert-ok">Itinerary published — visible to parents.</p>
+      )}
       {sp.accepted && (
         <p className="alert-ok">
           Parsed itinerary applied — review the items below, then publish.
@@ -264,10 +308,12 @@ export default async function ItineraryPage({
 
       {changedSincePublish > 0 && (
         <p className="alert-info">
-          You&apos;ve changed times since publishing. Families who open their link
-          see the update immediately — but nobody is notified automatically. Send a
-          quick announcement if the change matters.{" "}
-          <Link href={`/${slug}/comms/announcements`}>Go to announcements →</Link>
+          You&apos;ve changed times since publishing. Families who open their
+          link see the update immediately — but nobody is notified
+          automatically. Send a quick announcement if the change matters.{" "}
+          <Link href={`/${slug}/comms/announcements`}>
+            Go to announcements →
+          </Link>
         </p>
       )}
 
@@ -278,17 +324,17 @@ export default async function ItineraryPage({
           {freshShareUrl ? (
             <>
               <p className="muted">
-                A read-only link to this itinerary — copy it now (for privacy the
-                URL is shown only this once):
+                A read-only link to this itinerary — copy it now (for privacy
+                the URL is shown only this once):
               </p>
               <code style={{ wordBreak: "break-all" }}>{freshShareUrl}</code>
             </>
           ) : activeItinShareLinks.length > 0 ? (
             <p className="muted">
-              A broadcast link is active for this itinerary. For your privacy the
-              URL is only shown once at creation — regenerate to get a fresh
-              copyable link (the old one stops working). Active links are listed in{" "}
-              <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
+              A broadcast link is active for this itinerary. For your privacy
+              the URL is only shown once at creation — regenerate to get a fresh
+              copyable link (the old one stops working). Active links are listed
+              in <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
             </p>
           ) : (
             <p className="muted">
@@ -310,13 +356,17 @@ export default async function ItineraryPage({
       )}
 
       {!itinerary && (
-        <p className="muted">No itinerary yet. A director or admin can create one here.</p>
+        <p className="muted">
+          No itinerary yet. A director or admin can create one here.
+        </p>
       )}
 
       {itinerary && (
         <p className="muted">
           Status: <span className="badge">{itinerary.status}</span> ·{" "}
-          {itinerary.source === "parsed" ? "from host packet" : "entered by hand"}
+          {itinerary.source === "parsed"
+            ? "from host packet"
+            : "entered by hand"}
           {itinerary.status === "published" && itinerary.published_at
             ? ` · published ${formatDateTimeInTz(itinerary.published_at, tz)}`
             : ""}
@@ -331,7 +381,14 @@ export default async function ItineraryPage({
         </p>
       )}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", width: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "1.5rem",
+          width: "100%",
+        }}
+      >
         {/* ---- Editor column ---- */}
         <div className="stack" style={{ flex: "1 1 22rem", minWidth: "18rem" }}>
           <table className="members">
@@ -383,13 +440,22 @@ export default async function ItineraryPage({
               <form action={addItineraryItem} className="stack">
                 <input type="hidden" name="programId" value={program.id} />
                 <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="competitionId" value={competitionId} />
+                <input
+                  type="hidden"
+                  name="competitionId"
+                  value={competitionId}
+                />
                 <input type="hidden" name="itineraryId" value={itinerary.id} />
                 <input type="hidden" name="tz" value={tz} />
                 <div className="row-inline">
                   <label>
                     Order
-                    <input type="number" name="sort_order" className="num" defaultValue={items.length + 1} />
+                    <input
+                      type="number"
+                      name="sort_order"
+                      className="num"
+                      defaultValue={items.length + 1}
+                    />
                   </label>
                   <label>
                     Kind
@@ -436,16 +502,33 @@ export default async function ItineraryPage({
                 showPublishConfirm ? (
                   <div className="stack confirm-box">
                     <p>
-                      Publish this itinerary? Parents will be able to see it, and it
-                      unlocks packet generation. You can unpublish to edit again.
+                      Publish this itinerary? Parents will be able to see it,
+                      and it unlocks packet generation. You can unpublish to
+                      edit again.
                     </p>
                     <form action={publishItinerary} className="row-inline">
-                      <input type="hidden" name="programId" value={program.id} />
+                      <input
+                        type="hidden"
+                        name="programId"
+                        value={program.id}
+                      />
                       <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="competitionId" value={competitionId} />
-                      <input type="hidden" name="itineraryId" value={itinerary.id} />
+                      <input
+                        type="hidden"
+                        name="competitionId"
+                        value={competitionId}
+                      />
+                      <input
+                        type="hidden"
+                        name="itineraryId"
+                        value={itinerary.id}
+                      />
                       <button type="submit">Confirm publish</button>
-                      <Link href={`/${slug}/competitions/${competitionId}/itinerary`}>Cancel</Link>
+                      <Link
+                        href={`/${slug}/competitions/${competitionId}/itinerary`}
+                      >
+                        Cancel
+                      </Link>
                     </form>
                   </div>
                 ) : (
@@ -461,8 +544,16 @@ export default async function ItineraryPage({
                 <form action={unpublishItinerary}>
                   <input type="hidden" name="programId" value={program.id} />
                   <input type="hidden" name="slug" value={slug} />
-                  <input type="hidden" name="competitionId" value={competitionId} />
-                  <input type="hidden" name="itineraryId" value={itinerary.id} />
+                  <input
+                    type="hidden"
+                    name="competitionId"
+                    value={competitionId}
+                  />
+                  <input
+                    type="hidden"
+                    name="itineraryId"
+                    value={itinerary.id}
+                  />
                   <button type="submit" className="secondary">
                     Unpublish (back to draft)
                   </button>

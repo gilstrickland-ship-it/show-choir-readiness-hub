@@ -28,6 +28,8 @@ import {
   removeChaperone,
   deleteTrip,
 } from "../actions";
+import { IntroStrip, HelpDot } from "../../IntroStrip";
+import { loadGuideState } from "@/lib/guide";
 
 // Two-pane assignment UI (§6, T016). LEFT: the unassigned queue — eligible
 // students (the linked competition's ensemble+season, or every active-season
@@ -95,10 +97,12 @@ export default async function TripPage({
     error?: string;
     confirm?: string;
     groupId?: string;
+    help?: string;
   }>;
 }) {
   const { program: slug, tripId } = await params;
-  const { program, role } = await getTenantContext(slug);
+  const { program, role, flags, membership, isSupport } =
+    await getTenantContext(slug);
   requireFlag(program, "travel");
   const canWrite = TRAVEL_WRITE_ROLES.includes(role);
   const tz = program.timezone;
@@ -106,9 +110,18 @@ export default async function TripPage({
 
   const supabase = await createClient();
 
+  // First-use intro strip (spec 003 §3) — how the tap-to-place loading flow works.
+  const showGuide = flags.guide && !isSupport && !!membership.user_id;
+  const guideState =
+    showGuide && membership.user_id
+      ? await loadGuideState(supabase, program.id, membership.user_id)
+      : {};
+
   const { data: tripData } = await supabase
     .from("trips")
-    .select("id, name, season_id, competition_id, starts_on, ends_on, is_overnight")
+    .select(
+      "id, name, season_id, competition_id, starts_on, ends_on, is_overnight",
+    )
     .eq("id", tripId)
     .eq("program_id", program.id)
     .maybeSingle();
@@ -125,7 +138,8 @@ export default async function TripPage({
       .eq("id", trip.competition_id)
       .maybeSingle();
     compName = (c as { name: string } | null)?.name ?? null;
-    compEnsembleId = (c as { ensemble_id: string | null } | null)?.ensemble_id ?? null;
+    compEnsembleId =
+      (c as { ensemble_id: string | null } | null)?.ensemble_id ?? null;
   }
 
   // Groups for this trip.
@@ -146,14 +160,18 @@ export default async function TripPage({
   if (groupIds.length > 0) {
     const { data: aData } = await supabase
       .from("travel_assignments")
-      .select("id, travel_group_id, student_id, student:students(first_name, last_name)")
+      .select(
+        "id, travel_group_id, student_id, student:students(first_name, last_name)",
+      )
       .eq("program_id", program.id)
       .in("travel_group_id", groupIds);
     assignments = (aData as AssignmentRow[] | null) ?? [];
 
     const { data: cData } = await supabase
       .from("travel_chaperones")
-      .select("id, travel_group_id, guardian_id, name_override, guardian:guardians(name)")
+      .select(
+        "id, travel_group_id, guardian_id, name_override, guardian:guardians(name)",
+      )
       .eq("program_id", program.id)
       .in("travel_group_id", groupIds);
     chaperones = (cData as ChaperoneRow[] | null) ?? [];
@@ -169,10 +187,12 @@ export default async function TripPage({
       .select("students(id, first_name, last_name)")
       .eq("program_id", program.id)
       .eq("season_id", trip.season_id);
-    if (trip.competition_id && compEnsembleId) q = q.eq("ensemble_id", compEnsembleId);
+    if (trip.competition_id && compEnsembleId)
+      q = q.eq("ensemble_id", compEnsembleId);
     const { data: memberData } = await q;
     const byId = new Map<string, Student>();
-    for (const m of (memberData as { students: Student | null }[] | null) ?? []) {
+    for (const m of (memberData as { students: Student | null }[] | null) ??
+      []) {
       if (m.students) byId.set(m.students.id, m.students);
     }
     eligible = [...byId.values()].sort((a, b) =>
@@ -281,7 +301,9 @@ export default async function TripPage({
     const existing = groups.find(
       (g) =>
         g.kind === kind &&
-        (assignmentsByGroup.get(g.id) ?? []).some((a) => a.student_id === sp.conflict),
+        (assignmentsByGroup.get(g.id) ?? []).some(
+          (a) => a.student_id === sp.conflict,
+        ),
     );
     const who = s ? s.first_name : "That student";
     conflictMsg = existing
@@ -307,7 +329,11 @@ export default async function TripPage({
     sublabel: string | null;
     source: "itinerary" | "event";
   }
-  let scheduleByDay: { key: string; label: string; entries: ScheduleEntry[] }[] = [];
+  let scheduleByDay: {
+    key: string;
+    label: string;
+    entries: ScheduleEntry[];
+  }[] = [];
   if (isMultiDay) {
     const dayKeys = dateKeyRange(trip.starts_on, trip.ends_on);
     const entriesByDay = new Map<string, ScheduleEntry[]>();
@@ -332,7 +358,12 @@ export default async function TripPage({
           .not("starts_at", "is", null)
           .order("starts_at", { ascending: true });
         for (const it of (itinItems as
-          | { starts_at: string; kind: string; title: string | null; location: string | null }[]
+          | {
+              starts_at: string;
+              kind: string;
+              title: string | null;
+              location: string | null;
+            }[]
           | null) ?? []) {
           const bucket = entriesByDay.get(zonedDateKey(it.starts_at, tz));
           if (bucket)
@@ -355,7 +386,12 @@ export default async function TripPage({
       .not("starts_at", "is", null)
       .order("starts_at", { ascending: true });
     for (const e of (evRows as
-      | { starts_at: string; title: string; location: string | null; kind: string }[]
+      | {
+          starts_at: string;
+          title: string;
+          location: string | null;
+          kind: string;
+        }[]
       | null) ?? []) {
       const bucket = entriesByDay.get(zonedDateKey(e.starts_at, tz));
       if (bucket)
@@ -381,9 +417,23 @@ export default async function TripPage({
       <p>
         <Link href={`/${slug}/travel`}>← Travel</Link>
       </p>
-      <h1>{trip.name}</h1>
+      <div className="page-title-row">
+        <h1>{trip.name}</h1>
+        {showGuide && <HelpDot href={`/${slug}/travel/${tripId}?help=1`} />}
+      </div>
+      {showGuide && (
+        <IntroStrip
+          surfaceKey="trip"
+          programId={program.id}
+          selfPath={`/${slug}/travel/${tripId}`}
+          guideState={guideState}
+          help={sp.help === "1"}
+        />
+      )}
       <p className="muted">
-        {trip.starts_on ? formatDateInTz(`${trip.starts_on}T12:00:00Z`, tz) : "No dates"}
+        {trip.starts_on
+          ? formatDateInTz(`${trip.starts_on}T12:00:00Z`, tz)
+          : "No dates"}
         {trip.ends_on && trip.ends_on !== trip.starts_on
           ? ` – ${formatDateInTz(`${trip.ends_on}T12:00:00Z`, tz)}`
           : ""}
@@ -392,7 +442,9 @@ export default async function TripPage({
         {trip.competition_id && compName ? (
           <>
             {" · "}
-            <Link href={`/${slug}/competitions/${trip.competition_id}`}>{compName}</Link>
+            <Link href={`/${slug}/competitions/${trip.competition_id}`}>
+              {compName}
+            </Link>
           </>
         ) : null}
       </p>
@@ -403,7 +455,11 @@ export default async function TripPage({
           Download bus manifest (PDF)
         </a>
         {(trip.is_overnight || roomsExist) && (
-          <a href={`/api/pdf/rooms?trip=${trip.id}`} target="_blank" rel="noopener">
+          <a
+            href={`/api/pdf/rooms?trip=${trip.id}`}
+            target="_blank"
+            rel="noopener"
+          >
             Download room sheets (PDF)
           </a>
         )}
@@ -411,13 +467,17 @@ export default async function TripPage({
 
       {conflictMsg && <p className="alert-error">{conflictMsg}</p>}
       {sp.error === "assign" && (
-        <p className="alert-error">Couldn&apos;t place that student. Try again.</p>
+        <p className="alert-error">
+          Couldn&apos;t place that student. Try again.
+        </p>
       )}
       {sp.error === "group" && (
         <p className="alert-error">A group needs a kind and a label.</p>
       )}
       {sp.error === "chaperone" && (
-        <p className="alert-error">Pick a guardian or type a name for the chaperone.</p>
+        <p className="alert-error">
+          Pick a guardian or type a name for the chaperone.
+        </p>
       )}
 
       {/* Trip schedule (G2.5) — read-only per-day view for multi-day trips. */}
@@ -426,23 +486,34 @@ export default async function TripPage({
           <h2>Trip schedule</h2>
           <p className="muted">
             What happens each day — the linked competition&apos;s published
-            itinerary and this season&apos;s events, merged by day. Add park days,
-            meals, and free time as events and they&apos;ll show here on the right
-            day.
+            itinerary and this season&apos;s events, merged by day. Add park
+            days, meals, and free time as events and they&apos;ll show here on
+            the right day.
           </p>
           {scheduleByDay.map((day) => (
             <div key={day.key} className="stack" style={{ gap: "0.35rem" }}>
               <h3 className="itinerary-day-heading">{day.label}</h3>
               {day.entries.length === 0 ? (
-                <p className="muted">—  nothing scheduled yet</p>
+                <p className="muted">— nothing scheduled yet</p>
               ) : (
-                <ul className="stack" style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                <ul
+                  className="stack"
+                  style={{ listStyle: "none", padding: 0, margin: 0 }}
+                >
                   {day.entries.map((e, i) => (
-                    <li key={i} className="row-inline" style={{ gap: "0.5rem" }}>
+                    <li
+                      key={i}
+                      className="row-inline"
+                      style={{ gap: "0.5rem" }}
+                    >
                       <strong>{formatTimeInTz(e.startsAt, tz)}</strong>
                       <span>{e.label}</span>
-                      <span className="chip">{e.source === "event" ? "event" : "itinerary"}</span>
-                      {e.sublabel && <span className="muted">· {e.sublabel}</span>}
+                      <span className="chip">
+                        {e.source === "event" ? "event" : "itinerary"}
+                      </span>
+                      {e.sublabel && (
+                        <span className="muted">· {e.sublabel}</span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -460,9 +531,7 @@ export default async function TripPage({
           too) and sits alongside — not replacing — the two-pane flow. */}
       {fillGroup && (
         <section className="travel-fill-queue stack">
-          <h2>
-            Tap a name to add to {fillGroup.label}
-          </h2>
+          <h2>Tap a name to add to {fillGroup.label}</h2>
           {fillChips.length === 0 ? (
             <p className="alert-ok">
               Everyone who still needs a{" "}
@@ -482,7 +551,11 @@ export default async function TripPage({
                     <input type="hidden" name="programId" value={program.id} />
                     <input type="hidden" name="slug" value={slug} />
                     <input type="hidden" name="tripId" value={tripId} />
-                    <input type="hidden" name="travelGroupId" value={fillGroup.id} />
+                    <input
+                      type="hidden"
+                      name="travelGroupId"
+                      value={fillGroup.id}
+                    />
                     <input type="hidden" name="studentId" value={s.id} />
                     <input type="hidden" name="kind" value={fillGroup.kind} />
                     <input type="hidden" name="fill" value={fillGroup.id} />
@@ -493,7 +566,9 @@ export default async function TripPage({
                     >
                       <span className="travel-chip-name">{studentName(s)}</span>
                       <span className="travel-chip-badges">
-                        {isAbsent && <span className="chip danger">absent</span>}
+                        {isAbsent && (
+                          <span className="chip danger">absent</span>
+                        )}
                         {needs.map((k) => (
                           <span key={k} className="chip">
                             needs {GROUP_KIND_LABEL[k].toLowerCase()}
@@ -509,13 +584,21 @@ export default async function TripPage({
         </section>
       )}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", width: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "1.5rem",
+          width: "100%",
+        }}
+      >
         {/* ==================== LEFT: unassigned queue ==================== */}
         <div className="stack" style={{ flex: "1 1 16rem", minWidth: "14rem" }}>
           <h2>Unassigned · {queue.length}</h2>
           {eligible.length === 0 && (
             <p className="muted">
-              No eligible students. {trip.competition_id
+              No eligible students.{" "}
+              {trip.competition_id
                 ? "Add ensemble members for the linked competition's ensemble this season."
                 : "Add ensemble members for this season."}
             </p>
@@ -547,7 +630,10 @@ export default async function TripPage({
                     {studentName(s)}
                     {isAbsent && <span className="chip danger"> absent</span>}
                   </div>
-                  <div className="row-inline" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                  <div
+                    className="row-inline"
+                    style={{ gap: "0.35rem", flexWrap: "wrap" }}
+                  >
                     {needs.map((k) => (
                       <span key={k} className="chip">
                         needs {GROUP_KIND_LABEL[k].toLowerCase()}
@@ -558,12 +644,18 @@ export default async function TripPage({
                     (isSel ? (
                       <div className="row-inline">
                         <strong>Selected — choose a group →</strong>
-                        <Link href={`/${slug}/travel/${tripId}`} className="linklike">
+                        <Link
+                          href={`/${slug}/travel/${tripId}`}
+                          className="linklike"
+                        >
                           Cancel
                         </Link>
                       </div>
                     ) : (
-                      <Link href={`/${slug}/travel/${tripId}?sel=${s.id}`} className="linklike">
+                      <Link
+                        href={`/${slug}/travel/${tripId}?sel=${s.id}`}
+                        className="linklike"
+                      >
                         Select to place
                       </Link>
                     ))}
@@ -589,10 +681,15 @@ export default async function TripPage({
                   }}
                 >
                   {kindGroups.map((g) => {
-                    const members = (assignmentsByGroup.get(g.id) ?? []).sort((a, b) =>
-                      studentName(a.student ?? { first_name: "", last_name: "" }).localeCompare(
-                        studentName(b.student ?? { first_name: "", last_name: "" }),
-                      ),
+                    const members = (assignmentsByGroup.get(g.id) ?? []).sort(
+                      (a, b) =>
+                        studentName(
+                          a.student ?? { first_name: "", last_name: "" },
+                        ).localeCompare(
+                          studentName(
+                            b.student ?? { first_name: "", last_name: "" },
+                          ),
+                        ),
                     );
                     const count = members.length;
                     const over = g.capacity != null && count > g.capacity;
@@ -600,7 +697,8 @@ export default async function TripPage({
                     const selAlreadyHere = selId
                       ? (studentKinds.get(selId)?.has(kind) ?? false)
                       : false;
-                    const canAssignHere = selStudent != null && selNeeds.includes(kind);
+                    const canAssignHere =
+                      selStudent != null && selNeeds.includes(kind);
                     const isFillTarget = fillGroup?.id === g.id;
                     return (
                       <div
@@ -621,7 +719,10 @@ export default async function TripPage({
                           padding: "0.75rem",
                         }}
                       >
-                        <div className="row-inline" style={{ justifyContent: "space-between" }}>
+                        <div
+                          className="row-inline"
+                          style={{ justifyContent: "space-between" }}
+                        >
                           <strong>{g.label}</strong>
                           <span className={over ? "chip danger" : "chip"}>
                             {count}
@@ -640,7 +741,8 @@ export default async function TripPage({
                               href={`/${slug}/travel/${tripId}`}
                               className="travel-fill-toggle is-active"
                             >
-                              Filling this {GROUP_KIND_LABEL[kind].toLowerCase()} — Done
+                              Filling this{" "}
+                              {GROUP_KIND_LABEL[kind].toLowerCase()} — Done
                             </Link>
                           ) : (
                             <Link
@@ -652,14 +754,23 @@ export default async function TripPage({
                           ))}
 
                         {/* Members */}
-                        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                        <ul
+                          style={{ listStyle: "none", padding: 0, margin: 0 }}
+                        >
                           {members.map((a) => (
                             <li
                               key={a.id}
                               className="row-inline"
-                              style={{ justifyContent: "space-between", gap: "0.5rem" }}
+                              style={{
+                                justifyContent: "space-between",
+                                gap: "0.5rem",
+                              }}
                             >
-                              <span style={{ opacity: absent.has(a.student_id) ? 0.6 : 1 }}>
+                              <span
+                                style={{
+                                  opacity: absent.has(a.student_id) ? 0.6 : 1,
+                                }}
+                              >
                                 {a.student ? studentName(a.student) : "?"}
                                 {absent.has(a.student_id) && (
                                   <span className="chip danger"> absent</span>
@@ -667,11 +778,30 @@ export default async function TripPage({
                               </span>
                               {canWrite && (
                                 <form action={unassignStudent}>
-                                  <input type="hidden" name="programId" value={program.id} />
-                                  <input type="hidden" name="slug" value={slug} />
-                                  <input type="hidden" name="tripId" value={tripId} />
-                                  <input type="hidden" name="assignmentId" value={a.id} />
-                                  <button type="submit" className="linklike danger">
+                                  <input
+                                    type="hidden"
+                                    name="programId"
+                                    value={program.id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="slug"
+                                    value={slug}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="tripId"
+                                    value={tripId}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="assignmentId"
+                                    value={a.id}
+                                  />
+                                  <button
+                                    type="submit"
+                                    className="linklike danger"
+                                  >
                                     remove
                                   </button>
                                 </form>
@@ -700,10 +830,22 @@ export default async function TripPage({
                                 className="row-inline"
                                 style={{ gap: "0.35rem", flexWrap: "wrap" }}
                               >
-                                <input type="hidden" name="programId" value={program.id} />
+                                <input
+                                  type="hidden"
+                                  name="programId"
+                                  value={program.id}
+                                />
                                 <input type="hidden" name="slug" value={slug} />
-                                <input type="hidden" name="tripId" value={tripId} />
-                                <input type="hidden" name="travelGroupId" value={g.id} />
+                                <input
+                                  type="hidden"
+                                  name="tripId"
+                                  value={tripId}
+                                />
+                                <input
+                                  type="hidden"
+                                  name="travelGroupId"
+                                  value={g.id}
+                                />
                                 <input type="hidden" name="kind" value={kind} />
                                 <select
                                   name="studentId"
@@ -711,9 +853,7 @@ export default async function TripPage({
                                   required
                                   aria-label={`Add a student to ${g.label}`}
                                 >
-                                  <option value="">
-                                    Add a student…
-                                  </option>
+                                  <option value="">Add a student…</option>
                                   {addable.map((s) => (
                                     <option key={s.id} value={s.id}>
                                       {studentName(s)}
@@ -728,14 +868,31 @@ export default async function TripPage({
                           })()}
 
                         {/* Assign selected student here */}
-                        {canWrite && selStudent && (
-                          canAssignHere ? (
+                        {canWrite &&
+                          selStudent &&
+                          (canAssignHere ? (
                             <form action={assignStudent}>
-                              <input type="hidden" name="programId" value={program.id} />
+                              <input
+                                type="hidden"
+                                name="programId"
+                                value={program.id}
+                              />
                               <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="tripId" value={tripId} />
-                              <input type="hidden" name="travelGroupId" value={g.id} />
-                              <input type="hidden" name="studentId" value={selStudent.id} />
+                              <input
+                                type="hidden"
+                                name="tripId"
+                                value={tripId}
+                              />
+                              <input
+                                type="hidden"
+                                name="travelGroupId"
+                                value={g.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="studentId"
+                                value={selStudent.id}
+                              />
                               <input type="hidden" name="kind" value={kind} />
                               <button type="submit" className="secondary">
                                 Assign {selStudent.first_name} here
@@ -743,47 +900,78 @@ export default async function TripPage({
                             </form>
                           ) : selAlreadyHere ? (
                             <p className="muted">
-                              {selStudent.first_name} already has a {GROUP_KIND_LABEL[kind].toLowerCase()}.
+                              {selStudent.first_name} already has a{" "}
+                              {GROUP_KIND_LABEL[kind].toLowerCase()}.
                             </p>
-                          ) : null
-                        )}
+                          ) : null)}
 
                         {/* Chaperones */}
                         <div className="stack" style={{ gap: "0.35rem" }}>
                           <span className="muted">Chaperones</span>
-                          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                          <ul
+                            style={{ listStyle: "none", padding: 0, margin: 0 }}
+                          >
                             {groupChaps.map((c) => (
                               <li
                                 key={c.id}
                                 className="row-inline"
-                                style={{ justifyContent: "space-between", gap: "0.5rem" }}
+                                style={{
+                                  justifyContent: "space-between",
+                                  gap: "0.5rem",
+                                }}
                               >
                                 <span>
                                   {c.guardian_id
-                                    ? guardianName.get(c.guardian_id) ?? c.guardian?.name ?? "?"
-                                    : c.name_override ?? "?"}
+                                    ? (guardianName.get(c.guardian_id) ??
+                                      c.guardian?.name ??
+                                      "?")
+                                    : (c.name_override ?? "?")}
                                 </span>
                                 {canWrite && (
                                   <form action={removeChaperone}>
-                                    <input type="hidden" name="programId" value={program.id} />
-                                    <input type="hidden" name="slug" value={slug} />
-                                    <input type="hidden" name="tripId" value={tripId} />
-                                    <input type="hidden" name="chaperoneId" value={c.id} />
-                                    <button type="submit" className="linklike danger">
+                                    <input
+                                      type="hidden"
+                                      name="programId"
+                                      value={program.id}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="slug"
+                                      value={slug}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="tripId"
+                                      value={tripId}
+                                    />
+                                    <input
+                                      type="hidden"
+                                      name="chaperoneId"
+                                      value={c.id}
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="linklike danger"
+                                    >
                                       remove
                                     </button>
                                   </form>
                                 )}
                               </li>
                             ))}
-                            {groupChaps.length === 0 && <li className="muted">None yet</li>}
+                            {groupChaps.length === 0 && (
+                              <li className="muted">None yet</li>
+                            )}
                           </ul>
                           {/* Chaperone-ratio awareness (D6): purely informational,
                               never a warning — programs' policies vary (common
                               guidance is ~1:10 for day trips). Shown only when the
                               group actually has riders. */}
                           {count > 0 && (
-                            <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                            <p
+                              className="muted"
+                              style={{ margin: 0, fontSize: "0.85rem" }}
+                            >
                               {groupChaps.length > 0
                                 ? `1 chaperone per ${Math.ceil(
                                     count / groupChaps.length,
@@ -796,17 +984,35 @@ export default async function TripPage({
                             </p>
                           )}
                           {canWrite && (
-                            <form action={addChaperone} className="stack" style={{ gap: "0.35rem" }}>
-                              <input type="hidden" name="programId" value={program.id} />
+                            <form
+                              action={addChaperone}
+                              className="stack"
+                              style={{ gap: "0.35rem" }}
+                            >
+                              <input
+                                type="hidden"
+                                name="programId"
+                                value={program.id}
+                              />
                               <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="tripId" value={tripId} />
-                              <input type="hidden" name="travelGroupId" value={g.id} />
+                              <input
+                                type="hidden"
+                                name="tripId"
+                                value={tripId}
+                              />
+                              <input
+                                type="hidden"
+                                name="travelGroupId"
+                                value={g.id}
+                              />
                               <select name="guardian_id" defaultValue="">
                                 <option value="">— parent (guardian)…</option>
                                 {guardians.map((gd) => (
                                   <option key={gd.id} value={gd.id}>
                                     {gd.name}
-                                    {gd.student?.last_name ? ` (${gd.student.last_name})` : ""}
+                                    {gd.student?.last_name
+                                      ? ` (${gd.student.last_name})`
+                                      : ""}
                                   </option>
                                 ))}
                               </select>
@@ -825,45 +1031,109 @@ export default async function TripPage({
                         {/* Edit / delete group */}
                         {canWrite && (
                           <details open={confirmDeleteGroup === g.id}>
-                            <summary className="muted">Edit {GROUP_KIND_LABEL[kind].toLowerCase()}</summary>
-                            <form action={updateGroup} className="stack" style={{ gap: "0.35rem", marginTop: "0.5rem" }}>
-                              <input type="hidden" name="programId" value={program.id} />
+                            <summary className="muted">
+                              Edit {GROUP_KIND_LABEL[kind].toLowerCase()}
+                            </summary>
+                            <form
+                              action={updateGroup}
+                              className="stack"
+                              style={{ gap: "0.35rem", marginTop: "0.5rem" }}
+                            >
+                              <input
+                                type="hidden"
+                                name="programId"
+                                value={program.id}
+                              />
                               <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="tripId" value={tripId} />
-                              <input type="hidden" name="groupId" value={g.id} />
+                              <input
+                                type="hidden"
+                                name="tripId"
+                                value={tripId}
+                              />
+                              <input
+                                type="hidden"
+                                name="groupId"
+                                value={g.id}
+                              />
                               <label>
                                 Label
-                                <input type="text" name="label" defaultValue={g.label} required />
+                                <input
+                                  type="text"
+                                  name="label"
+                                  defaultValue={g.label}
+                                  required
+                                />
                               </label>
                               <label>
                                 Capacity
-                                <input type="number" name="capacity" className="num" defaultValue={g.capacity ?? ""} min={0} />
+                                <input
+                                  type="number"
+                                  name="capacity"
+                                  className="num"
+                                  defaultValue={g.capacity ?? ""}
+                                  min={0}
+                                />
                               </label>
                               <label>
                                 Sort
-                                <input type="number" name="sort_order" className="num" defaultValue={g.sort_order} />
+                                <input
+                                  type="number"
+                                  name="sort_order"
+                                  className="num"
+                                  defaultValue={g.sort_order}
+                                />
                               </label>
                               <label>
                                 Notes
-                                <input type="text" name="notes" defaultValue={g.notes ?? ""} />
+                                <input
+                                  type="text"
+                                  name="notes"
+                                  defaultValue={g.notes ?? ""}
+                                />
                               </label>
-                              <button type="submit" className="secondary">Save</button>
+                              <button type="submit" className="secondary">
+                                Save
+                              </button>
                             </form>
                             {confirmDeleteGroup === g.id ? (
-                              <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
+                              <div
+                                className="confirm-box stack"
+                                style={{ marginTop: "0.5rem" }}
+                              >
                                 <p>
-                                  Delete {g.label}? Its rider assignments and chaperones are
-                                  removed too.
+                                  Delete {g.label}? Its rider assignments and
+                                  chaperones are removed too.
                                 </p>
-                                <form action={deleteGroup} className="row-inline">
-                                  <input type="hidden" name="programId" value={program.id} />
-                                  <input type="hidden" name="slug" value={slug} />
-                                  <input type="hidden" name="tripId" value={tripId} />
-                                  <input type="hidden" name="groupId" value={g.id} />
+                                <form
+                                  action={deleteGroup}
+                                  className="row-inline"
+                                >
+                                  <input
+                                    type="hidden"
+                                    name="programId"
+                                    value={program.id}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="slug"
+                                    value={slug}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="tripId"
+                                    value={tripId}
+                                  />
+                                  <input
+                                    type="hidden"
+                                    name="groupId"
+                                    value={g.id}
+                                  />
                                   <button type="submit" className="danger">
                                     Confirm delete
                                   </button>
-                                  <Link href={`/${slug}/travel/${tripId}`}>Cancel</Link>
+                                  <Link href={`/${slug}/travel/${tripId}`}>
+                                    Cancel
+                                  </Link>
                                 </form>
                               </div>
                             ) : (
@@ -872,8 +1142,9 @@ export default async function TripPage({
                                   className="linklike danger"
                                   href={`/${slug}/travel/${tripId}?confirm=deletegroup&groupId=${g.id}`}
                                 >
-                                  Delete this {GROUP_KIND_LABEL[kind].toLowerCase()} (and its
-                                  assignments)
+                                  Delete this{" "}
+                                  {GROUP_KIND_LABEL[kind].toLowerCase()} (and
+                                  its assignments)
                                 </Link>
                               </p>
                             )}
@@ -883,7 +1154,9 @@ export default async function TripPage({
                     );
                   })}
                   {kindGroups.length === 0 && (
-                    <p className="muted">No {GROUP_KIND_LABEL_PLURAL[kind].toLowerCase()} yet.</p>
+                    <p className="muted">
+                      No {GROUP_KIND_LABEL_PLURAL[kind].toLowerCase()} yet.
+                    </p>
                   )}
                 </div>
 
@@ -905,7 +1178,12 @@ export default async function TripPage({
                     </label>
                     <label>
                       Capacity
-                      <input type="number" name="capacity" className="num" min={0} />
+                      <input
+                        type="number"
+                        name="capacity"
+                        className="num"
+                        min={0}
+                      />
                     </label>
                     <button type="submit" className="secondary">
                       Add
@@ -924,7 +1202,10 @@ export default async function TripPage({
           <summary className="muted">Delete trip</summary>
           {confirmDeleteTrip ? (
             <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
-              <p>Delete this trip? All its buses, rooms, and assignments go with it.</p>
+              <p>
+                Delete this trip? All its buses, rooms, and assignments go with
+                it.
+              </p>
               <form action={deleteTrip} className="row-inline">
                 <input type="hidden" name="programId" value={program.id} />
                 <input type="hidden" name="slug" value={slug} />

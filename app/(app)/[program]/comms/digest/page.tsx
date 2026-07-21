@@ -13,6 +13,8 @@ import { emailConfigured } from "@/lib/email";
 import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import Link from "next/link";
 import { CommsTabs } from "../CommsTabs";
+import { IntroStrip, HelpDot } from "../../IntroStrip";
+import { loadGuideState } from "@/lib/guide";
 import {
   draftNow,
   saveDigest,
@@ -59,14 +61,21 @@ export default async function DigestPage({
     skipped?: string;
     failed?: string;
     error?: string;
+    help?: string;
   }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags } = await getTenantContext(slug);
+  const { program, role, season, flags, membership, isSupport } =
+    await getTenantContext(slug);
   requireFlag(program, "comms");
   if (!COMMS_ROLES.includes(role)) {
     return (
-      <Restricted slug={slug} surface="Comms" role={role} allowed={COMMS_ROLES} />
+      <Restricted
+        slug={slug}
+        surface="Comms"
+        role={role}
+        allowed={COMMS_ROLES}
+      />
     );
   }
   const canManage = DIGEST_WRITE_ROLES.includes(role);
@@ -75,6 +84,13 @@ export default async function DigestPage({
   const sp = await searchParams;
 
   const supabase = await createClient();
+
+  // First-use intro strip (spec 003 §3) — the AI drafts; a director approves.
+  const showGuide = flags.guide && !isSupport && !!membership.user_id;
+  const guideState =
+    showGuide && membership.user_id
+      ? await loadGuideState(supabase, program.id, membership.user_id)
+      : {};
 
   const { data: digestData } = await supabase
     .from("digests")
@@ -124,9 +140,22 @@ export default async function DigestPage({
           <p className="eyebrow">
             <Link href={`/${slug}/comms`}>← Comms</Link> · digest workspace
           </p>
-          <h1 className="page-h1">Weekly digest</h1>
+          <div className="page-title-row">
+            <h1 className="page-h1">Weekly digest</h1>
+            {showGuide && <HelpDot href={`/${slug}/comms/digest?help=1`} />}
+          </div>
         </div>
       </div>
+
+      {showGuide && (
+        <IntroStrip
+          surfaceKey="digest"
+          programId={program.id}
+          selfPath={`/${slug}/comms/digest`}
+          guideState={guideState}
+          help={sp.help === "1"}
+        />
+      )}
 
       <CommsTabs slug={slug} active="digest" shiftsEnabled={flags.shifts} />
 
@@ -140,25 +169,29 @@ export default async function DigestPage({
           email is best-effort; this banner always shows). */}
       {unapprovedDrafts > 0 && (
         <p className="alert-error">
-          {unapprovedDrafts} digest draft{unapprovedDrafts === 1 ? "" : "s"} awaiting
-          review and approval. Nothing sends to parents until you approve it.
+          {unapprovedDrafts} digest draft{unapprovedDrafts === 1 ? "" : "s"}{" "}
+          awaiting review and approval. Nothing sends to parents until you
+          approve it.
         </p>
       )}
 
       {!emailConfigured() && (
         <p className="alert-error">
-          Email sending isn&apos;t set up for this deployment yet, so nothing can
-          be emailed from here. Digests can still be drafted and approved — sends
-          are marked &ldquo;skipped&rdquo; until email setup is finished. (Whoever
-          hosts your program&apos;s site can finish email setup.)
+          Email sending isn&apos;t set up for this deployment yet, so nothing
+          can be emailed from here. Digests can still be drafted and approved —
+          sends are marked &ldquo;skipped&rdquo; until email setup is finished.
+          (Whoever hosts your program&apos;s site can finish email setup.)
         </p>
       )}
 
       {sp.drafted && <p className="alert-ok">Draft ready below for review.</p>}
       {sp.discarded && <p className="alert-ok">Draft discarded.</p>}
       {sp.saved && <p className="alert-ok">Draft saved.</p>}
-      {sp.approved && <p className="alert-ok">Approved. You can send it now.</p>}
-      {sp.done && sp.queued &&
+      {sp.approved && (
+        <p className="alert-ok">Approved. You can send it now.</p>
+      )}
+      {sp.done &&
+        sp.queued &&
         (emailConfigured() ? (
           <p className="alert-ok">The digest is sending in the background.</p>
         ) : (
@@ -199,8 +232,8 @@ export default async function DigestPage({
               <input type="hidden" name="weekOf" value={weekOf} />
               <button type="submit">Draft this week now</button>
               <span className="muted">
-                Week of {formatDateInTz(`${weekOf}T12:00:00Z`, tz)} · recipients:{" "}
-                {recipientCount}
+                Week of {formatDateInTz(`${weekOf}T12:00:00Z`, tz)} ·
+                recipients: {recipientCount}
               </span>
             </form>
           ) : (
@@ -220,7 +253,10 @@ export default async function DigestPage({
         const editable = canManage && d.status !== "sent";
         return (
           <div key={d.id} className="confirm-box" style={{ width: "100%" }}>
-            <div className="row-inline" style={{ justifyContent: "space-between" }}>
+            <div
+              className="row-inline"
+              style={{ justifyContent: "space-between" }}
+            >
               <strong>
                 Week of{" "}
                 {d.week_of ? formatDateInTz(`${d.week_of}T12:00:00Z`, tz) : "—"}
@@ -229,7 +265,9 @@ export default async function DigestPage({
             </div>
             <div className="muted">
               {d.model ? (
-                <span title={`${d.model} · ${d.prompt_version}`}>AI-drafted</span>
+                <span title={`${d.model} · ${d.prompt_version}`}>
+                  AI-drafted
+                </span>
               ) : (
                 "Written by hand"
               )}
@@ -238,17 +276,31 @@ export default async function DigestPage({
             </div>
 
             {editable ? (
-              <form action={saveDigest} className="stack" style={{ marginTop: "0.5rem" }}>
+              <form
+                action={saveDigest}
+                className="stack"
+                style={{ marginTop: "0.5rem" }}
+              >
                 <input type="hidden" name="programId" value={program.id} />
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="digestId" value={d.id} />
                 <label style={{ width: "100%" }}>
                   Subject
-                  <input type="text" name="subject" defaultValue={d.subject ?? ""} required />
+                  <input
+                    type="text"
+                    name="subject"
+                    defaultValue={d.subject ?? ""}
+                    required
+                  />
                 </label>
                 <label style={{ width: "100%" }}>
                   Body
-                  <textarea name="body_md" rows={12} defaultValue={d.body_md ?? ""} required />
+                  <textarea
+                    name="body_md"
+                    rows={12}
+                    defaultValue={d.body_md ?? ""}
+                    required
+                  />
                   <span className="muted">
                     Plain text works — leave a blank line between paragraphs.
                   </span>
@@ -263,7 +315,9 @@ export default async function DigestPage({
                   <strong>{d.subject ?? "—"}</strong>
                 </p>
                 <div
-                  dangerouslySetInnerHTML={{ __html: bodyToHtml(d.body_md ?? "") }}
+                  dangerouslySetInnerHTML={{
+                    __html: bodyToHtml(d.body_md ?? ""),
+                  }}
                 />
               </>
             )}
@@ -273,13 +327,21 @@ export default async function DigestPage({
                 {d.status === "draft" && (
                   <>
                     <form action={approveDigest}>
-                      <input type="hidden" name="programId" value={program.id} />
+                      <input
+                        type="hidden"
+                        name="programId"
+                        value={program.id}
+                      />
                       <input type="hidden" name="slug" value={slug} />
                       <input type="hidden" name="digestId" value={d.id} />
                       <button type="submit">Approve</button>
                     </form>
                     <form action={discardDigest}>
-                      <input type="hidden" name="programId" value={program.id} />
+                      <input
+                        type="hidden"
+                        name="programId"
+                        value={program.id}
+                      />
                       <input type="hidden" name="slug" value={slug} />
                       <input type="hidden" name="digestId" value={d.id} />
                       <button type="submit" className="discard">
@@ -293,8 +355,14 @@ export default async function DigestPage({
                     <input type="hidden" name="programId" value={program.id} />
                     <input type="hidden" name="slug" value={slug} />
                     <input type="hidden" name="digestId" value={d.id} />
-                    <input type="hidden" name="seasonId" value={season?.id ?? ""} />
-                    <button type="submit">Send to {recipientCount} families now</button>
+                    <input
+                      type="hidden"
+                      name="seasonId"
+                      value={season?.id ?? ""}
+                    />
+                    <button type="submit">
+                      Send to {recipientCount} families now
+                    </button>
                   </form>
                 )}
               </div>

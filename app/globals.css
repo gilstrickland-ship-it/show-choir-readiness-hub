@@ -431,6 +431,17 @@
     color: var(--ink);
   }
 
+  /* The "Getting started" reopen is a form button; reset it to match the quiet
+     UI-font Settings link beside it. */
+  button.shell-settings-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 550;
+    cursor: pointer;
+  }
+
   /* The nav now lives inside the sticky header, between the brand block and the
      account cluster. It fills the middle and scrolls horizontally when tight. */
   .shell-nav {
@@ -1203,6 +1214,154 @@
   .setup-step-hint {
     font-size: 0.85rem;
     color: var(--muted-ink);
+  }
+
+  /* First-use guide journey panel (spec 003 §2). The full checklist reuses the
+     .setup-guide/.setup-step idiom above; these rules cover the panel's own
+     affordances: the dismiss link, the treasurer footer pointer, the slim pill,
+     and the board orientation card. */
+  .journey-hide {
+    align-self: flex-start;
+    font-size: 0.85rem;
+    color: var(--muted-ink);
+    margin-top: 0.2rem;
+  }
+
+  .journey-footer {
+    margin: 0.2rem 0 0;
+  }
+
+  /* Pill — a slim single-row progress summary that links back to the full
+     panel (?guide=open). Quiet by design: a returning user is never nagged. */
+  .journey-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.65rem 1rem;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent, var(--line-strong));
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--ink);
+    background: var(--paper);
+    transition: border-color var(--dur) var(--ease);
+  }
+
+  .journey-pill:hover {
+    border-color: var(--line-strong);
+  }
+
+  .journey-pill-label {
+    font-weight: 650;
+  }
+
+  .journey-pill-count {
+    color: var(--muted-ink);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .journey-pill-cta {
+    margin-left: auto;
+    font-weight: 600;
+    color: var(--accent-strong, var(--ink));
+    font-size: 0.9rem;
+  }
+
+  /* Board orientation card — link rows + one sentence, single "Got it" dismiss. */
+  .journey-board-links {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .journey-board-link {
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--line);
+    font-size: 1.05rem;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .journey-board-link:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .journey-board-got-it {
+    align-self: flex-start;
+  }
+
+  /* Intro strips (spec 003 §3) — a calm orientation line under the heading of the
+     eight complex surfaces. Accent-tinted like .alert-info, never alarming; the
+     "First:" action is bolded inline, the "Got it" dismiss sits to the right (and
+     drops below the copy on narrow screens). */
+  .intro-strip {
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: var(--radius-s);
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+    border-left: 4px solid var(--accent);
+  }
+
+  .intro-strip-copy {
+    margin: 0;
+    flex: 1;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+  }
+
+  .intro-strip-copy strong {
+    color: var(--ink);
+  }
+
+  .intro-strip-dismiss {
+    flex: none;
+  }
+
+  @media (max-width: 34rem) {
+    .intro-strip {
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+  }
+
+  /* Heading + "?" re-trigger row (spec §3). Keeps the small help affordance on the
+     heading's baseline without changing the heading's own accessible name. */
+  .page-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .help-dot {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 50%;
+    border: 1.5px solid var(--line-strong);
+    color: var(--muted-ink);
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    transition:
+      border-color var(--dur) var(--ease),
+      color var(--dur) var(--ease);
+  }
+
+  .help-dot:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   /* Fair-share guide on the budget page — a quiet, read-only derived card. */
@@ -3440,10 +3599,37 @@
   }
 
   .token-nudge p,
-  .token-share-card p {
+  .token-share-card p,
+  .token-welcome-card p {
     margin: 0;
     font-size: 0.9rem;
     color: var(--ink-2);
+  }
+
+  /* Parent welcome card (spec 003 §4) — shown on a family's first couple of
+     visits (or via the footer's "How this page works" link). Same card idiom as
+     the share/nudge cards, accent-topped so it reads as a friendly hello, then
+     quietly disappears once the family has been here a few times. */
+  .token-welcome-card {
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--accent);
+    border-radius: 10px;
+    padding: 1rem 1.15rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .token-welcome-card h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    border-bottom: none;
+    padding: 0;
+    width: auto;
   }
 
   .token-nudge .token-btn {
@@ -3854,13 +4040,29 @@
       box-shadow: var(--shadow-2);
     }
 
-    .mobile-nav-sheet a {
+    .mobile-nav-sheet a,
+    .mobile-nav-sheet button {
       padding: 0.7rem 0.1rem;
       border-top: none;
       font-size: 14px;
     }
 
-    .mobile-nav-sheet a + a {
+    /* The "Getting started" reopen sits in a form; style its button like the
+       sheet's links and give it the same divider treatment. */
+    .mobile-nav-sheet button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: none;
+      border: none;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .mobile-nav-sheet a + a,
+    .mobile-nav-sheet a + form,
+    .mobile-nav-sheet form + a {
       border-top: 1px solid var(--line);
     }
 

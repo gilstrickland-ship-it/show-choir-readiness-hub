@@ -22,6 +22,7 @@ export function TokenFooter({
       {kind === "guardian" && (
         <Link href={`${base}/absence`}>Report an absence →</Link>
       )}
+      <Link href={`${base}?welcome=1`}>How this page works →</Link>
       <span className="token-footer-cap">
         {kind === "guardian"
           ? `${brand.name} · this link is personal to your family`

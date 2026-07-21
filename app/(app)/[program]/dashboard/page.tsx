@@ -3,18 +3,17 @@ import { getTenantContext } from "@/lib/tenant";
 import { createClient } from "@/lib/supabase/server";
 import {
   ROSTER_ROLES,
-  ROSTER_WRITE_ROLES,
-  SETTINGS_ROLES,
   COSTUMES_ROLES,
   TREASURY_ROLES,
 } from "@/lib/nav";
 import {
   ATTENDANCE_WRITE_ROLES,
-  COMPETITION_WRITE_ROLES,
   activeCaptions,
 } from "@/lib/competitions";
 import { DIGEST_WRITE_ROLES } from "@/lib/comms";
 import { OPEN_ALTERATION_STATUSES } from "@/lib/costumes";
+import { loadGuideState, loadJourneyPanel } from "@/lib/guide";
+import { JourneyPanel } from "../JourneyPanel";
 import { formatCents, sumActuals, type LedgerAmountRow } from "@/lib/treasury";
 import { loadCompReadiness, type ReadinessCheck } from "@/lib/readiness";
 import {
@@ -55,11 +54,15 @@ interface InboxItem {
 
 export default async function DashboardPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ program: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags } = await getTenantContext(slug);
+  const sp = await searchParams;
+  const { program, role, season, flags, membership, isSupport } =
+    await getTenantContext(slug);
   const supabase = await createClient();
   const now = new Date();
   const tz = program.timezone;
@@ -120,96 +123,31 @@ export default async function DashboardPage({
     }
   }
 
-  // ---- First-run setup guide --------------------------------------------------
-  // A brand-new program has no hero and an empty inbox; without guidance a
-  // director can't tell what to do first. When there's NO upcoming competition
-  // (the materially-empty signal) we check the four setup milestones in order
-  // and, if any is undone, replace the hero+inbox with a plain checklist. The
-  // extra count queries run ONLY in this branch (lean-by-construction) and are
-  // skipped entirely once a next comp exists — a running program never pays for
-  // them.
-  let setup:
-    | {
-        hasSeason: boolean;
-        hasStudents: boolean;
-        hasEnsembleMembers: boolean;
-        hasCompetition: boolean;
-      }
-    | null = null;
-  if (!nextComp) {
-    const hasSeason = season != null;
-    let hasStudents = false;
-    let hasEnsembleMembers = false;
-    let hasCompetition = false;
-
-    const { count: studentCount } = await supabase
-      .from("students")
-      .select("id", { count: "exact", head: true })
-      .eq("program_id", program.id)
-      .eq("status", "active");
-    hasStudents = (studentCount ?? 0) > 0;
-
-    if (seasonId) {
-      const { count: memCount } = await supabase
-        .from("ensemble_members")
-        .select("id", { count: "exact", head: true })
-        .eq("program_id", program.id)
-        .eq("season_id", seasonId);
-      hasEnsembleMembers = (memCount ?? 0) > 0;
-
-      const { count: compCount } = await supabase
-        .from("competitions")
-        .select("id", { count: "exact", head: true })
-        .eq("program_id", program.id)
-        .eq("season_id", seasonId);
-      hasCompetition = (compCount ?? 0) > 0;
-    }
-
-    const allDone =
-      hasSeason && hasStudents && hasEnsembleMembers && hasCompetition;
-    if (!allDone) {
-      setup = { hasSeason, hasStudents, hasEnsembleMembers, hasCompetition };
-    }
-  }
-
-  // Role gates for the setup links: season/roster/competition writes are seat-
-  // limited (§2). A viewer without the write seat still SEES the step, just
-  // without a link (nothing to click but nothing hidden either).
-  const canSeason = SETTINGS_ROLES.includes(role);
-  const canRoster = ROSTER_WRITE_ROLES.includes(role);
-  const canComp = COMPETITION_WRITE_ROLES.includes(role);
-  const setupSteps = setup
-    ? [
-        {
-          done: setup.hasSeason,
-          label: "Start your season",
-          href: `${base}/settings/rollover`,
-          can: canSeason,
-          hint: null as string | null,
-        },
-        {
-          done: setup.hasStudents,
-          label: "Add your students",
-          href: `${base}/roster/import`,
-          can: canRoster,
-          hint: "Import a spreadsheet, or add them one at a time.",
-        },
-        {
-          done: setup.hasEnsembleMembers,
-          label: "Put students in an ensemble",
-          href: `${base}/roster/ensembles`,
-          can: canRoster,
-          hint: null,
-        },
-        {
-          done: setup.hasCompetition,
-          label: "Add your first competition",
-          href: `${base}/competitions`,
-          can: canComp,
-          hint: null,
-        },
-      ]
-    : [];
+  // ---- First-use guide journey panel (spec 003 §2) ---------------------------
+  // The role-shaped journey panel ABSORBS the Wave-D setup guide: the director/
+  // admin journey's first four steps are the old setup milestones (its heading
+  // "Set up your program" + step-1 link "Start your season" preserve the
+  // onboarding e2e contract). loadJourneyPanel is lean-by-construction: it runs
+  // ZERO queries when dismissed, and for task journeys checks only the terminal
+  // verifier first — an established program that reached the last milestone pays
+  // for one head-count and nothing more. A "full" task panel `takes over` the
+  // Today body exactly as the old setup guide did; a "pill" or re-opened panel
+  // sits above the normal Today content. Support views (no membership row) never
+  // see the panel.
+  const forceOpen = sp.guide === "open";
+  const guidePanel =
+    flags.guide && !isSupport && membership.user_id
+      ? await loadJourneyPanel(supabase, {
+          role,
+          flags,
+          programId: program.id,
+          seasonId,
+          slug,
+          guideState: await loadGuideState(supabase, program.id, membership.user_id),
+          forceOpen,
+        })
+      : null;
+  const takeover = guidePanel?.takeover ?? false;
 
   // Countdown target: the earliest itinerary time if present, else the comp date
   // at midnight in the program's timezone.
@@ -428,39 +366,11 @@ export default async function DashboardPage({
         </p>
       </div>
 
-      {setup ? (
-        <section className="setup-guide" aria-label="Set up your program">
-          <h2>Set up your program</h2>
-          <p className="setup-lede">
-            A few steps and you&apos;re ready. Takes about ten minutes with the
-            spreadsheet you already have.
-          </p>
-          <ol className="setup-steps">
-            {setupSteps.map((step, i) => (
-              <li
-                key={i}
-                className={`setup-step${step.done ? " done" : ""}`}
-              >
-                <span className="setup-step-num" aria-hidden="true">
-                  {step.done ? "✓" : i + 1}
-                </span>
-                <div className="setup-step-body">
-                  {step.done || !step.can ? (
-                    <span className="setup-step-label">{step.label}</span>
-                  ) : (
-                    <Link href={step.href} className="setup-step-label">
-                      {step.label}
-                    </Link>
-                  )}
-                  {step.hint && !step.done && (
-                    <div className="setup-step-hint">{step.hint}</div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        </section>
-      ) : (
+      {guidePanel && (
+        <JourneyPanel model={guidePanel} programId={program.id} />
+      )}
+
+      {!takeover && (
         <>
       {!season && (
         <p className="alert-error">

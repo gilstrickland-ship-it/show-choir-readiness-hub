@@ -3,8 +3,13 @@ import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { COMPETITION_WRITE_ROLES, ITINERARY_ITEM_KINDS } from "@/lib/competitions";
+import {
+  COMPETITION_WRITE_ROLES,
+  ITINERARY_ITEM_KINDS,
+} from "@/lib/competitions";
 import { CompetitionTabs } from "../../../CompetitionTabs";
+import { IntroStrip, HelpDot } from "../../../../../IntroStrip";
+import { loadGuideState } from "@/lib/guide";
 import { acceptParse } from "./actions";
 import { formatTimeZoneLabel } from "@/lib/datetime";
 
@@ -20,7 +25,11 @@ interface ParseRow {
   error: string | null;
   raw_output: {
     parsed?: {
-      competition?: { perform_time?: string | null; homeroom?: string | null; awards_time?: string | null };
+      competition?: {
+        perform_time?: string | null;
+        homeroom?: string | null;
+        awards_time?: string | null;
+      };
       items?: Array<{
         starts_at?: string | null;
         ends_at?: string | null;
@@ -44,17 +53,28 @@ function toInput(wall: string | null | undefined): string {
 
 export default async function ReviewPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string; parseId: string }>;
+  searchParams: Promise<{ help?: string }>;
 }) {
   const { program: slug, competitionId, parseId } = await params;
-  const { program, role } = await getTenantContext(slug);
+  const { program, role, flags, membership, isSupport } =
+    await getTenantContext(slug);
   requireFlag(program, "competitions");
   requireFlag(program, "packet_parse");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const tz = program.timezone;
+  const sp = await searchParams;
 
   const supabase = await createClient();
+
+  // First-use intro strip (spec 003 §3) — the AI drafted these; a human accepts.
+  const showGuide = flags.guide && !isSupport && !!membership.user_id;
+  const guideState =
+    showGuide && membership.user_id
+      ? await loadGuideState(supabase, program.id, membership.user_id)
+      : {};
   const { data: parseData } = await supabase
     .from("packet_parses")
     .select("id, document_id, status, error, raw_output")
@@ -87,10 +107,32 @@ export default async function ReviewPage({
   return (
     <section className="stack">
       <p>
-        <Link href={`/${slug}/competitions/${competitionId}/packet`}>← Packet</Link>
+        <Link href={`/${slug}/competitions/${competitionId}/packet`}>
+          ← Packet
+        </Link>
       </p>
-      <CompetitionTabs slug={slug} competitionId={competitionId} active="packet" />
-      <h1>Review parsed packet</h1>
+      <CompetitionTabs
+        slug={slug}
+        competitionId={competitionId}
+        active="packet"
+      />
+      <div className="page-title-row">
+        <h1>Review parsed packet</h1>
+        {showGuide && (
+          <HelpDot
+            href={`/${slug}/competitions/${competitionId}/packet/${parseId}/review?help=1`}
+          />
+        )}
+      </div>
+      {showGuide && (
+        <IntroStrip
+          surfaceKey="packet_review"
+          programId={program.id}
+          selfPath={`/${slug}/competitions/${competitionId}/packet/${parseId}/review`}
+          guideState={guideState}
+          help={sp.help === "1"}
+        />
+      )}
       <p className="muted">
         AI-drafted from the host packet. Nothing here reaches a parent until you
         accept it here and then publish the itinerary. Times are shown in{" "}
@@ -100,7 +142,8 @@ export default async function ReviewPage({
       {parsed?.competition && (
         <p className="muted">
           Detected: perform {parsed.competition.perform_time ?? "—"} · homeroom{" "}
-          {parsed.competition.homeroom ?? "—"} · awards {parsed.competition.awards_time ?? "—"}
+          {parsed.competition.homeroom ?? "—"} · awards{" "}
+          {parsed.competition.awards_time ?? "—"}
         </p>
       )}
 
@@ -120,7 +163,14 @@ export default async function ReviewPage({
         </div>
       )}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", width: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "1.5rem",
+          width: "100%",
+        }}
+      >
         {/* ---- Source document ---- */}
         {signedUrl && (
           <div style={{ flex: "1 1 20rem", minWidth: "16rem" }}>
@@ -142,7 +192,9 @@ export default async function ReviewPage({
         {/* ---- Editable parsed items ---- */}
         <div style={{ flex: "1 1 24rem", minWidth: "18rem" }} className="stack">
           <h2>Parsed items</h2>
-          {items.length === 0 && <p className="muted">No items were extracted.</p>}
+          {items.length === 0 && (
+            <p className="muted">No items were extracted.</p>
+          )}
           {canWrite ? (
             <form action={acceptParse} className="stack">
               <input type="hidden" name="programId" value={program.id} />
@@ -167,11 +219,16 @@ export default async function ReviewPage({
                   <div className="row-inline">
                     <label>
                       Kind
-                      <select name={`item_${i}_kind`} defaultValue={
-                        (ITINERARY_ITEM_KINDS as readonly string[]).includes(item.kind)
-                          ? item.kind
-                          : "other"
-                      }>
+                      <select
+                        name={`item_${i}_kind`}
+                        defaultValue={
+                          (ITINERARY_ITEM_KINDS as readonly string[]).includes(
+                            item.kind,
+                          )
+                            ? item.kind
+                            : "other"
+                        }
+                      >
                         {ITINERARY_ITEM_KINDS.map((k) => (
                           <option key={k} value={k}>
                             {k}
@@ -199,7 +256,11 @@ export default async function ReviewPage({
                   <div className="row-inline">
                     <label>
                       Title
-                      <input type="text" name={`item_${i}_title`} defaultValue={item.title ?? ""} />
+                      <input
+                        type="text"
+                        name={`item_${i}_title`}
+                        defaultValue={item.title ?? ""}
+                      />
                     </label>
                     <label>
                       Location
@@ -221,13 +282,15 @@ export default async function ReviewPage({
                 </fieldset>
               ))}
               <p className="muted">
-                Accepting replaces the draft itinerary&apos;s items with these. You
-                can keep editing on the Itinerary tab, then publish there.
+                Accepting replaces the draft itinerary&apos;s items with these.
+                You can keep editing on the Itinerary tab, then publish there.
               </p>
               <button type="submit">Accept into draft itinerary</button>
             </form>
           ) : (
-            <p className="muted">Read-only — a director or admin can accept this draft.</p>
+            <p className="muted">
+              Read-only — a director or admin can accept this draft.
+            </p>
           )}
         </div>
       </div>
