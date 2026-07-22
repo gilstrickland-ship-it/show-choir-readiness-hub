@@ -59,5 +59,23 @@ test.describe("staff journey (demo director)", () => {
       page.getByRole("heading", { name: "Headcount by ensemble" }),
     ).toBeVisible();
     await expect(page.getByText("Total meals needed")).toBeVisible();
+
+    // --- Multi-ensemble create (Feature 004): one competition, both ensembles →
+    // attendance seeds the union of all 12 students -------------------------
+    await page.goto("/demo/competitions#add");
+    const compName = `Union Test ${Date.now()}`;
+    const addForm = page.locator("form", { hasText: "Add competition" });
+    await addForm.getByLabel("Name").fill(compName);
+    await addForm.getByRole("checkbox", { name: "Varsity Mixed" }).check();
+    await addForm.getByRole("checkbox", { name: "Prep" }).check();
+    await addForm.getByRole("button", { name: "Add competition" }).click();
+
+    // Lands on the new competition; attendance seeded expected for all 12.
+    await page.waitForURL(/\/demo\/competitions\/[0-9a-f-]+\?created=1/);
+    await expect(page.getByRole("heading", { name: compName })).toBeVisible();
+    await expect(page.getByText("12 expected")).toBeVisible();
+    // Both participating ensembles are shown in the header.
+    await expect(page.locator(".chip", { hasText: "Varsity Mixed" })).toBeVisible();
+    await expect(page.locator(".chip", { hasText: "Prep" })).toBeVisible();
   });
 });

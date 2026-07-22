@@ -10,7 +10,7 @@ import {
   type SuggestItem,
   type CostumeSetInfo,
 } from "@/lib/shifts";
-import type { ItineraryItemKind } from "@/lib/competitions";
+import { competitionEnsembleIds, type ItineraryItemKind } from "@/lib/competitions";
 import { toZonedInputValue } from "@/lib/datetime";
 import { CommsTabs } from "../../CommsTabs";
 import { createSuggestedShifts } from "../actions";
@@ -25,7 +25,6 @@ interface CompRow {
   id: string;
   name: string;
   season_id: string;
-  ensemble_id: string | null;
 }
 
 export default async function SuggestShiftsPage({
@@ -72,7 +71,7 @@ export default async function SuggestShiftsPage({
   const { data: compData } = publishedCompIds.length
     ? await supabase
         .from("competitions")
-        .select("id, name, season_id, ensemble_id")
+        .select("id, name, season_id")
         .eq("program_id", program.id)
         .in("id", publishedCompIds)
         .order("date", { ascending: true, nullsFirst: false })
@@ -121,16 +120,19 @@ export default async function SuggestShiftsPage({
         }))
       : [];
 
-    // Costume sets for the performing ensemble this season, each flagged with
-    // whether a student is assigned a piece in it (an empty set → no change).
+    // Costume sets for the competition's participating ensembles this season, each
+    // flagged with whether a student is assigned a piece in it (an empty set → no
+    // change). A competition can include several ensembles (Feature 004).
+    const performingEnsembleIds = await competitionEnsembleIds(supabase, selected.id);
     let setQuery = supabase
       .from("costume_sets")
       .select("id, name, sort_order")
       .eq("program_id", program.id)
       .eq("season_id", selected.season_id);
-    setQuery = selected.ensemble_id
-      ? setQuery.eq("ensemble_id", selected.ensemble_id)
-      : setQuery.is("ensemble_id", null);
+    setQuery =
+      performingEnsembleIds.length > 0
+        ? setQuery.in("ensemble_id", performingEnsembleIds)
+        : setQuery.is("ensemble_id", null);
     const setRows =
       ((await setQuery.order("sort_order", { ascending: true })).data as
         | { id: string; name: string; sort_order: number }[]

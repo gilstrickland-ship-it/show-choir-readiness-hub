@@ -3,22 +3,25 @@ import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
+import { competitionEnsembleIds } from "@/lib/competitions";
 import { formatDateInTz } from "@/lib/datetime";
 import { CostumeTabs } from "../CostumeTabs";
 
 // Quick-change grid (T033, arch §3/§4/§9). Read-only staffing/reference sheet:
 // pick a competition, and the grid lays out costume-set TRANSITIONS (Set N → Set
-// N+1, in sort_order) as columns × the competition ensemble's students as rows.
-// Each cell shows what a student takes OFF (outgoing set pieces) and puts ON
-// (incoming set pieces) for that change, from costume_assignments. Absent
-// students (attendance) are greyed. Mobile-usable: the grid scrolls horizontally
-// inside its own container so the page body never does.
+// N+1, in sort_order) as columns × each participating ensemble's students as
+// rows. A competition can include several ensembles (Feature 004) — the sheet
+// renders one grid PER participating ensemble, keeping wardrobe grouped by
+// ensemble within the shared competition. Each cell shows what a student takes
+// OFF (outgoing set pieces) and puts ON (incoming set pieces) for that change,
+// from costume_assignments. Absent students (attendance) are greyed. Mobile-
+// usable: the grid scrolls horizontally inside its own container so the page body
+// never does.
 
 interface CompRow {
   id: string;
   name: string;
   date: string | null;
-  ensemble_id: string | null;
   season_id: string;
 }
 
@@ -51,7 +54,7 @@ export default async function QuickChangePage({
   // Competition picker — every competition in the program (most recent first).
   const { data: compData } = await supabase
     .from("competitions")
-    .select("id, name, date, ensemble_id, season_id")
+    .select("id, name, date, season_id")
     .eq("program_id", program.id)
     .order("date", { ascending: false, nullsFirst: false });
   const competitions = (compData as CompRow[] | null) ?? [];
@@ -85,12 +88,14 @@ export default async function QuickChangePage({
         </button>
       </form>
 
-      {comp && <QuickChangeGrid slug={slug} programId={program.id} comp={comp} />}
+      {comp && <QuickChangeForComp slug={slug} programId={program.id} comp={comp} />}
     </section>
   );
 }
 
-async function QuickChangeGrid({
+// Fan the sheet out over the competition's participating ensembles, one grid each.
+async function QuickChangeForComp({
+  slug,
   programId,
   comp,
 }: {
@@ -99,34 +104,75 @@ async function QuickChangeGrid({
   comp: CompRow;
 }) {
   const supabase = await createClient();
-
-  if (!comp.ensemble_id) {
+  const ensembleIds = await competitionEnsembleIds(supabase, comp.id);
+  if (ensembleIds.length === 0) {
     return (
       <p className="muted">
-        This competition has no ensemble set, so there is no student list to build a
-        quick-change sheet from. Set its ensemble on the competition page.
+        This competition has no ensembles yet, so there is no student list to build a
+        quick-change sheet from. Add its ensembles on the competition page.
       </p>
     );
   }
 
-  // Costume sets for the competition's ensemble + season, in change order.
+  const { data: ensData } = await supabase
+    .from("ensembles")
+    .select("id, name")
+    .eq("program_id", programId)
+    .in("id", ensembleIds)
+    .order("sort_order", { ascending: true });
+  const ensembles = (ensData as { id: string; name: string }[] | null) ?? [];
+
+  return (
+    <div className="stack" style={{ width: "100%" }}>
+      {ensembles.map((e) => (
+        <QuickChangeGrid
+          key={e.id}
+          slug={slug}
+          programId={programId}
+          comp={comp}
+          ensembleId={e.id}
+          ensembleName={e.name}
+        />
+      ))}
+    </div>
+  );
+}
+
+async function QuickChangeGrid({
+  programId,
+  comp,
+  ensembleId,
+  ensembleName,
+}: {
+  slug: string;
+  programId: string;
+  comp: CompRow;
+  ensembleId: string;
+  ensembleName: string;
+}) {
+  const supabase = await createClient();
+
+  // Costume sets for this ensemble + season, in change order.
   const { data: setData } = await supabase
     .from("costume_sets")
     .select("id, name, sort_order")
     .eq("program_id", programId)
     .eq("season_id", comp.season_id)
-    .eq("ensemble_id", comp.ensemble_id)
+    .eq("ensemble_id", ensembleId)
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
   const sets = (setData as SetRow[] | null) ?? [];
 
   if (sets.length < 2) {
     return (
-      <p className="muted">
-        A quick-change sheet needs at least two costume sets for this ensemble.
-        {sets.length === 1 ? " There is only one set." : " There are no sets yet."}{" "}
-        Build sets on the Sets tab.
-      </p>
+      <div className="stack" style={{ width: "100%" }}>
+        <h2>{ensembleName}</h2>
+        <p className="muted">
+          A quick-change sheet needs at least two costume sets for this ensemble.
+          {sets.length === 1 ? " There is only one set." : " There are no sets yet."}{" "}
+          Build sets on the Sets tab.
+        </p>
+      </div>
     );
   }
 
@@ -149,7 +195,7 @@ async function QuickChangeGrid({
     .select("students(id, first_name, last_name)")
     .eq("program_id", programId)
     .eq("season_id", comp.season_id)
-    .eq("ensemble_id", comp.ensemble_id);
+    .eq("ensemble_id", ensembleId);
   const students = ((memberData as { students: { id: string; first_name: string; last_name: string } | null }[] | null) ?? [])
     .map((m) => m.students)
     .filter((s): s is { id: string; first_name: string; last_name: string } => s != null)
@@ -198,6 +244,7 @@ async function QuickChangeGrid({
 
   return (
     <div className="stack" style={{ width: "100%" }}>
+      <h2>{ensembleName}</h2>
       <p className="muted">
         {comp.name} · {students.length} student{students.length === 1 ? "" : "s"} ·{" "}
         {transitions.length} change{transitions.length === 1 ? "" : "s"}

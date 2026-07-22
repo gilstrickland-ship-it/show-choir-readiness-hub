@@ -13,7 +13,6 @@ import { setAttendance } from "./actions";
 interface CompRow {
   id: string;
   name: string;
-  ensemble_id: string | null;
 }
 
 interface AttRow {
@@ -42,7 +41,7 @@ export default async function AttendancePage({
   const supabase = await createClient();
   const { data: compData } = await supabase
     .from("competitions")
-    .select("id, name, ensemble_id")
+    .select("id, name")
     .eq("id", competitionId)
     .eq("program_id", program.id)
     .maybeSingle();
@@ -67,10 +66,8 @@ export default async function AttendancePage({
 
       {rows.length === 0 && (
         <p className="muted">
-          No attendance rows yet.{" "}
-          {comp.ensemble_id
-            ? "Reseed from the competition page."
-            : "Set an ensemble on the competition page, then reseed."}
+          No attendance rows yet. Add at least one ensemble on the competition page,
+          then reseed.
         </p>
       )}
 

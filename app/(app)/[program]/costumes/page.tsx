@@ -4,6 +4,7 @@ import { Restricted } from "../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
+import { competitionEnsembleMap } from "@/lib/competitions";
 import { zonedWallToUtc, zonedDateKey } from "@/lib/datetime";
 import {
   COSTUME_WRITE_ROLES,
@@ -87,21 +88,32 @@ export default async function WardrobePage({
 
   if (season) {
     // Each ensemble's next competition date (this season), plus the program-wide
-    // next competition for the urgency banner.
+    // next competition for the urgency banner. A competition can include several
+    // ensembles (Feature 004) — participation comes from the competition_ensembles
+    // junction, so each participating ensemble inherits that comp's date.
     const { data: compData } = await supabase
       .from("competitions")
-      .select("name, date, ensemble_id")
+      .select("id, name, date")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
       .gte("date", todayKey)
       .order("date", { ascending: true });
-    for (const c of (compData as
-      | { name: string; date: string | null; ensemble_id: string | null }[]
-      | null) ?? []) {
-      if (!c.date) continue;
-      if (!nextComp) nextComp = { name: c.name, date: c.date };
-      if (c.ensemble_id && !nextCompDate.has(c.ensemble_id)) {
-        nextCompDate.set(c.ensemble_id, c.date);
+    const upcomingComps =
+      (compData as { id: string; name: string; date: string | null }[] | null) ?? [];
+    const datedComps = upcomingComps.filter(
+      (c): c is { id: string; name: string; date: string } => c.date != null,
+    );
+    if (datedComps[0]) nextComp = { name: datedComps[0].name, date: datedComps[0].date };
+
+    const compEnsembles = await competitionEnsembleMap(
+      supabase,
+      program.id,
+      datedComps.map((c) => c.id),
+    );
+    // datedComps is date-ascending, so the first date seen per ensemble is soonest.
+    for (const c of datedComps) {
+      for (const eid of compEnsembles.get(c.id) ?? []) {
+        if (!nextCompDate.has(eid)) nextCompDate.set(eid, c.date);
       }
     }
 

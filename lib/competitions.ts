@@ -71,35 +71,145 @@ export const COMMON_CAPTIONS: readonly string[] = [
   "People's Choice",
 ];
 
+// ============================================================================
+// Multi-ensemble eligibility helpers (Feature 004, research D5).
+// ----------------------------------------------------------------------------
+// A competition's participating ensembles live in the `competition_ensembles`
+// junction; an event's targeted ensembles in `event_ensembles` (zero rows =
+// whole program). Every "who is in this competition" read resolves through the
+// junction → ensemble_members (Constitution VI), deduplicated per student so a
+// double-rostered student appears exactly once.
+// ============================================================================
+
+// The ensemble ids participating in one competition (the junction rows).
+export async function competitionEnsembleIds(
+  supabase: SupabaseClient,
+  competitionId: string,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("competition_ensembles")
+    .select("ensemble_id")
+    .eq("competition_id", competitionId);
+  return ((data as { ensemble_id: string }[] | null) ?? []).map((r) => r.ensemble_id);
+}
+
+// competition_id → its participating ensemble ids, for a batch of competitions
+// (list/season pages that would otherwise N+1). Scoped by program_id.
+export async function competitionEnsembleMap(
+  supabase: SupabaseClient,
+  programId: string,
+  competitionIds: string[],
+): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (competitionIds.length === 0) return map;
+  const { data } = await supabase
+    .from("competition_ensembles")
+    .select("competition_id, ensemble_id")
+    .eq("program_id", programId)
+    .in("competition_id", competitionIds);
+  for (const r of (data as { competition_id: string; ensemble_id: string }[] | null) ?? []) {
+    const list = map.get(r.competition_id) ?? [];
+    list.push(r.ensemble_id);
+    map.set(r.competition_id, list);
+  }
+  return map;
+}
+
+// event_id → its targeted ensemble ids for a batch of events. An event absent
+// from the returned map (zero rows) targets the whole program (D2).
+export async function eventEnsembleMap(
+  supabase: SupabaseClient,
+  programId: string,
+  eventIds: string[],
+): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (eventIds.length === 0) return map;
+  const { data } = await supabase
+    .from("event_ensembles")
+    .select("event_id, ensemble_id")
+    .eq("program_id", programId)
+    .in("event_id", eventIds);
+  for (const r of (data as { event_id: string; ensemble_id: string }[] | null) ?? []) {
+    const list = map.get(r.event_id) ?? [];
+    list.push(r.ensemble_id);
+    map.set(r.event_id, list);
+  }
+  return map;
+}
+
+// The targeted ensemble ids for one event (empty = whole program).
+export async function eventEnsembleIds(
+  supabase: SupabaseClient,
+  eventId: string,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("event_ensembles")
+    .select("ensemble_id")
+    .eq("event_id", eventId);
+  return ((data as { ensemble_id: string }[] | null) ?? []).map((r) => r.ensemble_id);
+}
+
+// Distinct active-season student ids across a competition's participating
+// ensembles (the competition roster). Reads through ensemble_members
+// (Constitution VI); a double-rostered student appears once. Pass ensembleIds
+// when already loaded to skip the junction round-trip.
+export async function competitionRoster(
+  supabase: SupabaseClient,
+  args: {
+    programId: string;
+    seasonId: string;
+    competitionId?: string;
+    ensembleIds?: string[];
+  },
+): Promise<string[]> {
+  const { programId, seasonId } = args;
+  const ensembleIds =
+    args.ensembleIds ??
+    (args.competitionId
+      ? await competitionEnsembleIds(supabase, args.competitionId)
+      : []);
+  if (ensembleIds.length === 0) return [];
+
+  const { data } = await supabase
+    .from("ensemble_members")
+    .select("student_id")
+    .eq("program_id", programId)
+    .eq("season_id", seasonId)
+    .in("ensemble_id", ensembleIds);
+  return Array.from(
+    new Set(((data as { student_id: string }[] | null) ?? []).map((m) => m.student_id)),
+  );
+}
+
 // Idempotent attendance seed (§5, Constitution X, invariant §9.5). Upserts an
-// `expected` row for every ensemble_member of the competition's ensemble+season,
-// ignoring duplicates so it never clobbers a status a staffer already set — safe
-// to re-run when the roster changes ("reseed"). No ensemble ⇒ no eligibility
-// list ⇒ nothing to seed.
+// `expected` row for every active-season member of the competition's
+// PARTICIPATING ensembles (the union, deduplicated per student), ignoring
+// duplicates so it never clobbers a status a staffer already set — safe to
+// re-run when the roster changes ("reseed"). No ensembles ⇒ no eligibility
+// list ⇒ nothing to seed. Adding an ensemble later reseeds only its members
+// (existing rows are untouched by ignoreDuplicates).
 export async function seedAttendance(
   supabase: SupabaseClient,
   args: {
     programId: string;
     competitionId: string;
-    ensembleId: string | null;
+    ensembleIds: string[];
     seasonId: string | null;
   },
 ): Promise<{ seeded: number; error?: string }> {
-  const { programId, competitionId, ensembleId, seasonId } = args;
-  if (!ensembleId || !seasonId) return { seeded: 0 };
+  const { programId, competitionId, ensembleIds, seasonId } = args;
+  if (ensembleIds.length === 0 || !seasonId) return { seeded: 0 };
 
-  const { data: members, error: readErr } = await supabase
-    .from("ensemble_members")
-    .select("student_id")
-    .eq("program_id", programId)
-    .eq("season_id", seasonId)
-    .eq("ensemble_id", ensembleId);
-  if (readErr) return { seeded: 0, error: readErr.message };
+  const studentIds = await competitionRoster(supabase, {
+    programId,
+    seasonId,
+    ensembleIds,
+  });
 
-  const rows = ((members as { student_id: string }[] | null) ?? []).map((m) => ({
+  const rows = studentIds.map((student_id) => ({
     program_id: programId,
     competition_id: competitionId,
-    student_id: m.student_id,
+    student_id,
     status: "expected" as const,
   }));
   if (rows.length === 0) return { seeded: 0 };

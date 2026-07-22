@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDateInTz, formatTimeInTz, zonedDateKey } from "@/lib/datetime";
 import { createEvent } from "./actions";
 import { EVENTS_WRITE_ROLES, EVENT_KINDS, EVENT_KIND_LABELS } from "@/lib/events";
+import { eventEnsembleMap } from "@/lib/competitions";
 
 // Events calendar (§5a, T013) — week + month views, server-rendered, all times in
 // programs.timezone (Constitution VII). Events are deliberately thin (no
@@ -18,7 +19,6 @@ interface EventRow {
   kind: string;
   starts_at: string | null;
   location: string | null;
-  ensemble_id: string | null;
 }
 
 interface EnsembleRow {
@@ -82,12 +82,20 @@ export default async function EventsPage({
   const supabase = await createClient();
   const { data: evData } = await supabase
     .from("events")
-    .select("id, title, kind, starts_at, location, ensemble_id")
+    .select("id, title, kind, starts_at, location")
     .eq("program_id", program.id)
     .gte("starts_at", `${civilKey(addDays(gridStart, -1))}T00:00:00Z`)
     .lt("starts_at", `${civilKey(addDays(gridEnd, 1))}T00:00:00Z`)
     .order("starts_at", { ascending: true });
   const events = (evData as EventRow[] | null) ?? [];
+
+  // Targeted ensembles per event (Feature 004): an event absent from the map
+  // targets the whole program (zero junction rows).
+  const evEnsembles = await eventEnsembleMap(
+    supabase,
+    program.id,
+    events.map((e) => e.id),
+  );
 
   const byDay = new Map<string, EventRow[]>();
   for (const e of events) {
@@ -104,6 +112,15 @@ export default async function EventsPage({
     .eq("program_id", program.id)
     .order("sort_order", { ascending: true });
   const ensembles = (ensData as EnsembleRow[] | null) ?? [];
+  const ensembleName = new Map(ensembles.map((e) => [e.id, e.name]));
+
+  // A short audience label for a calendar event: its targeted ensembles, or
+  // "Whole program" when it has none (Feature 004).
+  function audienceLabel(eventId: string): string {
+    const ids = evEnsembles.get(eventId);
+    if (!ids || ids.length === 0) return "Whole program";
+    return ids.map((id) => ensembleName.get(id) ?? "?").join(", ");
+  }
 
   // Prev/next anchors.
   const prevRef =
@@ -186,6 +203,9 @@ export default async function EventsPage({
                           <Link href={`/${slug}/events/${e.id}`}>
                             {e.starts_at ? formatTimeInTz(e.starts_at, tz) : ""} {e.title}
                           </Link>
+                          <div className="muted" style={{ fontSize: "0.7rem" }}>
+                            {audienceLabel(e.id)}
+                          </div>
                         </div>
                       ))}
                     </td>
@@ -220,18 +240,22 @@ export default async function EventsPage({
                   ))}
                 </select>
               </label>
-              <label>
-                Ensemble
-                <select name="ensemble_id" defaultValue="">
-                  <option value="">Whole program</option>
-                  {ensembles.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
+            <fieldset className="stack">
+              <legend>Ensembles</legend>
+              <p className="muted">
+                Leave every box unticked for a whole-program event; tick one or more
+                to target just those ensembles.
+              </p>
+              <div className="row-inline" style={{ flexWrap: "wrap" }}>
+                {ensembles.map((e) => (
+                  <label key={e.id} className="row-inline">
+                    <input type="checkbox" name="ensemble_ids" value={e.id} />
+                    {e.name}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="row-inline">
               <label>
                 Starts

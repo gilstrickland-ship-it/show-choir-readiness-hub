@@ -9,6 +9,8 @@ import {
   COMMON_CAPTIONS,
   COMPETITION_STATUS_LABELS,
   activeCaptions,
+  competitionEnsembleIds,
+  competitionRoster,
 } from "@/lib/competitions";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { loadCompReadiness } from "@/lib/readiness";
@@ -81,7 +83,6 @@ function anchorFor(href: string): string {
 interface CompDetail {
   id: string;
   season_id: string;
-  ensemble_id: string | null;
   name: string;
   host_school: string | null;
   venue_address: string | null;
@@ -115,7 +116,7 @@ export default async function CompetitionCommandCenter({
     reseeded?: string;
     results?: string;
     confirm?: string;
-    pending_ensemble?: string;
+    pending_ensembles?: string;
   }>;
 }) {
   const { program: slug, competitionId } = await params;
@@ -133,13 +134,18 @@ export default async function CompetitionCommandCenter({
   const { data: compData } = await supabase
     .from("competitions")
     .select(
-      "id, season_id, ensemble_id, name, host_school, venue_address, date, showchoir_com_url, status",
+      "id, season_id, name, host_school, venue_address, date, showchoir_com_url, status",
     )
     .eq("id", competitionId)
     .eq("program_id", program.id)
     .maybeSingle();
   const comp = compData as CompDetail | null;
   if (!comp) notFound();
+
+  // Participating ensembles (junction, Feature 004). ≥1 for a well-formed comp;
+  // an empty set only appears mid-edit and is treated as "not seeded yet".
+  const participatingEnsembleIds = await competitionEnsembleIds(supabase, competitionId);
+  const hasEnsembles = participatingEnsembleIds.length > 0;
 
   // ---- Readiness (shared 5-check helper — feeds both the rail + countdown) ---
   const readiness = await loadCompReadiness(supabase, {
@@ -355,9 +361,51 @@ export default async function CompetitionCommandCenter({
   const results = resultsData as ResultsRow | null;
   const chosenCaptions = new Set(activeCaptions(results?.captions));
 
+  const ensembleName = new Map(ensembles.map((e) => [e.id, e.name]));
+
+  // ---- Ensemble-change confirmation (generalized invariant §9.2) ------------
+  // The edit form posts the intended NEW ensemble set as `pending_ensembles`
+  // (comma-joined) when a removal needs acknowledgement. Name the students who
+  // would lose eligibility: members of a removed ensemble in NO remaining one.
   const confirmEnsemble = sp.confirm === "ensemble" && canWrite;
-  const pendingEnsemble = sp.pending_ensemble ?? "";
-  const pendingName = ensembles.find((e) => e.id === pendingEnsemble)?.name ?? "none";
+  const pendingEnsembleIds = (sp.pending_ensembles ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const pendingNames = pendingEnsembleIds
+    .map((id) => ensembleName.get(id) ?? "?")
+    .join(", ");
+  let affectedNames: string[] = [];
+  if (confirmEnsemble && pendingEnsembleIds.length > 0) {
+    const removedIds = participatingEnsembleIds.filter(
+      (id) => !pendingEnsembleIds.includes(id),
+    );
+    if (removedIds.length > 0) {
+      const removedStudents = await competitionRoster(supabase, {
+        programId: program.id,
+        seasonId: comp.season_id,
+        ensembleIds: removedIds,
+      });
+      const remaining = new Set(
+        await competitionRoster(supabase, {
+          programId: program.id,
+          seasonId: comp.season_id,
+          ensembleIds: pendingEnsembleIds,
+        }),
+      );
+      const toRemove = removedStudents.filter((id) => !remaining.has(id));
+      if (toRemove.length > 0) {
+        const { data: nameRows } = await supabase
+          .from("students")
+          .select("id, first_name, last_name")
+          .eq("program_id", program.id)
+          .in("id", toRemove);
+        affectedNames = ((nameRows as { first_name: string; last_name: string }[] | null) ?? [])
+          .map((s) => `${s.last_name}, ${s.first_name}`)
+          .sort((a, b) => a.localeCompare(b));
+      }
+    }
+  }
 
   const statusPill = STATUS_PILL[comp.status] ?? STATUS_PILL.planned;
   const metaLine = [
@@ -383,7 +431,7 @@ export default async function CompetitionCommandCenter({
       {sp.results && <p className="alert-ok">Results saved.</p>}
       {sp.error === "name" && <p className="alert-error">A competition needs a name.</p>}
       {sp.error === "ensemble" && (
-        <p className="alert-error">Pick an ensemble for the competition.</p>
+        <p className="alert-error">Pick at least one ensemble for the competition.</p>
       )}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
       {sp.error === "results" && <p className="alert-error">Couldn&apos;t save results.</p>}
@@ -401,6 +449,15 @@ export default async function CompetitionCommandCenter({
           </div>
           <h1 className="comp-h1">{comp.name}</h1>
           <p className="comp-meta">{metaLine}</p>
+          {hasEnsembles && (
+            <p className="row-inline" style={{ gap: "0.3rem", flexWrap: "wrap" }}>
+              {participatingEnsembleIds.map((eid) => (
+                <span className="chip" key={eid}>
+                  {ensembleName.get(eid) ?? "?"}
+                </span>
+              ))}
+            </p>
+          )}
         </div>
         <div className="comp-head-actions">
           {canWrite && (
@@ -414,21 +471,35 @@ export default async function CompetitionCommandCenter({
         </div>
       </div>
 
-      {/* ---- Ensemble-change confirmation (invariant §9.2) ---- */}
+      {/* ---- Ensemble-change confirmation (generalized invariant §9.2) ---- */}
       {confirmEnsemble && (
         <div className="stack confirm-box">
           <p>
-            Change the ensemble to <strong>{pendingName}</strong>? This reseeds
-            attendance for the new ensemble&apos;s members (expected). Existing
-            attendance rows for students still eligible are kept.
+            Set participating ensembles to <strong>{pendingNames || "none"}</strong>?
           </p>
+          {affectedNames.length > 0 ? (
+            <p>
+              This removes {affectedNames.length} student
+              {affectedNames.length === 1 ? "" : "s"} from this competition&apos;s
+              attendance, meals, travel, and checkout — their attendance rows and
+              comp-scoped costume checkouts are released. Students in a remaining
+              ensemble are untouched. Affected:{" "}
+              <strong>{affectedNames.join("; ")}</strong>.
+            </p>
+          ) : (
+            <p className="muted">
+              No students lose eligibility (everyone removed is still in a remaining
+              ensemble). Newly added ensembles are seeded expected.
+            </p>
+          )}
           <form action={updateCompetition} className="row-inline">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="competitionId" value={comp.id} />
             <input type="hidden" name="seasonId" value={comp.season_id} />
-            <input type="hidden" name="current_ensemble_id" value={comp.ensemble_id ?? ""} />
-            <input type="hidden" name="ensemble_id" value={pendingEnsemble} />
+            {pendingEnsembleIds.map((id) => (
+              <input type="hidden" name="ensemble_ids" value={id} key={id} />
+            ))}
             <input type="hidden" name="confirm_ensemble" value="1" />
             <input type="hidden" name="name" value={comp.name} />
             <input type="hidden" name="host_school" value={comp.host_school ?? ""} />
@@ -437,7 +508,7 @@ export default async function CompetitionCommandCenter({
             <input type="hidden" name="showchoir_com_url" value={comp.showchoir_com_url ?? ""} />
             <input type="hidden" name="status" value={comp.status} />
             <button type="submit" className="danger">
-              Confirm change &amp; reseed
+              Confirm &amp; update ensembles
             </button>
             <Link href={compBase}>Cancel</Link>
           </form>
@@ -506,9 +577,9 @@ export default async function CompetitionCommandCenter({
             {attRows.length === 0 ? (
               <p className="muted">
                 No attendance rows yet.{" "}
-                {comp.ensemble_id
+                {hasEnsembles
                   ? "Reseed from Edit details below."
-                  : "Set an ensemble in Edit details, then reseed."}
+                  : "Add at least one ensemble in Edit details, then reseed."}
               </p>
             ) : (
               <div className="comp-rows">
@@ -561,13 +632,12 @@ export default async function CompetitionCommandCenter({
               <Link href={`${compBase}/attendance`}>
                 All {attRows.length} student{attRows.length === 1 ? "" : "s"} →
               </Link>
-              {canWrite && comp.ensemble_id && (
+              {canWrite && hasEnsembles && (
                 <form action={reseedAttendance}>
                   <input type="hidden" name="programId" value={program.id} />
                   <input type="hidden" name="slug" value={slug} />
                   <input type="hidden" name="competitionId" value={comp.id} />
                   <input type="hidden" name="seasonId" value={comp.season_id} />
-                  <input type="hidden" name="ensemble_id" value={comp.ensemble_id} />
                   <button type="submit" className="linklike">
                     Reseed attendance
                   </button>
@@ -795,7 +865,6 @@ export default async function CompetitionCommandCenter({
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="competitionId" value={comp.id} />
                 <input type="hidden" name="seasonId" value={comp.season_id} />
-                <input type="hidden" name="current_ensemble_id" value={comp.ensemble_id ?? ""} />
                 <div className="row-inline">
                   <label>
                     Name
@@ -806,19 +875,6 @@ export default async function CompetitionCommandCenter({
                     <input type="date" name="date" defaultValue={comp.date ?? ""} />
                   </label>
                   <label>
-                    Ensemble
-                    <select name="ensemble_id" defaultValue={comp.ensemble_id ?? ""} required>
-                      <option value="" disabled>
-                        — choose ensemble —
-                      </option>
-                      {ensembles.map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {e.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
                     Status
                     <select name="status" defaultValue={comp.status}>
                       <option value="planned">Planned</option>
@@ -827,6 +883,22 @@ export default async function CompetitionCommandCenter({
                     </select>
                   </label>
                 </div>
+                <fieldset className="stack">
+                  <legend>Ensembles</legend>
+                  <div className="row-inline" style={{ flexWrap: "wrap" }}>
+                    {ensembles.map((e) => (
+                      <label key={e.id} className="row-inline">
+                        <input
+                          type="checkbox"
+                          name="ensemble_ids"
+                          value={e.id}
+                          defaultChecked={participatingEnsembleIds.includes(e.id)}
+                        />
+                        {e.name}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
                 <div className="row-inline">
                   <label>
                     Host school
@@ -850,7 +922,9 @@ export default async function CompetitionCommandCenter({
                   </label>
                 </div>
                 <p className="muted">
-                  Changing the ensemble asks for confirmation and reseeds attendance.
+                  Adding an ensemble seeds its members (expected). Removing one asks
+                  for confirmation, then drops attendance and comp-scoped checkouts
+                  only for students in no remaining ensemble.
                 </p>
                 <button type="submit">Save changes</button>
               </form>
