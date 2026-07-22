@@ -194,7 +194,11 @@ export default async function CostumesInventoryPage({
                       <input type="hidden" name="programId" value={program.id} />
                       <input type="hidden" name="slug" value={slug} />
                       <input type="hidden" name="pieceId" value={p.id} />
-                      <button type="submit" className="linklike danger">
+                      <button
+                        type="submit"
+                        className="linklike danger"
+                        aria-label={`Retire ${p.label}`}
+                      >
                         Retire
                       </button>
                     </form>

@@ -276,7 +276,11 @@ export default async function WardrobePage({
                           <input type="hidden" name="slug" value={slug} />
                           <input type="hidden" name="assignmentId" value={it.id} />
                           <input type="hidden" name="status" value="in_progress" />
-                          <button type="submit" className="secondary">
+                          <button
+                            type="submit"
+                            className="secondary"
+                            aria-label={`Start alteration: ${it.pieceLabel} — ${it.studentName}`}
+                          >
                             Start
                           </button>
                         </form>
@@ -286,7 +290,12 @@ export default async function WardrobePage({
                         <input type="hidden" name="slug" value={slug} />
                         <input type="hidden" name="assignmentId" value={it.id} />
                         <input type="hidden" name="status" value="done" />
-                        <button type="submit">Done</button>
+                        <button
+                          type="submit"
+                          aria-label={`Mark alteration done: ${it.pieceLabel} — ${it.studentName}`}
+                        >
+                          Done
+                        </button>
                       </form>
                     </div>
                   )}
@@ -302,7 +311,11 @@ export default async function WardrobePage({
                         aria-label="Alteration notes"
                         placeholder="Hem, take in waist…"
                       />
-                      <button type="submit" className="secondary">
+                      <button
+                        type="submit"
+                        className="secondary"
+                        aria-label={`Save alteration note: ${it.pieceLabel} — ${it.studentName}`}
+                      >
                         Save note
                       </button>
                     </form>

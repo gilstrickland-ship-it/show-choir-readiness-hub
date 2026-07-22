@@ -154,6 +154,7 @@ export default async function DigestPage({
           selfPath={`/${slug}/comms/digest`}
           guideState={guideState}
           help={sp.help === "1"}
+          canWrite={canManage}
         />
       )}
 

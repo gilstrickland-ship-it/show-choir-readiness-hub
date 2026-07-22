@@ -675,7 +675,9 @@ export default async function CompetitionCommandCenter({
                     >
                       View / re-review
                     </Link>
-                    <Link href={`${compBase}/packet`}>Upload another</Link>
+                    {canWrite && (
+                      <Link href={`${compBase}/packet`}>Upload another</Link>
+                    )}
                   </div>
                   <p className="muted comp-caption">
                     AI drafts stay drafts — nothing lands on the itinerary until you
@@ -684,8 +686,13 @@ export default async function CompetitionCommandCenter({
                 </>
               ) : (
                 <p className="muted">
-                  No host packet uploaded yet.{" "}
-                  <Link href={`${compBase}/packet`}>Upload a packet →</Link>
+                  No host packet uploaded yet.
+                  {canWrite && (
+                    <>
+                      {" "}
+                      <Link href={`${compBase}/packet`}>Upload a packet →</Link>
+                    </>
+                  )}
                 </p>
               )}
             </section>

@@ -74,16 +74,59 @@ export async function computeRecipients(
   return Array.from(byEmail.values());
 }
 
-// Minimal, safe markdown-ish → HTML for announcement bodies. Escapes all HTML,
-// then turns blank-line-separated blocks into paragraphs and single newlines
-// into <br>. Deliberately tiny — no raw HTML from a textarea ever reaches an
-// inbox.
+// Minimal, safe markdown-ish → HTML for announcement AND digest bodies. Escapes
+// ALL HTML first (no raw HTML from a textarea or model ever reaches an inbox),
+// then renders a deliberately tiny subset: "## "/"### " headings, "- "/"* "
+// bullet lists, blank-line-separated paragraphs, and single newlines as <br>.
+// The digest prompt (prompts/digest-draft/v1) emits exactly this subset, and both
+// the on-screen workspace and the emailed copy call THIS function — so what a
+// director reviews is byte-for-byte what a parent receives. No markdown library.
 export function bodyToHtml(bodyMd: string): string {
-  const escaped = escapeHtml(bodyMd);
-  const blocks = escaped.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
-  return blocks
-    .map((b) => `<p>${b.replace(/\n/g, "<br>")}</p>`)
-    .join("\n");
+  const lines = escapeHtml(bodyMd).split("\n");
+  const html: string[] = [];
+  let para: string[] = [];
+  let list: string[] = [];
+
+  const flushPara = () => {
+    if (para.length > 0) {
+      html.push(`<p>${para.join("<br>")}</p>`);
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (list.length > 0) {
+      html.push(`<ul>${list.map((li) => `<li>${li}</li>`).join("")}</ul>`);
+      list = [];
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line === "") {
+      flushPara();
+      flushList();
+      continue;
+    }
+    const heading = line.match(/^(#{2,3})\s+(.*)$/);
+    if (heading) {
+      flushPara();
+      flushList();
+      const level = heading[1].length; // 2 → h2, 3 → h3
+      html.push(`<h${level}>${heading[2].trim()}</h${level}>`);
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    if (bullet) {
+      flushPara();
+      list.push(bullet[1].trim());
+      continue;
+    }
+    flushList();
+    para.push(line);
+  }
+  flushPara();
+  flushList();
+  return html.join("\n");
 }
 
 function escapeHtml(s: string): string {

@@ -300,6 +300,7 @@ async function CheckoutGrid({
                     type="submit"
                     className={r.state === "out" ? "secondary" : undefined}
                     style={{ minHeight: "3rem", minWidth: "8rem", fontSize: "1rem" }}
+                    aria-label={`${r.state === "out" ? "Check in" : "Check out"}: ${r.primary} — ${r.secondary} (now: ${STATE_LABEL[r.state]})`}
                   >
                     {r.state === "out" ? "Check in" : "Check out"}
                     <br />

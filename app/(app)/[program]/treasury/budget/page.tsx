@@ -194,6 +194,7 @@ export default async function BudgetPage({
           selfPath={`/${slug}/treasury/budget`}
           guideState={guideState}
           help={help === "1"}
+          canWrite={canWrite}
         />
       )}
       <p className="muted">
