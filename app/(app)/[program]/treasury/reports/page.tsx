@@ -246,26 +246,18 @@ export default async function ReportsPage({
 
             {eventId && eventName && (
               <div className="stack">
-                <div className="detail-list">
-                  <div>
-                    <span className="muted">Event</span>
-                    <span>{eventName}</span>
-                  </div>
-                  <div>
-                    <span className="muted">Income</span>
-                    <span className="num">{formatCents(eventTotals.inCents)}</span>
-                  </div>
-                  <div>
-                    <span className="muted">Expense</span>
-                    <span className="num">{formatCents(eventTotals.outCents)}</span>
-                  </div>
-                  <div>
-                    <span className="muted">Net</span>
-                    <span className="num">
-                      <strong>{formatCents(eventTotals.netCents)}</strong>
-                    </span>
-                  </div>
-                </div>
+                <dl className="detail-list">
+                  <dt>Event</dt>
+                  <dd>{eventName}</dd>
+                  <dt>Income</dt>
+                  <dd className="num">{formatCents(eventTotals.inCents)}</dd>
+                  <dt>Expense</dt>
+                  <dd className="num">{formatCents(eventTotals.outCents)}</dd>
+                  <dt>Net</dt>
+                  <dd className="num">
+                    <strong>{formatCents(eventTotals.netCents)}</strong>
+                  </dd>
+                </dl>
                 <table className="members">
                   <thead>
                     <tr>
@@ -313,22 +305,16 @@ export default async function ReportsPage({
                 : "No months reconciled yet."}
             </p>
 
-            <div className="detail-list">
-              <div>
-                <span className="muted">Income (actual)</span>
-                <span className="num">{formatCents(snapshot.inCents)}</span>
-              </div>
-              <div>
-                <span className="muted">Expense (actual)</span>
-                <span className="num">{formatCents(snapshot.outCents)}</span>
-              </div>
-              <div>
-                <span className="muted">Net</span>
-                <span className="num">
-                  <strong>{formatCents(snapshot.netCents)}</strong>
-                </span>
-              </div>
-            </div>
+            <dl className="detail-list">
+              <dt>Income (actual)</dt>
+              <dd className="num">{formatCents(snapshot.inCents)}</dd>
+              <dt>Expense (actual)</dt>
+              <dd className="num">{formatCents(snapshot.outCents)}</dd>
+              <dt>Net</dt>
+              <dd className="num">
+                <strong>{formatCents(snapshot.netCents)}</strong>
+              </dd>
+            </dl>
 
             <h3>Category rollups</h3>
             <table className="members">

@@ -565,7 +565,14 @@ export default async function SeasonPage({
         <p className="muted season-undated-note">
           {undatedCompCount} competition{undatedCompCount === 1 ? "" : "s"} without
           a date {undatedCompCount === 1 ? "isn't" : "aren't"} shown on the timeline
-          — <Link href={`${base}/competitions`}>set dates on the Competitions page</Link>.
+          {canAddComp ? (
+            <>
+              {" "}
+              — <Link href={`${base}/competitions`}>set dates on the Competitions page</Link>.
+            </>
+          ) : (
+            "."
+          )}
         </p>
       )}
 

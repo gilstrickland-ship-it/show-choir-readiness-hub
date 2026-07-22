@@ -488,6 +488,7 @@ export default async function LedgerPage({
           selfPath={`/${slug}/treasury`}
           guideState={guideState}
           help={sp.help === "1"}
+          canWrite={canWrite}
         />
       )}
 

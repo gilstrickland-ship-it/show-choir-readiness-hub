@@ -477,7 +477,8 @@
      account cluster. It fills the middle and scrolls horizontally when tight. */
   .shell-nav {
     display: flex;
-    gap: 0 1.4rem;
+    flex-wrap: wrap;
+    gap: 0.2rem 1.4rem;
     flex: 1;
     min-width: 0;
     overflow-x: auto;
@@ -518,6 +519,20 @@
     color: var(--ink);
     font-weight: 750;
     border-bottom-color: var(--accent);
+  }
+
+  /* Mid-width fix: between the phone tab-bar breakpoint (760px, where .shell-nav
+     is hidden for .mobile-nav) and the width where the full tab row comfortably
+     fits inline beside the brand + account clusters, the nav would overflow its
+     flex slot and clip a label (e.g. "Wardrobe") — and the horizontal scrollbar
+     it relies on is a hidden overlay on macOS, so there's no affordance. The
+     header already wraps, so drop the nav onto its own full-width second row
+     where every item fits; the base flex-wrap is the final safety net. */
+  @media (min-width: 47.5rem) and (max-width: 75rem) {
+    .shell-nav {
+      order: 3;
+      flex-basis: 100%;
+    }
   }
 
   .support-banner {
@@ -840,6 +855,11 @@
 
   .detail-list dd {
     margin: 0;
+  }
+
+  /* Currency / figure values in a detail list align on tabular numerals. */
+  .detail-list dd.num {
+    font-variant-numeric: tabular-nums;
   }
 
   .confirm-box {

@@ -457,14 +457,18 @@ export default async function CompetitionCommandCenter({
                 </span>
               </h2>
               <div className="comp-section-links">
-                <Link href={`${compBase}/itinerary`}>Edit items</Link>
+                <Link href={`${compBase}/itinerary`}>
+                  {canWrite ? "Edit items" : "View items"}
+                </Link>
                 <Link href={`${compBase}/itinerary`}>Share link</Link>
               </div>
             </div>
             {itinItems.length === 0 ? (
               <p className="muted">
                 No itinerary items yet.{" "}
-                <Link href={`${compBase}/itinerary`}>Build the itinerary →</Link>
+                <Link href={`${compBase}/itinerary`}>
+                  {canWrite ? "Build the itinerary →" : "View the itinerary →"}
+                </Link>
               </p>
             ) : (
               <div className="comp-rows">
