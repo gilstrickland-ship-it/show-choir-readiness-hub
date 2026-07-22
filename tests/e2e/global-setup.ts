@@ -15,7 +15,7 @@ import {
 // ----------------------------------------------------------------------------
 // Talks straight to the local Supabase stack (service-role) that `supabase
 // start` brought up in CI. It:
-//   1. creates the three test auth users (idempotent, email pre-confirmed);
+//   1. creates the test auth users from USERS (idempotent, email pre-confirmed);
 //   2. pre-mints a guardian token for the seeded 'Diane Bennett' guardian by
 //      inserting the sha256 of a fresh random raw token, and hands the RAW token
 //      to the specs via the on-disk state file (hash-only storage means the raw
