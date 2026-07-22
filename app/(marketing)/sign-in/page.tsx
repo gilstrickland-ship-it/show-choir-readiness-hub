@@ -2,6 +2,7 @@ import { redirect as redirectTo } from "next/navigation";
 import { brand } from "@/lib/brand";
 import { createClient } from "@/lib/supabase/server";
 import { signInWithPassword, sendMagicLink } from "./actions";
+import PasswordInput from "./PasswordInput";
 
 // Staff sign-in. Constitution II: this is the leadership team's login surface
 // (5–12 accounts per program). No sign-up, no "create account" — parents and
@@ -49,12 +50,7 @@ export default async function SignInPage({
         </label>
         <label>
           Password
-          <input
-            type="password"
-            name="password"
-            autoComplete="current-password"
-            required
-          />
+          <PasswordInput />
         </label>
         <button type="submit">Sign in</button>
       </form>

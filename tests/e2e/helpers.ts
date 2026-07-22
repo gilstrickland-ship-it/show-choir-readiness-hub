@@ -31,12 +31,15 @@ export const DEMO = {
   lunchShiftId: "d0000000-0000-4000-8000-000000005401", // Meal crew — Lunch
 } as const;
 
-// Test auth users (created idempotently in global-setup). Passwords match the
-// task contract; the director/board emails match seeded invited memberships.
+// Test auth users (created idempotently in global-setup, which force-resets
+// them to these passwords). The director/board emails match seeded invited
+// memberships.
 export const USERS = {
-  director: { email: "director@demo.example", password: "Passw0rd!demo" },
-  founder: { email: "fresh-founder@e2e.test", password: "Passw0rd!fresh" },
-  board: { email: "board@demo.example", password: "Passw0rd!board" },
+  director: { email: "director@demo.example", password: "test1234" },
+  founder: { email: "fresh-founder@e2e.test", password: "test1234" },
+  board: { email: "board@demo.example", password: "test1234" },
+  treasurer: { email: "treasurer@demo.example", password: "test1234" },
+  costume: { email: "costumes@demo.example", password: "test1234" },
 } as const;
 
 export interface E2EState {
@@ -93,7 +96,9 @@ export async function signIn(
     has: page.locator('input[name="password"]'),
   });
   await form.getByLabel("Email").fill(email);
-  await form.getByLabel("Password").fill(password);
+  // exact: true — the show/hide toggle's aria-label ("Show password") would
+  // otherwise also match getByLabel's substring semantics.
+  await form.getByLabel("Password", { exact: true }).fill(password);
   await form.getByRole("button", { name: "Sign in" }).click();
   // The action redirects to /launch, which routes onward — just leave /sign-in.
   await page.waitForURL((url) => !url.pathname.startsWith("/sign-in"), {

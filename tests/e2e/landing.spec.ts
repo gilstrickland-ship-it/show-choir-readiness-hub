@@ -16,7 +16,7 @@ test.describe("landing", () => {
     await signIn.click();
     await page.waitForURL("**/sign-in");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByLabel("Password")).toBeVisible();
+    await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   });
 
   test("an invalid token shows the link-expired copy, not a 404", async ({
