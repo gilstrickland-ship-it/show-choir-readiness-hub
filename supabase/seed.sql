@@ -101,13 +101,13 @@ insert into itineraries (id, program_id, competition_id, status, published_at, s
 on conflict do nothing;
 
 insert into itinerary_items (id, itinerary_id, program_id, starts_at, ends_at, kind, title, location, sort_order) values
-  ('d0000000-0000-4000-8000-000000002201','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',(current_date + 21) + time '06:30', (current_date + 21) + time '06:45','depart','Bus departs','Demo HS main lot',0),
-  ('d0000000-0000-4000-8000-000000002202','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',(current_date + 21) + time '08:00', (current_date + 21) + time '08:20','arrive','Arrive at venue','Riverside HS',1),
-  ('d0000000-0000-4000-8000-000000002203','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',(current_date + 21) + time '08:20', (current_date + 21) + time '09:00','homeroom','Homeroom / check-in','Room 118',2),
-  ('d0000000-0000-4000-8000-000000002204','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',(current_date + 21) + time '09:30', (current_date + 21) + time '10:00','warmup','Vocal warm-up','Choir room',3),
-  ('d0000000-0000-4000-8000-000000002205','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',(current_date + 21) + time '11:00', (current_date + 21) + time '11:25','perform','Varsity performance','Main auditorium',4),
-  ('d0000000-0000-4000-8000-000000002206','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',(current_date + 21) + time '12:00', (current_date + 21) + time '13:00','meal','Lunch','Cafeteria',5),
-  ('d0000000-0000-4000-8000-000000002207','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',(current_date + 21) + time '17:00', (current_date + 21) + time '18:00','awards','Awards ceremony','Main auditorium',6)
+  ('d0000000-0000-4000-8000-000000002201','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '06:30') at time zone 'America/Chicago', ((current_date + 21) + time '06:45') at time zone 'America/Chicago','depart','Bus departs','Demo HS main lot',0),
+  ('d0000000-0000-4000-8000-000000002202','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '08:00') at time zone 'America/Chicago', ((current_date + 21) + time '08:20') at time zone 'America/Chicago','arrive','Arrive at venue','Riverside HS',1),
+  ('d0000000-0000-4000-8000-000000002203','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '08:20') at time zone 'America/Chicago', ((current_date + 21) + time '09:00') at time zone 'America/Chicago','homeroom','Homeroom / check-in','Room 118',2),
+  ('d0000000-0000-4000-8000-000000002204','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '09:30') at time zone 'America/Chicago', ((current_date + 21) + time '10:00') at time zone 'America/Chicago','warmup','Vocal warm-up','Choir room',3),
+  ('d0000000-0000-4000-8000-000000002205','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '11:00') at time zone 'America/Chicago', ((current_date + 21) + time '11:25') at time zone 'America/Chicago','perform','Varsity performance','Main auditorium',4),
+  ('d0000000-0000-4000-8000-000000002206','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '12:00') at time zone 'America/Chicago', ((current_date + 21) + time '13:00') at time zone 'America/Chicago','meal','Lunch','Cafeteria',5),
+  ('d0000000-0000-4000-8000-000000002207','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '17:00') at time zone 'America/Chicago', ((current_date + 21) + time '18:00') at time zone 'America/Chicago','awards','Awards ceremony','Main auditorium',6)
 on conflict do nothing;
 
 -- --- Attendance for the competition (varsity 01–08; one absent) --------------
@@ -185,17 +185,17 @@ insert into budget_lines (id, program_id, category_id, name, planned_cents, sort
   ('d0000000-0000-4000-8000-000000005204','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000005104','Bus charters',450000,0)
 on conflict do nothing;
 
-insert into ledger_entries (id, program_id, season_id, entry_date, direction, amount_cents, budget_line_id, memo, counterparty) values
-  ('d0000000-0000-4000-8000-000000005301','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 30),'in', 1250000,'d0000000-0000-4000-8000-000000005201','Fall dues collected','Families'),
-  ('d0000000-0000-4000-8000-000000005302','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 20),'in',  620000,'d0000000-0000-4000-8000-000000005202','Fall fundraiser proceeds','Cookie dough sale'),
-  ('d0000000-0000-4000-8000-000000005303','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 14),'out', 540000,'d0000000-0000-4000-8000-000000005203','Opener dresses','Stage Threads Co'),
-  ('d0000000-0000-4000-8000-000000005304','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 5),'out',  420000,'d0000000-0000-4000-8000-000000005204','Bus deposit — invitational','Yellow Coach Lines')
+insert into ledger_entries (id, program_id, season_id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, memo, counterparty) values
+  ('d0000000-0000-4000-8000-000000005301','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 30),'in', 1250000,'d0000000-0000-4000-8000-000000005201',null,null,'Fall dues collected','Families'),
+  ('d0000000-0000-4000-8000-000000005302','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 20),'in',  620000,'d0000000-0000-4000-8000-000000005202',null,null,'Fall fundraiser proceeds','Cookie dough sale'),
+  ('d0000000-0000-4000-8000-000000005303','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 14),'out', 540000,'d0000000-0000-4000-8000-000000005203','d0000000-0000-4000-8000-000000000020',null,'Opener dresses','Stage Threads Co'),
+  ('d0000000-0000-4000-8000-000000005304','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',(current_date - 5),'out',  420000,'d0000000-0000-4000-8000-000000005204','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000040','Bus deposit — invitational','Yellow Coach Lines')
 on conflict do nothing;
 
 -- --- Volunteer shifts (attached to the competition) -------------------------
 insert into shifts (id, program_id, season_id, competition_id, title, starts_at, ends_at, needed_count, notes) values
   ('d0000000-0000-4000-8000-000000005401','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002','d0000000-0000-4000-8000-000000000020',
-   'Meal crew — Lunch',(current_date + 21) + time '11:30',(current_date + 21) + time '13:00',3,'Serve lunch in the cafeteria.'),
+   'Meal crew — Lunch',((current_date + 21) + time '11:30') at time zone 'America/Chicago',((current_date + 21) + time '13:00') at time zone 'America/Chicago',3,'Serve lunch in the cafeteria.'),
   ('d0000000-0000-4000-8000-000000005402','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002','d0000000-0000-4000-8000-000000000020',
-   'Load crew — call time',(current_date + 21) + time '06:00',(current_date + 21) + time '06:45',4,'Load risers and props onto the truck.')
+   'Load crew — call time',((current_date + 21) + time '06:00') at time zone 'America/Chicago',((current_date + 21) + time '06:45') at time zone 'America/Chicago',4,'Load risers and props onto the truck.')
 on conflict do nothing;

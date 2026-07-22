@@ -280,7 +280,7 @@ export default async function ItineraryPage({
       />
       <div className="page-title-row">
         <h1>Itinerary</h1>
-        {showGuide && (
+        {showGuide && canWrite && (
           <HelpDot
             href={`/${slug}/competitions/${competitionId}/itinerary?help=1`}
           />
@@ -294,6 +294,7 @@ export default async function ItineraryPage({
           selfPath={`/${slug}/competitions/${competitionId}/itinerary`}
           guideState={guideState}
           help={sp.help === "1"}
+          canWrite={canWrite}
         />
       )}
 
@@ -306,16 +307,22 @@ export default async function ItineraryPage({
         </p>
       )}
 
-      {changedSincePublish > 0 && (
-        <p className="alert-info">
-          You&apos;ve changed times since publishing. Families who open their
-          link see the update immediately — but nobody is notified
-          automatically. Send a quick announcement if the change matters.{" "}
-          <Link href={`/${slug}/comms/announcements`}>
-            Go to announcements →
-          </Link>
-        </p>
-      )}
+      {changedSincePublish > 0 &&
+        (canWrite ? (
+          <p className="alert-info">
+            You&apos;ve changed times since publishing. Families who open their
+            link see the update immediately — but nobody is notified
+            automatically. Send a quick announcement if the change matters.{" "}
+            <Link href={`/${slug}/comms/announcements`}>
+              Go to announcements →
+            </Link>
+          </p>
+        ) : (
+          <p className="alert-info">
+            Times have changed since this itinerary was published. Families who
+            open their link see the update immediately.
+          </p>
+        ))}
 
       {/* Broadcast share link (FR-002 / §8a) — read-only URL anyone can open. */}
       {canWrite && isPublished && (

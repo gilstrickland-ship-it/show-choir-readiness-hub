@@ -94,6 +94,7 @@ export default async function DashboardPage({
   let nextComp: NextComp | null = null;
   let readiness: ReadinessCheck[] = [];
   let readinessDone = 0;
+  let readinessTotal = 0;
   if (show.comp && seasonId) {
     const todayStr = new Date().toISOString().slice(0, 10);
     const { data: compRow } = await supabase
@@ -120,6 +121,7 @@ export default async function DashboardPage({
       nextComp = { ...c, firstStart: compReadiness.firstStart };
       readiness = compReadiness.checks;
       readinessDone = compReadiness.done;
+      readinessTotal = compReadiness.total;
     }
   }
 
@@ -423,7 +425,7 @@ export default async function DashboardPage({
                 <div className="readiness-head">
                   <p className="today-kicker">Comp readiness</p>
                   <span className="readiness-score">
-                    {readinessDone} / {readiness.length}
+                    {readinessDone} / {readinessTotal}
                   </span>
                 </div>
                 {readiness.map((c, i) => (

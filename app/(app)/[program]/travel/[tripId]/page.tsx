@@ -660,6 +660,7 @@ export default async function TripPage({
                       type="submit"
                       className="travel-chip"
                       style={{ opacity: isAbsent ? 0.6 : 1 }}
+                      aria-label={`Add ${studentName(s)} to ${fillGroup.label}`}
                     >
                       <span className="travel-chip-name">{studentName(s)}</span>
                       <span className="travel-chip-badges">
@@ -766,8 +767,11 @@ export default async function TripPage({
         <div className="stack" style={{ flex: "3 1 26rem", minWidth: "18rem" }}>
           {kindsToShow.map((kind) => {
             const kindGroups = groups.filter((g) => g.kind === kind);
+            // Anchor target so the post-add redirect lands back on this section
+            // (createGroup redirects to …#rooms / …#buses) instead of the top.
+            const sectionAnchor = kind === "room" ? "rooms" : "buses";
             return (
-              <div key={kind} className="stack">
+              <div key={kind} id={sectionAnchor} className="stack">
                 <h2>{GROUP_KIND_LABEL_PLURAL[kind]}</h2>
                 <div
                   style={{
@@ -898,6 +902,9 @@ export default async function TripPage({
                                   <button
                                     type="submit"
                                     className="linklike danger"
+                                    aria-label={`Remove ${
+                                      a.student ? studentName(a.student) : "student"
+                                    } from ${g.label}`}
                                   >
                                     remove
                                   </button>
@@ -1008,7 +1015,13 @@ export default async function TripPage({
                           <ul
                             style={{ listStyle: "none", padding: 0, margin: 0 }}
                           >
-                            {groupChaps.map((c) => (
+                            {groupChaps.map((c) => {
+                              const chapName = c.guardian_id
+                                ? (guardianName.get(c.guardian_id) ??
+                                  c.guardian?.name ??
+                                  "?")
+                                : (c.name_override ?? "?");
+                              return (
                               <li
                                 key={c.id}
                                 className="row-inline"
@@ -1017,13 +1030,7 @@ export default async function TripPage({
                                   gap: "0.5rem",
                                 }}
                               >
-                                <span>
-                                  {c.guardian_id
-                                    ? (guardianName.get(c.guardian_id) ??
-                                      c.guardian?.name ??
-                                      "?")
-                                    : (c.name_override ?? "?")}
-                                </span>
+                                <span>{chapName}</span>
                                 {canWrite && (
                                   <form action={removeChaperone}>
                                     <input
@@ -1049,13 +1056,15 @@ export default async function TripPage({
                                     <button
                                       type="submit"
                                       className="linklike danger"
+                                      aria-label={`Remove ${chapName} from ${g.label}`}
                                     >
                                       remove
                                     </button>
                                   </form>
                                 )}
                               </li>
-                            ))}
+                              );
+                            })}
                             {groupChaps.length === 0 && (
                               <li className="muted">None yet</li>
                             )}
