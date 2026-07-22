@@ -171,7 +171,10 @@ export async function createGroup(formData: FormData): Promise<void> {
   if (error) redirect(`/${slug}/travel/${tripId}?error=group`);
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}`);
+  // Land back on the section that was just added to (…#rooms / …#buses) rather
+  // than scrolled to the top — a director adding several groups stays in place.
+  const anchor = kind === "room" ? "rooms" : "buses";
+  redirect(`/${slug}/travel/${tripId}#${anchor}`);
 }
 
 export async function updateGroup(formData: FormData): Promise<void> {

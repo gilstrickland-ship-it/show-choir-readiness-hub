@@ -868,7 +868,7 @@ export default async function CompetitionCommandCenter({
             <div className="comp-readiness-head">
               <h3>Readiness</h3>
               <span className="comp-readiness-score">
-                {readiness.done} / {readiness.checks.length}
+                {readiness.done} / {readiness.total}
               </span>
             </div>
             {readiness.checks.map((c, i) => (

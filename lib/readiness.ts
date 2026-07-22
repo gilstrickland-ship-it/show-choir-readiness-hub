@@ -14,7 +14,7 @@ import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 // (id/name/date/host_school); this fills in itinerary, attendance, shift, meal,
 // and packet state and turns it into UI-ready rows.
 
-export type ReadinessTone = "ok" | "warn" | "alert";
+export type ReadinessTone = "ok" | "warn" | "alert" | "neutral";
 
 export interface ReadinessCheck {
   ok: boolean;
@@ -22,6 +22,10 @@ export interface ReadinessCheck {
   label: string;
   href: string;
   action: string;
+  // A neutral check is informational and not-applicable-yet (e.g. a comp with no
+  // volunteer shifts planned): it renders with a gray dot and is excluded from
+  // the readiness denominator so it neither credits nor penalises the score.
+  neutral?: boolean;
 }
 
 // The comp a readiness pass runs against — just the identity fields the caller
@@ -52,6 +56,9 @@ export interface CompReadiness {
   // UI-ready rows + how many are green.
   checks: ReadinessCheck[];
   done: number;
+  // Denominator for the score: non-neutral checks only (neutral rows, like a
+  // comp with no volunteer shifts planned, don't count toward the total).
+  total: number;
 }
 
 // Load the readiness state + build the five checks for one competition.
@@ -108,6 +115,7 @@ export async function loadCompReadiness(
 
   // ---- Volunteer shifts: open = needed − confirmed --------------------------
   let openSlots = 0;
+  let shiftsPlanned = false;
   if (showShifts) {
     const { data: shiftRows } = await supabase
       .from("shifts")
@@ -115,6 +123,7 @@ export async function loadCompReadiness(
       .eq("program_id", programId)
       .eq("competition_id", comp.id);
     const shifts = (shiftRows as { id: string; needed_count: number }[] | null) ?? [];
+    shiftsPlanned = shifts.length > 0;
     if (shifts.length > 0) {
       const { data: signupRows } = await supabase
         .from("shift_signups")
@@ -178,16 +187,30 @@ export async function loadCompReadiness(
   });
 
   if (showShifts) {
-    checks.push({
-      ok: openSlots === 0,
-      tone: openSlots === 0 ? "ok" : "warn",
-      label:
-        openSlots === 0
-          ? "Volunteer shifts covered"
-          : `Volunteer shifts · ${openSlots} slot${openSlots === 1 ? "" : "s"} open`,
-      href: `${base}/comms/shifts`,
-      action: openSlots === 0 ? "View" : "Fill shifts",
-    });
+    if (!shiftsPlanned) {
+      // No shifts attached to this comp yet — green would falsely read as
+      // "covered" (the section below says none exist). Show a neutral, non-
+      // counting row: not-applicable-yet, neither credited nor penalised.
+      checks.push({
+        ok: false,
+        tone: "neutral",
+        label: "No volunteer shifts planned",
+        href: `${base}/comms/shifts`,
+        action: "Add shifts",
+        neutral: true,
+      });
+    } else {
+      checks.push({
+        ok: openSlots === 0,
+        tone: openSlots === 0 ? "ok" : "warn",
+        label:
+          openSlots === 0
+            ? "Volunteer shifts covered"
+            : `Volunteer shifts · ${openSlots} slot${openSlots === 1 ? "" : "s"} open`,
+        href: `${base}/comms/shifts`,
+        action: openSlots === 0 ? "View" : "Fill shifts",
+      });
+    }
   }
 
   checks.push({
@@ -222,6 +245,7 @@ export async function loadCompReadiness(
   }
 
   const done = checks.filter((c) => c.ok).length;
+  const total = checks.filter((c) => !c.neutral).length;
 
   return {
     itinPublished,
@@ -232,5 +256,6 @@ export async function loadCompReadiness(
     packetStatus,
     checks,
     done,
+    total,
   };
 }
