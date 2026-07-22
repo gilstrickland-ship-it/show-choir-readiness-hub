@@ -91,9 +91,17 @@ insert into ensemble_members (id, program_id, season_id, ensemble_id, student_id
 on conflict do nothing;
 
 -- --- Competition (upcoming) + published itinerary ---------------------------
-insert into competitions (id, program_id, season_id, ensemble_id, name, host_school, venue_address, date, status) values
-  ('d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002','d0000000-0000-4000-8000-000000000010',
+-- Multi-ensemble flagship (Feature 004): the Central Illinois Invitational is one
+-- competition that BOTH demo ensembles attend — Varsity Mixed + Prep — so
+-- attendance, meals, and travel span all 12 students.
+insert into competitions (id, program_id, season_id, name, host_school, venue_address, date, status) values
+  ('d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000002',
    'Central Illinois Invitational','Riverside High School','1200 Riverside Dr, Springfield, IL',(current_date + 21),'confirmed')
+on conflict do nothing;
+
+insert into competition_ensembles (id, program_id, competition_id, ensemble_id) values
+  ('d0000000-0000-4000-8000-000000000022','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000010'),
+  ('d0000000-0000-4000-8000-000000000023','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000011')
 on conflict do nothing;
 
 insert into itineraries (id, program_id, competition_id, status, published_at, source) values
@@ -110,7 +118,8 @@ insert into itinerary_items (id, itinerary_id, program_id, starts_at, ends_at, k
   ('d0000000-0000-4000-8000-000000002207','d0000000-0000-4000-8000-000000000021','d0000000-0000-4000-8000-000000000001',((current_date + 21) + time '17:00') at time zone 'America/Chicago', ((current_date + 21) + time '18:00') at time zone 'America/Chicago','awards','Awards ceremony','Main auditorium',6)
 on conflict do nothing;
 
--- --- Attendance for the competition (varsity 01–08; one absent) --------------
+-- --- Attendance for the competition (all 12: varsity 01–08 + prep 09–0c; one
+-- --- varsity crew absent) ---------------------------------------------------
 insert into attendance (id, program_id, competition_id, student_id, status) values
   ('d0000000-0000-4000-8000-000000000401','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000101','expected'),
   ('d0000000-0000-4000-8000-000000000402','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000102','expected'),
@@ -119,7 +128,11 @@ insert into attendance (id, program_id, competition_id, student_id, status) valu
   ('d0000000-0000-4000-8000-000000000405','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000105','expected'),
   ('d0000000-0000-4000-8000-000000000406','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000106','expected'),
   ('d0000000-0000-4000-8000-000000000407','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000107','expected'),
-  ('d0000000-0000-4000-8000-000000000408','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000108','absent')
+  ('d0000000-0000-4000-8000-000000000408','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000108','absent'),
+  ('d0000000-0000-4000-8000-000000000409','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-000000000109','expected'),
+  ('d0000000-0000-4000-8000-00000000040a','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-00000000010a','expected'),
+  ('d0000000-0000-4000-8000-00000000040b','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-00000000010b','expected'),
+  ('d0000000-0000-4000-8000-00000000040c','d0000000-0000-4000-8000-000000000001','d0000000-0000-4000-8000-000000000020','d0000000-0000-4000-8000-00000000010c','expected')
 on conflict do nothing;
 
 -- --- Costumes: one set, dresses assigned to varsity performers --------------

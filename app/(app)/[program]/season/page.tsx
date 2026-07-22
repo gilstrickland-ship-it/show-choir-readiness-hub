@@ -4,7 +4,11 @@ import { getTenantContext } from "@/lib/tenant";
 import { createClient } from "@/lib/supabase/server";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { SETTINGS_ROLES } from "@/lib/nav";
-import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
+import {
+  COMPETITION_WRITE_ROLES,
+  competitionEnsembleMap,
+  eventEnsembleMap,
+} from "@/lib/competitions";
 import { EVENTS_WRITE_ROLES } from "@/lib/events";
 import { TRAVEL_WRITE_ROLES } from "@/lib/travel";
 import { loadCompReadiness } from "@/lib/readiness";
@@ -180,7 +184,7 @@ export default async function SeasonPage({
   if (flags.competitions && seasonId) {
     const { data: compData } = await supabase
       .from("competitions")
-      .select("id, name, date, host_school, status, ensemble_id")
+      .select("id, name, date, host_school, status")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .order("date", { ascending: true, nullsFirst: false });
@@ -192,11 +196,23 @@ export default async function SeasonPage({
             date: string | null;
             host_school: string | null;
             status: "planned" | "confirmed" | "done";
-            ensemble_id: string | null;
           }[]
         | null) ?? [];
 
     undatedCompCount = comps.filter((c) => !c.date).length;
+
+    // Participating ensembles per competition (Feature 004 junction).
+    const compEnsembles = await competitionEnsembleMap(
+      supabase,
+      program.id,
+      comps.map((c) => c.id),
+    );
+    const compEnsembleLabel = (id: string): string | null => {
+      const names = (compEnsembles.get(id) ?? [])
+        .map((eid) => ensembleName.get(eid))
+        .filter(Boolean);
+      return names.length ? names.join(", ") : null;
+    };
 
     // Results for done comps.
     const placement = new Map<string, string | null>();
@@ -242,7 +258,7 @@ export default async function SeasonPage({
       if (!c.date) continue; // no spine position without a date
       const instant = zonedWallToUtc(`${c.date}T00:00`, tz);
       if (!instant) continue;
-      const ens = c.ensemble_id ? ensembleName.get(c.ensemble_id) : null;
+      const ens = compEnsembleLabel(c.id);
       const meta = [c.host_school, ens].filter(Boolean).join(" · ") || "Host TBD";
       items.push({
         key: `comp-${c.id}`,
@@ -275,9 +291,7 @@ export default async function SeasonPage({
       if (target && !Number.isNaN(target.getTime())) {
         nextCompDays = countdownDays(target, now);
       }
-      const ens = upcoming.ensemble_id
-        ? ensembleName.get(upcoming.ensemble_id)
-        : null;
+      const ens = compEnsembleLabel(upcoming.id);
       nextCompMeta = [
         readiness.firstStart
           ? `Call ${formatTimeInTz(readiness.firstStart, tz)}`
@@ -294,27 +308,36 @@ export default async function SeasonPage({
   if (flags.events && seasonId) {
     const { data: eventData } = await supabase
       .from("events")
-      .select("id, title, starts_at, kind, location, ensemble_id")
+      .select("id, title, starts_at, kind, location")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .not("starts_at", "is", null)
       .order("starts_at", { ascending: true });
-    for (const e of (eventData as
-      | {
-          id: string;
-          title: string;
-          starts_at: string;
-          kind: string;
-          location: string | null;
-          ensemble_id: string | null;
-        }[]
-      | null) ?? []) {
+    const eventRows =
+      (eventData as
+        | {
+            id: string;
+            title: string;
+            starts_at: string;
+            kind: string;
+            location: string | null;
+          }[]
+        | null) ?? [];
+    // Targeted ensembles per event (Feature 004 junction; empty = whole program).
+    const evEnsembles = await eventEnsembleMap(
+      supabase,
+      program.id,
+      eventRows.map((e) => e.id),
+    );
+    for (const e of eventRows) {
       const instant = new Date(e.starts_at);
       if (Number.isNaN(instant.getTime())) continue;
       const tag = EVENT_TAG[e.kind] ?? EVENT_TAG.other;
-      const ens = e.ensemble_id
-        ? ensembleName.get(e.ensemble_id)
-        : "whole program";
+      const evEnsIds = evEnsembles.get(e.id) ?? [];
+      const ens =
+        evEnsIds.length === 0
+          ? "whole program"
+          : evEnsIds.map((id) => ensembleName.get(id) ?? "?").join(", ");
       const meta = [e.location, formatTimeInTz(e.starts_at, tz), ens]
         .filter(Boolean)
         .join(" · ");

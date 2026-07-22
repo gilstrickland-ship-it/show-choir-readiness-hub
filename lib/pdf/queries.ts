@@ -379,9 +379,12 @@ interface MealCompBase {
 }
 
 // Per-ensemble meal headcount for one competition. Attendance is grouped by the
-// ensemble each student belongs to in the competition's season (a competition
-// usually targets one ensemble, but grouping keeps whole-program events correct);
-// students with no ensemble membership bucket under "Unassigned".
+// PARTICIPATING ensemble each student belongs to (Feature 004): a competition can
+// include several ensembles, so grouping is restricted to that competition's
+// junction so a student's unrelated membership never mis-buckets them. A double-
+// rostered student counts once in the total (attendance is one row per student)
+// and buckets under their first participating ensemble; students with no
+// participating membership fall under "Unassigned".
 export async function loadMealData(
   supabase: SupabaseClient,
   competitionId: string,
@@ -393,6 +396,16 @@ export async function loadMealData(
     .maybeSingle();
   const comp = compRow as MealCompBase | null;
   if (!comp) return null;
+
+  // Participating ensembles (junction) — the grouping key set.
+  const { data: ceRows } = await supabase
+    .from("competition_ensembles")
+    .select("ensemble_id")
+    .eq("program_id", comp.program_id)
+    .eq("competition_id", competitionId);
+  const participatingIds = ((ceRows as { ensemble_id: string }[] | null) ?? []).map(
+    (r) => r.ensemble_id,
+  );
 
   const { data: progRow } = await supabase
     .from("programs")
@@ -418,12 +431,13 @@ export async function loadMealData(
   const studentIds = attendance.map((a) => a.student_id);
   const ensembleByStudent = new Map<string, string>();
   const ensembleNames = new Map<string, string>();
-  if (studentIds.length > 0) {
+  if (studentIds.length > 0 && participatingIds.length > 0) {
     const { data: mems } = await supabase
       .from("ensemble_members")
       .select("student_id, ensemble_id, ensembles(name)")
       .eq("program_id", comp.program_id)
       .eq("season_id", comp.season_id)
+      .in("ensemble_id", participatingIds)
       .in("student_id", studentIds);
     for (const m of (mems as {
       student_id: string;

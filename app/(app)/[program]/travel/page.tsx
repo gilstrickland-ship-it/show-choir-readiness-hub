@@ -24,7 +24,6 @@ interface CompRow {
   id: string;
   name: string;
   date: string | null;
-  ensemble_id: string | null;
 }
 
 function dateOnly(d: string | null, tz: string): string {
@@ -60,7 +59,7 @@ export default async function TravelPage({
 
     const { data: compData } = await supabase
       .from("competitions")
-      .select("id, name, date, ensemble_id")
+      .select("id, name, date")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
       .order("date", { ascending: true, nullsFirst: false });

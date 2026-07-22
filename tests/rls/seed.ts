@@ -58,8 +58,13 @@ insert into guardians (id, program_id, student_id, name, email) values
 insert into ensemble_members (id, program_id, season_id, ensemble_id, student_id, role) values
   ('${p.ensembleMember}', '${p.program}', '${p.seasonActive}', '${p.ensemble}', '${p.student}', 'performer');
 
-insert into competitions (id, program_id, season_id, ensemble_id, name, status) values
-  ('${p.competition}', '${p.program}', '${p.seasonActive}', '${p.ensemble}', '${prefix} Invitational', 'confirmed');
+insert into competitions (id, program_id, season_id, name, status) values
+  ('${p.competition}', '${p.program}', '${p.seasonActive}', '${prefix} Invitational', 'confirmed');
+
+-- Multi-ensemble participation (Feature 004): the competition includes the
+-- program's ensemble via the junction (replaces the old competitions.ensemble_id).
+insert into competition_ensembles (id, program_id, competition_id, ensemble_id) values
+  ('${p.competitionEnsemble}', '${p.program}', '${p.competition}', '${p.ensemble}');
 
 insert into competition_results (id, program_id, competition_id, placement) values
   ('${p.competitionResult}', '${p.program}', '${p.competition}', 'Grand Champion');
@@ -84,6 +89,11 @@ insert into absence_requests (id, program_id, competition_id, student_id, guardi
 
 insert into events (id, program_id, season_id, title, kind) values
   ('${p.event}', '${p.program}', '${p.seasonActive}', 'Rehearsal', 'rehearsal');
+
+-- Event targeting (Feature 004): this event targets the program's ensemble via
+-- the junction. Zero rows would mean whole-program; one row = that subset.
+insert into event_ensembles (id, program_id, event_id, ensemble_id) values
+  ('${p.eventEnsemble}', '${p.program}', '${p.event}', '${p.ensemble}');
 
 -- Host-mode (Wave I): one hosted invitational + a visiting school + a slot, so
 -- the isolation sweep has cross-tenant rows for all three hosting tables. Only
@@ -181,8 +191,8 @@ function seedArchivedExtrasSql(p: ProgramIds): string {
 insert into seasons (id, program_id, label, is_active, archived_at) values
   ('${p.seasonArchived}', '${p.program}', '2024-25', false, now());
 
-insert into competitions (id, program_id, season_id, ensemble_id, name, status) values
-  ('${p.competitionArchived}', '${p.program}', '${p.seasonArchived}', '${p.ensemble}', 'Archived Invitational', 'done');
+insert into competitions (id, program_id, season_id, name, status) values
+  ('${p.competitionArchived}', '${p.program}', '${p.seasonArchived}', 'Archived Invitational', 'done');
 
 insert into costume_sets (id, program_id, season_id, ensemble_id, name) values
   ('${p.costumeSetArchived}', '${p.program}', '${p.seasonArchived}', '${p.ensemble}', 'Archived Opener');

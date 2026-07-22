@@ -9,6 +9,8 @@ import {
   COMPETITION_STATUSES,
   COMMON_CAPTIONS,
   seedAttendance,
+  competitionEnsembleIds,
+  competitionRoster,
   type CompetitionStatus,
 } from "@/lib/competitions";
 import { flag, type FlaggableProgram } from "@/lib/flags";
@@ -28,8 +30,22 @@ function nullable(fd: FormData, key: string): string | null {
   return v || null;
 }
 
-// Create a competition, then idempotently seed attendance for its ensemble+season
-// (§5, invariant §9.5). ensemble is optional at create; no ensemble ⇒ no seed.
+// Selected ensemble ids from a checkbox group (all `ensemble_ids` values),
+// deduplicated and non-empty entries only.
+function ensembleIdsFrom(fd: FormData): string[] {
+  return Array.from(
+    new Set(
+      fd
+        .getAll("ensemble_ids")
+        .map((v) => String(v).trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+// Create a competition with one OR MORE participating ensembles (Feature 004),
+// then idempotently seed attendance for the union of their active-season members
+// (§5, invariant §9.5). At least one ensemble is required (research D3).
 export async function createCompetition(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -41,10 +57,10 @@ export async function createCompetition(formData: FormData): Promise<void> {
   if (!seasonId) redirect(`/${slug}/competitions?error=season`);
 
   const status = str(formData, "status") as CompetitionStatus;
-  const ensembleId = nullable(formData, "ensemble_id");
-  // Ensemble is required going forward (F6): a null-ensemble competition can
-  // never seed attendance/meals/checkout. The column stays nullable for old rows.
-  if (!ensembleId) redirect(`/${slug}/competitions?error=ensemble`);
+  const ensembleIds = ensembleIdsFrom(formData);
+  // ≥1 ensemble required (F6, D3): a competition with no ensembles can never seed
+  // attendance/meals/checkout. Enforced here in the server action.
+  if (ensembleIds.length === 0) redirect(`/${slug}/competitions?error=ensemble`);
 
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -52,7 +68,6 @@ export async function createCompetition(formData: FormData): Promise<void> {
     .insert({
       program_id: programId,
       season_id: seasonId,
-      ensemble_id: ensembleId,
       name,
       host_school: nullable(formData, "host_school"),
       venue_address: nullable(formData, "venue_address"),
@@ -65,10 +80,21 @@ export async function createCompetition(formData: FormData): Promise<void> {
 
   if (error || !data) redirect(`/${slug}/competitions?error=save`);
 
+  const { error: junctionErr } = await supabase
+    .from("competition_ensembles")
+    .insert(
+      ensembleIds.map((ensemble_id) => ({
+        program_id: programId,
+        competition_id: data.id,
+        ensemble_id,
+      })),
+    );
+  if (junctionErr) redirect(`/${slug}/competitions?error=save`);
+
   await seedAttendance(supabase, {
     programId,
     competitionId: data.id,
-    ensembleId,
+    ensembleIds,
     seasonId,
   });
 
@@ -76,9 +102,13 @@ export async function createCompetition(formData: FormData): Promise<void> {
   redirect(`/${slug}/competitions/${data.id}?created=1`);
 }
 
-// Update core fields. Changing the ensemble after creation reseeds attendance and
-// requires explicit confirmation (invariant §9.2) — the detail page posts
-// confirm_ensemble=1 once the director acknowledges the reseed.
+// Update core fields + the participating-ensemble set (Feature 004, generalizing
+// invariant §9.2). Adding an ensemble seeds only its members; REMOVING one
+// requires explicit confirmation (the detail page posts confirm_ensemble=1 once
+// the director acknowledges) — on confirm, attendance is removed ONLY for
+// students in no remaining ensemble, and their comp-scoped costume checkouts are
+// released (mirroring the deactivation invariant, Constitution X). Double-
+// rostered students are untouched.
 export async function updateCompetition(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -89,28 +119,31 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   const name = str(formData, "name");
   if (!name) redirect(`/${slug}/competitions/${competitionId}?error=name`);
 
-  const newEnsemble = nullable(formData, "ensemble_id");
-  // Ensemble is required going forward (F6) — the Overview edit form now requires
-  // it, matching the create form.
-  if (!newEnsemble) redirect(`/${slug}/competitions/${competitionId}?error=ensemble`);
-  const currentEnsemble = nullable(formData, "current_ensemble_id");
+  const newEnsembleIds = ensembleIdsFrom(formData);
+  // ≥1 ensemble required (F6, D3).
+  if (newEnsembleIds.length === 0)
+    redirect(`/${slug}/competitions/${competitionId}?error=ensemble`);
   const confirmed = str(formData, "confirm_ensemble") === "1";
-  const ensembleChanged = newEnsemble !== currentEnsemble;
 
-  // Guard: ensemble change without confirmation → bounce to the confirm prompt.
-  if (ensembleChanged && !confirmed) {
-    const pending = newEnsemble ?? "";
+  const supabase = await createClient();
+
+  const currentEnsembleIds = await competitionEnsembleIds(supabase, competitionId);
+  const currentSet = new Set(currentEnsembleIds);
+  const newSet = new Set(newEnsembleIds);
+  const added = newEnsembleIds.filter((id) => !currentSet.has(id));
+  const removed = currentEnsembleIds.filter((id) => !newSet.has(id));
+
+  // Guard: removing an ensemble drops students from eligibility — confirm first.
+  if (removed.length > 0 && !confirmed) {
     redirect(
-      `/${slug}/competitions/${competitionId}?confirm=ensemble&pending_ensemble=${encodeURIComponent(pending)}`,
+      `/${slug}/competitions/${competitionId}?confirm=ensemble&pending_ensembles=${encodeURIComponent(newEnsembleIds.join(","))}`,
     );
   }
 
   const status = str(formData, "status") as CompetitionStatus;
-  const supabase = await createClient();
   const { error } = await supabase
     .from("competitions")
     .update({
-      ensemble_id: newEnsemble,
       name,
       host_school: nullable(formData, "host_school"),
       venue_address: nullable(formData, "venue_address"),
@@ -123,18 +156,106 @@ export async function updateCompetition(formData: FormData): Promise<void> {
 
   if (error) redirect(`/${slug}/competitions/${competitionId}?error=save`);
 
-  // Reseed when the ensemble changed — the eligibility list is now different.
-  if (ensembleChanged) {
+  // Apply junction changes.
+  if (added.length > 0) {
+    await supabase.from("competition_ensembles").insert(
+      added.map((ensemble_id) => ({
+        program_id: programId,
+        competition_id: competitionId,
+        ensemble_id,
+      })),
+    );
+  }
+  if (removed.length > 0) {
+    await supabase
+      .from("competition_ensembles")
+      .delete()
+      .eq("program_id", programId)
+      .eq("competition_id", competitionId)
+      .in("ensemble_id", removed);
+  }
+
+  // Seed attendance for newly added ensembles (existing rows untouched).
+  if (added.length > 0) {
     await seedAttendance(supabase, {
       programId,
       competitionId,
-      ensembleId: newEnsemble,
+      ensembleIds: added,
       seasonId,
+    });
+  }
+
+  // Removal cleanup: drop eligibility for students in NO remaining ensemble.
+  if (removed.length > 0 && seasonId) {
+    await releaseRemovedStudents(supabase, {
+      programId,
+      competitionId,
+      seasonId,
+      removedEnsembleIds: removed,
+      remainingEnsembleIds: newEnsembleIds,
     });
   }
 
   revalidatePath(`/${slug}/competitions/${competitionId}`);
   redirect(`/${slug}/competitions/${competitionId}?saved=1`);
+}
+
+// Remove attendance + release comp-scoped costume checkouts for students who
+// belonged to a removed ensemble but are members of no remaining ensemble
+// (double-rostered students survive). Mirrors the deactivation invariant.
+async function releaseRemovedStudents(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  args: {
+    programId: string;
+    competitionId: string;
+    seasonId: string;
+    removedEnsembleIds: string[];
+    remainingEnsembleIds: string[];
+  },
+): Promise<void> {
+  const { programId, competitionId, seasonId, removedEnsembleIds, remainingEnsembleIds } =
+    args;
+
+  const removedStudents = await competitionRoster(supabase, {
+    programId,
+    seasonId,
+    ensembleIds: removedEnsembleIds,
+  });
+  const remainingStudents = new Set(
+    await competitionRoster(supabase, {
+      programId,
+      seasonId,
+      ensembleIds: remainingEnsembleIds,
+    }),
+  );
+  const toRemove = removedStudents.filter((id) => !remainingStudents.has(id));
+  if (toRemove.length === 0) return;
+
+  // Release their comp-scoped costume checkouts (assignment-backed rows whose
+  // student is being removed). Direct piece checkouts have no student and stay.
+  const { data: assignRows } = await supabase
+    .from("costume_assignments")
+    .select("id")
+    .eq("program_id", programId)
+    .eq("season_id", seasonId)
+    .in("student_id", toRemove);
+  const assignmentIds = ((assignRows as { id: string }[] | null) ?? []).map((a) => a.id);
+  if (assignmentIds.length > 0) {
+    await supabase
+      .from("costume_checkouts")
+      .delete()
+      .eq("program_id", programId)
+      .eq("competition_id", competitionId)
+      .in("assignment_id", assignmentIds);
+  }
+
+  // Delete this competition's attendance rows for the removed students.
+  await supabase
+    .from("attendance")
+    .delete()
+    .eq("program_id", programId)
+    .eq("competition_id", competitionId)
+    .in("student_id", toRemove);
 }
 
 // Manual "reseed" action (idempotent; safe to re-run when the roster changes).
@@ -143,11 +264,11 @@ export async function reseedAttendance(formData: FormData): Promise<void> {
   const slug = str(formData, "slug");
   const competitionId = str(formData, "competitionId");
   const seasonId = nullable(formData, "seasonId");
-  const ensembleId = nullable(formData, "ensemble_id");
   await requireRole(programId, COMPETITION_WRITE_ROLES);
 
   const supabase = await createClient();
-  await seedAttendance(supabase, { programId, competitionId, ensembleId, seasonId });
+  const ensembleIds = await competitionEnsembleIds(supabase, competitionId);
+  await seedAttendance(supabase, { programId, competitionId, ensembleIds, seasonId });
 
   revalidatePath(`/${slug}/competitions/${competitionId}`);
   redirect(`/${slug}/competitions/${competitionId}?reseeded=1`);

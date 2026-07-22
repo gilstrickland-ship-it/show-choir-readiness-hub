@@ -22,7 +22,6 @@ interface CompetitionRow {
   id: string;
   name: string;
   date: string | null;
-  ensemble_id: string | null;
   season_id: string;
 }
 
@@ -101,7 +100,7 @@ export default async function CheckoutPage({
   if (season) {
     const { data } = await supabase
       .from("competitions")
-      .select("id, name, date, ensemble_id, season_id")
+      .select("id, name, date, season_id")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
       .order("date", { ascending: true });
@@ -300,6 +299,7 @@ async function CheckoutGrid({
                     type="submit"
                     className={r.state === "out" ? "secondary" : undefined}
                     style={{ minHeight: "3rem", minWidth: "8rem", fontSize: "1rem" }}
+                    aria-label={`${r.state === "out" ? "Check in" : "Check out"}: ${r.primary} — ${r.secondary} (now: ${STATE_LABEL[r.state]})`}
                   >
                     {r.state === "out" ? "Check in" : "Check out"}
                     <br />

@@ -29,21 +29,30 @@ async function guardianMayAccessCompetition(
 
   const { data: comp } = await supabase
     .from("competitions")
-    .select("id, ensemble_id, season_id")
+    .select("id, season_id")
     .eq("id", args.competitionId)
     .eq("program_id", args.programId)
     .maybeSingle();
-  const competition = comp as
-    | { id: string; ensemble_id: string | null; season_id: string }
-    | null;
-  if (!competition || !competition.ensemble_id) return false;
+  const competition = comp as { id: string; season_id: string } | null;
+  if (!competition) return false;
+
+  // A competition can include several ensembles (Feature 004) — read the junction.
+  const { data: ceRows } = await supabase
+    .from("competition_ensembles")
+    .select("ensemble_id")
+    .eq("program_id", args.programId)
+    .eq("competition_id", competition.id);
+  const ensembleIds = ((ceRows as { ensemble_id: string }[] | null) ?? []).map(
+    (r) => r.ensemble_id,
+  );
+  if (ensembleIds.length === 0) return false;
 
   const { data: mems } = await supabase
     .from("ensemble_members")
     .select("student_id")
     .eq("program_id", args.programId)
     .eq("season_id", competition.season_id)
-    .eq("ensemble_id", competition.ensemble_id)
+    .in("ensemble_id", ensembleIds)
     .in("student_id", args.studentIds)
     .limit(1);
   return ((mems as { student_id: string }[] | null) ?? []).length > 0;

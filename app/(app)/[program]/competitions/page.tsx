@@ -2,12 +2,18 @@ import Link from "next/link";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { COMPETITION_WRITE_ROLES, ATTENDANCE_WRITE_ROLES } from "@/lib/competitions";
+import {
+  COMPETITION_WRITE_ROLES,
+  ATTENDANCE_WRITE_ROLES,
+  competitionEnsembleMap,
+} from "@/lib/competitions";
 import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import { createCompetition, attachPacket } from "./actions";
 
 // Competitions list + create (§5, T012). All roles read (the flag is the gate);
 // director/admin create. Dates render in the program timezone (Constitution VII).
+// A competition can include one OR MORE ensembles (Feature 004) — participation
+// lives in the competition_ensembles junction.
 
 interface CompRow {
   id: string;
@@ -15,7 +21,6 @@ interface CompRow {
   host_school: string | null;
   date: string | null;
   status: "planned" | "confirmed" | "done";
-  ensemble_id: string | null;
 }
 
 interface EnsembleRow {
@@ -45,7 +50,7 @@ export default async function CompetitionsPage({
   const supabase = await createClient();
   const { data: compData } = await supabase
     .from("competitions")
-    .select("id, name, host_school, date, status, ensemble_id")
+    .select("id, name, host_school, date, status")
     .eq("program_id", program.id)
     .order("date", { ascending: true, nullsFirst: false });
   const competitions = (compData as CompRow[] | null) ?? [];
@@ -58,6 +63,13 @@ export default async function CompetitionsPage({
     .order("sort_order", { ascending: true });
   const ensembles = (ensData as EnsembleRow[] | null) ?? [];
   for (const e of ensembles) ensembleName.set(e.id, e.name);
+
+  // Participating ensembles per competition (junction, one batched read).
+  const compEnsembles = await competitionEnsembleMap(
+    supabase,
+    program.id,
+    competitions.map((c) => c.id),
+  );
 
   // Pending parent absence requests → review-queue nudge for staff who can edit
   // attendance.
@@ -146,7 +158,7 @@ export default async function CompetitionsPage({
       )}
       {error === "name" && <p className="alert-error">A competition needs a name.</p>}
       {error === "ensemble" && (
-        <p className="alert-error">Pick an ensemble for the competition.</p>
+        <p className="alert-error">Pick at least one ensemble for the competition.</p>
       )}
       {error === "season" && (
         <p className="alert-error">Activate a season before adding competitions.</p>
@@ -165,7 +177,7 @@ export default async function CompetitionsPage({
             <th>Name</th>
             <th>Date</th>
             <th>Host</th>
-            <th>Ensemble</th>
+            <th>Ensembles</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -178,8 +190,14 @@ export default async function CompetitionsPage({
               <td>{c.date ? formatDateInTz(`${c.date}T12:00:00Z`, program.timezone) : "—"}</td>
               <td>{c.host_school ?? "—"}</td>
               <td>
-                {c.ensemble_id ? (
-                  <span className="chip">{ensembleName.get(c.ensemble_id) ?? "?"}</span>
+                {(compEnsembles.get(c.id) ?? []).length > 0 ? (
+                  <span className="row-inline" style={{ gap: "0.3rem", flexWrap: "wrap" }}>
+                    {(compEnsembles.get(c.id) ?? []).map((eid) => (
+                      <span className="chip" key={eid}>
+                        {ensembleName.get(eid) ?? "?"}
+                      </span>
+                    ))}
+                  </span>
                 ) : (
                   <span className="muted">—</span>
                 )}
@@ -227,19 +245,6 @@ export default async function CompetitionsPage({
                 <input type="date" name="date" />
               </label>
               <label>
-                Ensemble
-                <select name="ensemble_id" defaultValue="" required>
-                  <option value="" disabled>
-                    — choose ensemble —
-                  </option>
-                  {ensembles.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
                 Status
                 <select name="status" defaultValue="planned">
                   <option value="planned">Planned</option>
@@ -248,6 +253,17 @@ export default async function CompetitionsPage({
                 </select>
               </label>
             </div>
+            <fieldset className="stack">
+              <legend>Ensembles</legend>
+              <div className="row-inline" style={{ flexWrap: "wrap" }}>
+                {ensembles.map((e) => (
+                  <label key={e.id} className="row-inline">
+                    <input type="checkbox" name="ensemble_ids" value={e.id} />
+                    {e.name}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="row-inline">
               <label>
                 Host school
@@ -263,12 +279,14 @@ export default async function CompetitionsPage({
               </label>
             </div>
             <p className="muted">
-              Two groups performing at the same event? Create one competition per
-              ensemble.
+              Sending more than one group? Select every ensemble attending — one
+              competition covers them all, and attendance, meals, and travel span
+              the whole roster.
             </p>
             <p className="muted">
-              Creating a competition seeds attendance (everyone expected) for the
-              selected ensemble.
+              Creating a competition seeds attendance (everyone expected) for every
+              member of every selected ensemble; a student in two of them is counted
+              once.
             </p>
             <button type="submit">Add competition</button>
           </form>

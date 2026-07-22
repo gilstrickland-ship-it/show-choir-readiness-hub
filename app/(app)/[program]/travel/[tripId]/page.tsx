@@ -11,6 +11,7 @@ import {
   relevantKinds,
   type TravelGroupKind,
 } from "@/lib/travel";
+import { competitionEnsembleIds } from "@/lib/competitions";
 import {
   formatDateInTz,
   formatTimeInTz,
@@ -129,18 +130,17 @@ export default async function TripPage({
   const trip = tripData as TripRow | null;
   if (!trip) notFound();
 
-  // Linked competition name (if any).
+  // Linked competition name (if any) + its participating ensembles (Feature 004).
   let compName: string | null = null;
-  let compEnsembleId: string | null = null;
+  let compEnsembleIds: string[] = [];
   if (trip.competition_id) {
     const { data: c } = await supabase
       .from("competitions")
-      .select("name, ensemble_id")
+      .select("name")
       .eq("id", trip.competition_id)
       .maybeSingle();
     compName = (c as { name: string } | null)?.name ?? null;
-    compEnsembleId =
-      (c as { ensemble_id: string | null } | null)?.ensemble_id ?? null;
+    compEnsembleIds = await competitionEnsembleIds(supabase, trip.competition_id);
   }
 
   // This season's competitions for the Edit-trip linker (mirrors the create form
@@ -191,9 +191,10 @@ export default async function TripPage({
     chaperones = (cData as ChaperoneRow[] | null) ?? [];
   }
 
-  // Eligible students (§6): competition-linked ⇒ that ensemble's members; else
-  // every student who is an ensemble member this season (Constitution VI — read
-  // through ensemble_members, never students directly).
+  // Eligible students (§6): competition-linked ⇒ the UNION of that competition's
+  // participating ensembles' members (Feature 004); else every student who is an
+  // ensemble member this season (Constitution VI — read through ensemble_members,
+  // never students directly). The byId map dedupes double-rostered students.
   let eligible: Student[] = [];
   {
     let q = supabase
@@ -201,8 +202,8 @@ export default async function TripPage({
       .select("students(id, first_name, last_name)")
       .eq("program_id", program.id)
       .eq("season_id", trip.season_id);
-    if (trip.competition_id && compEnsembleId)
-      q = q.eq("ensemble_id", compEnsembleId);
+    if (trip.competition_id && compEnsembleIds.length > 0)
+      q = q.in("ensemble_id", compEnsembleIds);
     const { data: memberData } = await q;
     const byId = new Map<string, Student>();
     for (const m of (memberData as { students: Student | null }[] | null) ??

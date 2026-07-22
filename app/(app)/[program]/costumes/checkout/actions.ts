@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { COSTUME_WRITE_ROLES, DIRECT_KINDS } from "@/lib/costumes";
+import { competitionEnsembleIds } from "@/lib/competitions";
 
 // Per-competition checkout (T011). Seeding is an idempotent upsert (Constitution
 // X): it inserts only the checkout rows that don't already exist. There is no
@@ -15,12 +16,12 @@ import { COSTUME_WRITE_ROLES, DIRECT_KINDS } from "@/lib/costumes";
 interface CompetitionRow {
   id: string;
   season_id: string;
-  ensemble_id: string | null;
 }
 
 // Idempotently seed checkout rows for a competition: one per active assignment of
-// its ensemble+season, plus a direct piece row for each prop/set piece in that
-// ensemble's sets.
+// its PARTICIPATING ensembles' sets (season-scoped), plus a direct piece row for
+// each prop/set piece in those sets. A competition can include several ensembles
+// (Feature 004), so sets are gathered across the whole junction.
 export async function seedCheckout(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
@@ -34,7 +35,7 @@ export async function seedCheckout(formData: FormData): Promise<void> {
 
   const { data: compData } = await supabase
     .from("competitions")
-    .select("id, season_id, ensemble_id")
+    .select("id, season_id")
     .eq("id", competitionId)
     .eq("program_id", programId)
     .maybeSingle();
@@ -42,18 +43,19 @@ export async function seedCheckout(formData: FormData): Promise<void> {
   if (!comp) redirect(base);
   const competition = comp as CompetitionRow;
 
-  // Without an ensemble there's no eligibility list — nothing to seed.
-  if (!competition.ensemble_id) {
+  const ensembleIds = await competitionEnsembleIds(supabase, competitionId);
+  // With no participating ensembles there's no eligibility list — nothing to seed.
+  if (ensembleIds.length === 0) {
     redirect(`${base}?competition=${competitionId}&seeded=1`);
   }
 
-  // Sets for this ensemble + season → their pieces.
+  // Sets for the participating ensembles + season → their pieces.
   const { data: setData } = await supabase
     .from("costume_sets")
     .select("id")
     .eq("program_id", programId)
     .eq("season_id", competition.season_id)
-    .eq("ensemble_id", competition.ensemble_id);
+    .in("ensemble_id", ensembleIds);
   const setIds = ((setData as { id: string }[] | null) ?? []).map((s) => s.id);
 
   const directPieceIds: string[] = [];

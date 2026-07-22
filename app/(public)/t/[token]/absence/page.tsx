@@ -109,13 +109,28 @@ export default async function PublicAbsencePage({
     const ensembleIds = Array.from(
       new Set(((mems as { ensemble_id: string }[] | null) ?? []).map((m) => m.ensemble_id)),
     );
-    if (ensembleIds.length > 0) {
+    // Competitions the family's ensembles participate in (Feature 004 junction).
+    const { data: ceRows } = ensembleIds.length
+      ? await supabase
+          .from("competition_ensembles")
+          .select("competition_id")
+          .eq("program_id", program.id)
+          .in("ensemble_id", ensembleIds)
+      : { data: null };
+    const familyCompIds = Array.from(
+      new Set(
+        ((ceRows as { competition_id: string }[] | null) ?? []).map(
+          (r) => r.competition_id,
+        ),
+      ),
+    );
+    if (familyCompIds.length > 0) {
       const { data } = await supabase
         .from("competitions")
         .select("id, name, date")
         .eq("program_id", program.id)
         .eq("season_id", seasonId)
-        .in("ensemble_id", ensembleIds)
+        .in("id", familyCompIds)
         .gte("date", new Date().toISOString().slice(0, 10))
         .order("date", { ascending: true });
       comps = (data as CompRow[] | null) ?? [];

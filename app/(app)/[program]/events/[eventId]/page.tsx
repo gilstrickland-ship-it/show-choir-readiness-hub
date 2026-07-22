@@ -6,9 +6,11 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
 import { updateEvent, deleteEvent } from "../actions";
 import { EVENTS_WRITE_ROLES, EVENT_KINDS, EVENT_KIND_LABELS } from "@/lib/events";
+import { eventEnsembleIds } from "@/lib/competitions";
 
 // Single event edit/delete (§5a, T013). Each materialized repeat occurrence is
 // independently editable/deletable here. Times in program tz (Constitution VII).
+// Audience is any subset of ensembles (Feature 004) — zero = whole program.
 
 interface EventDetail {
   id: string;
@@ -18,7 +20,6 @@ interface EventDetail {
   ends_at: string | null;
   location: string | null;
   note: string | null;
-  ensemble_id: string | null;
 }
 
 interface EnsembleRow {
@@ -43,12 +44,14 @@ export default async function EventDetailPage({
   const supabase = await createClient();
   const { data: evData } = await supabase
     .from("events")
-    .select("id, title, kind, starts_at, ends_at, location, note, ensemble_id")
+    .select("id, title, kind, starts_at, ends_at, location, note")
     .eq("id", eventId)
     .eq("program_id", program.id)
     .maybeSingle();
   const event = evData as EventDetail | null;
   if (!event) notFound();
+
+  const targetedEnsembleIds = await eventEnsembleIds(supabase, eventId);
 
   const { data: ensData } = await supabase
     .from("ensembles")
@@ -94,18 +97,26 @@ export default async function EventDetailPage({
                   ))}
                 </select>
               </label>
-              <label>
-                Ensemble
-                <select name="ensemble_id" defaultValue={event.ensemble_id ?? ""}>
-                  <option value="">Whole program</option>
-                  {ensembles.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
+            <fieldset className="stack">
+              <legend>Ensembles</legend>
+              <p className="muted">
+                No boxes ticked = whole program; tick one or more to target a subset.
+              </p>
+              <div className="row-inline" style={{ flexWrap: "wrap" }}>
+                {ensembles.map((e) => (
+                  <label key={e.id} className="row-inline">
+                    <input
+                      type="checkbox"
+                      name="ensemble_ids"
+                      value={e.id}
+                      defaultChecked={targetedEnsembleIds.includes(e.id)}
+                    />
+                    {e.name}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="row-inline">
               <label>
                 Starts
@@ -148,6 +159,15 @@ export default async function EventDetailPage({
         <dl className="detail-list">
           <dt>When</dt>
           <dd>{formatDateTimeInTz(event.starts_at, tz)}</dd>
+          <dt>Ensembles</dt>
+          <dd>
+            {targetedEnsembleIds.length === 0
+              ? "Whole program"
+              : ensembles
+                  .filter((e) => targetedEnsembleIds.includes(e.id))
+                  .map((e) => e.name)
+                  .join(", ")}
+          </dd>
           <dt>Location</dt>
           <dd>{event.location ?? "—"}</dd>
           <dt>Note</dt>

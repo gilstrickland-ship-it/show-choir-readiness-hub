@@ -44,7 +44,7 @@ The platform is built as one whole — the data model ships fully wired from day
 
 ### X. Idempotent Seeding & Invariants
 
-All seeding jobs (checkouts, attendance) are idempotent upserts — safe to re-run when the roster changes. Enforced invariants: deactivating a student releases costume and travel assignments and flips future attendance to absent; a competition's ensemble determines every eligibility list, and changing it requires a confirmed reseed; publishing an itinerary gates parent visibility, packet generation, and shift suggestions; archiving a season makes season-scoped data read-only via RLS; students soft-delete only (ledger memos and archives may reference them).
+All seeding jobs (checkouts, attendance) are idempotent upserts — safe to re-run when the roster changes. Enforced invariants: deactivating a student releases costume and travel assignments and flips future attendance to absent; a competition's participating ensembles determine every eligibility list, and changing them requires a confirmed reseed; publishing an itinerary gates parent visibility, packet generation, and shift suggestions; archiving a season makes season-scoped data read-only via RLS; students soft-delete only (ledger memos and archives may reference them).
 
 ## Technology Constraints
 
@@ -66,4 +66,4 @@ All seeding jobs (checkouts, attendance) are idempotent upserts — safe to re-r
 
 This constitution supersedes other practices for the `platform/` build. Amendments require a documented rationale in the amendment commit and a version bump below. Every PR/review verifies compliance with the NON-NEGOTIABLE principles (I, III, IV) before merge; complexity beyond the spec must be justified against Principle VIII (build complete ≠ build extra).
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-17 | **Last Amended**: 2026-07-17
+**Version**: 1.1.0 | **Ratified**: 2026-07-17 | **Last Amended**: 2026-07-22

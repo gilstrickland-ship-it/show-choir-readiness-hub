@@ -16,6 +16,19 @@ function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
 }
 
+// Selected ensemble ids from the audience checkbox group. Zero = whole program
+// (stored as zero event_ensembles rows, dynamic — Feature 004, research D2).
+function ensembleIdsFrom(fd: FormData): string[] {
+  return Array.from(
+    new Set(
+      fd
+        .getAll("ensemble_ids")
+        .map((v) => String(v).trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 // Shift a "YYYY-MM-DDTHH:MM" wall value by `weeks` weeks, keeping the wall clock
 // (so a 7:00 PM rehearsal stays 7:00 PM across a DST boundary).
 function addWeeksToWall(wall: string, weeks: number): string {
@@ -43,7 +56,7 @@ export async function createEvent(formData: FormData): Promise<void> {
 
   const kindRaw = str(formData, "kind");
   const kind = (EVENT_KINDS as readonly string[]).includes(kindRaw) ? kindRaw : "other";
-  const ensembleId = str(formData, "ensemble_id") || null;
+  const ensembleIds = ensembleIdsFrom(formData);
   const location = str(formData, "location") || null;
   const note = str(formData, "note") || null;
   const startsWall = str(formData, "starts_at");
@@ -63,7 +76,6 @@ export async function createEvent(formData: FormData): Promise<void> {
     rows.push({
       program_id: programId,
       season_id: seasonId,
-      ensemble_id: ensembleId,
       title,
       kind,
       location,
@@ -74,8 +86,24 @@ export async function createEvent(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.from("events").insert(rows);
-  if (error) redirect(`/${slug}/events?error=save`);
+  const { data: inserted, error } = await supabase
+    .from("events")
+    .insert(rows)
+    .select("id");
+  if (error || !inserted) redirect(`/${slug}/events?error=save`);
+
+  // Attach the targeted-ensemble subset to each materialized occurrence. Zero
+  // ensembles selected ⇒ no junction rows ⇒ whole program (D2).
+  if (ensembleIds.length > 0) {
+    const junctionRows = (inserted as { id: string }[]).flatMap((ev) =>
+      ensembleIds.map((ensemble_id) => ({
+        program_id: programId,
+        event_id: ev.id,
+        ensemble_id,
+      })),
+    );
+    await supabase.from("event_ensembles").insert(junctionRows);
+  }
 
   revalidatePath(`/${slug}/events`);
   redirect(`/${slug}/events?created=${rows.length}`);
@@ -96,13 +124,13 @@ export async function updateEvent(formData: FormData): Promise<void> {
   const startsUtc = zonedWallToUtc(str(formData, "starts_at"), tz);
   const endsUtc = zonedWallToUtc(str(formData, "ends_at"), tz);
 
+  const ensembleIds = ensembleIdsFrom(formData);
   const supabase = await createClient();
   const { error } = await supabase
     .from("events")
     .update({
       title,
       kind,
-      ensemble_id: str(formData, "ensemble_id") || null,
       location: str(formData, "location") || null,
       note: str(formData, "note") || null,
       starts_at: startsUtc ? startsUtc.toISOString() : null,
@@ -112,6 +140,23 @@ export async function updateEvent(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) redirect(`/${slug}/events/${eventId}?error=save`);
+
+  // Replace the targeted-ensemble subset. Zero selected ⇒ whole program (D2).
+  await supabase
+    .from("event_ensembles")
+    .delete()
+    .eq("program_id", programId)
+    .eq("event_id", eventId);
+  if (ensembleIds.length > 0) {
+    await supabase.from("event_ensembles").insert(
+      ensembleIds.map((ensemble_id) => ({
+        program_id: programId,
+        event_id: eventId,
+        ensemble_id,
+      })),
+    );
+  }
+
   revalidatePath(`/${slug}/events`);
   redirect(`/${slug}/events/${eventId}?saved=1`);
 }
