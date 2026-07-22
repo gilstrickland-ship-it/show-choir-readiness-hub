@@ -73,9 +73,12 @@ test.describe("staff journey (demo director)", () => {
     // Lands on the new competition; attendance seeded expected for all 12.
     await page.waitForURL(/\/demo\/competitions\/[0-9a-f-]+\?created=1/);
     await expect(page.getByRole("heading", { name: compName })).toBeVisible();
-    await expect(page.getByText("12 expected")).toBeVisible();
+    // Exact summary string — "12 expected" alone also matches the readiness rail.
+    await expect(page.getByText("12 expected · 0 partial · 0 absent")).toBeVisible();
     // Both participating ensembles are shown in the header.
-    await expect(page.locator(".chip", { hasText: "Varsity Mixed" })).toBeVisible();
-    await expect(page.locator(".chip", { hasText: "Prep" })).toBeVisible();
+    await expect(
+      page.locator(".chip", { hasText: "Varsity Mixed" }).first(),
+    ).toBeVisible();
+    await expect(page.locator(".chip", { hasText: "Prep" }).first()).toBeVisible();
   });
 });
