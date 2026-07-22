@@ -96,7 +96,9 @@ export async function signIn(
     has: page.locator('input[name="password"]'),
   });
   await form.getByLabel("Email").fill(email);
-  await form.getByLabel("Password").fill(password);
+  // exact: true — the show/hide toggle's aria-label ("Show password") would
+  // otherwise also match getByLabel's substring semantics.
+  await form.getByLabel("Password", { exact: true }).fill(password);
   await form.getByRole("button", { name: "Sign in" }).click();
   // The action redirects to /launch, which routes onward — just leave /sign-in.
   await page.waitForURL((url) => !url.pathname.startsWith("/sign-in"), {
