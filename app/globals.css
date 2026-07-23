@@ -206,6 +206,10 @@
   select,
   textarea {
     font: inherit;
+    /* Never below 16px: iOS Safari auto-zooms the page onto any focused
+       field whose font-size is smaller. Controls sit inside 0.85rem labels,
+       so bare `font: inherit` would land at ~13.6px and trigger the zoom. */
+    font-size: max(1rem, 16px);
     font-weight: 400;
     padding: 0.45rem 0.6rem;
     border: 1px solid var(--line);
