@@ -50,3 +50,9 @@
 - [ ] T142 Shared components: one SubTabs (six copies retired, one visual class), one ShareLinkCard (three duplicated blocks retired), `<Flash>` helper adopted on hotspot pages (shifts, hosting, trip, treasury).
 - [ ] T143 Dead-weight cleanup: `support_access` flag removed from registry (real gate documented), `/costumes/alterations` stub deleted (backTarget default corrected), single `TIMEZONES` source, quick-change explainer sentence.
 - [ ] T144 Wave-8 verification: full gate + e2e + visual QA (per-role mobile nav screenshots).
+
+## Phase 9 — Wave 9: Tutorials & first-use refresh (runs LAST, after Waves 1–8)
+
+- [ ] T145 Journey re-derivation (US12): all role journeys in `lib/guide.ts` re-pointed at rebuilt flows (steps, links, labels, verifiers); non-director journeys reflect rebuilt surfaces + Wave-8 mobile nav; e2e guide contracts updated coherently.
+- [ ] T146 Strip re-justification (US12-2): each of the eight IntroStrips rewritten for the new UI, shortened, or removed where the rebuilt surface self-explains; `?help=1` + Got-it semantics preserved for survivors; parent welcome card reviewed.
+- [ ] T147 Wave-9 verification: full gate + e2e + visual QA (fresh-program walkthrough per role, journey panel states, surviving strips).

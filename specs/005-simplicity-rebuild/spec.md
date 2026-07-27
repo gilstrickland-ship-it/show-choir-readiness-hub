@@ -213,6 +213,24 @@ Same section order treatment as Wave 2 US6: Overview (edit popover with live sum
 
 ---
 
+## Wave 9 — Tutorials & first-use refresh (Priority: P1 at the end — runs LAST, after Waves 1–8)
+
+**Why last** (user directive 2026-07-27): the guide system (spec 003 — role journey panels, the eight IntroStrips, parent welcome card) was written against the *pre-rebuild* UI, and its strip list tracks the old complexity hotspots. Once the rebuild lands, guidance must be re-derived from the new flows — and every strip re-justified: a surface that became self-evident loses its strip rather than keeping stale hand-holding (guidance is a symptom; the rebuild treated causes).
+
+### User Story 12 — First-use guidance that matches the rebuilt app (P1)
+
+A brand-new director's journey panel walks the *new* happy path: start the season in place (Wave 1 card) → add students → ensemble → add a competition from the Season + Add drawer. Every journey step's link, label, and data-verifier points at the rebuilt affordance. Each of the eight IntroStrips is re-evaluated against its rebuilt surface: rewritten to describe the new UI, shortened, or removed where the surface now explains itself. The parent welcome card is reviewed against the (unchanged) parent surface.
+
+**Acceptance scenarios**:
+
+1. **Given** a fresh director on Today, **Then** the journey panel's steps trace the rebuilt flows exactly (no step links to a module-page `#add` anchor or the rollover wizard for a first season) and each step's completion verifier still turns green when the action is done the new way.
+2. **Given** each `STRIP_SURFACE_KEYS` surface post-rebuild, **Then** its strip either describes the current UI accurately or is removed from the registry; `?help=1` re-trigger and per-member Got-it state semantics unchanged for surviving strips.
+3. **Given** the non-director journeys (treasurer, costume manager, board orientation), **Then** their steps reflect the rebuilt Money/Wardrobe/report surfaces (including the Wave-8 mobile nav, so "where to find it" copy is true on phones).
+4. **Given** `tests/e2e`, **Then** the guide contracts (panel headings, step links) are updated coherently with the rebuilt targets in the same change.
+5. **Given** the `guide` flag off, **Then** nothing renders (unchanged).
+
+---
+
 ## Cross-wave requirements
 
 - **RQ-1**: Every wave passes `typecheck` · `test:unit` · `test:rls` · `build`, statically reconciles `tests/e2e`, and keeps `npx playwright test --list --config playwright.config.e2e.ts` clean.

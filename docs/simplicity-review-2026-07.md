@@ -97,5 +97,6 @@ Each wave lands independently on the existing flags, passes the full gate (typec
 | **6. People** | student detail + guardians | Guardian row: 5 verbs → 2 (Edit, Send links) with the rest inside; the three near-synonym send actions unified; email-issues page gains its fix-in-place. |
 | **7. Hosting** | `hosting/[eventId]` | Blind disclosures → visible sections with summaries; consistent edit idiom; schedule generation as a clear primary action. |
 | **8. System pass** | cross-cutting | Role-aware mobile tab backfill; one shared SubTabs; one shared ShareLinkCard; one flash-message convention; dead flags/tier/stub/duplicate-array cleanup; quick-change explainer. |
+| **9. Tutorials & first-use** *(last, by design)* | guide system (spec 003) | Journeys re-derived from the rebuilt flows; every IntroStrip re-justified against its simplified surface (rewritten, shortened, or removed); parent welcome reviewed. Runs after Waves 1–8 so guidance describes the product that actually shipped. |
 
 Waves 2–8 are specified in `specs/005-simplicity-rebuild/spec.md` as they enter implementation; the inventory above is their factual base.
