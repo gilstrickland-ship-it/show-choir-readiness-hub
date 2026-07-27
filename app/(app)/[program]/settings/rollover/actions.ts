@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
-import { returnPath } from "@/lib/return-path";
+import { returnPath, programPath } from "@/lib/return-path";
 
 // Season rollover wizard actions (§3, §9.4, T028). Every step is a director/admin
 // server action that re-checks the role (Constitution I) and is idempotent /
@@ -36,13 +36,7 @@ async function findOrCreateSeason(
     endsOn: string | null;
   },
 ): Promise<string | null> {
-  const { data: existing } = await supabase
-    .from("seasons")
-    .select("id")
-    .eq("program_id", args.programId)
-    .eq("label", args.label)
-    .maybeSingle();
-  const existingId = (existing as { id: string } | null)?.id ?? null;
+  const existingId = await seasonIdByLabel(supabase, args.programId, args.label);
   if (existingId) return existingId;
 
   const { data: created, error } = await supabase
@@ -56,8 +50,31 @@ async function findOrCreateSeason(
     })
     .select("id")
     .single();
-  if (error || !created) return null;
-  return (created as { id: string }).id;
+  if (!error && created) return (created as { id: string }).id;
+
+  // The insert lost. Two submits arriving together (a double click, a retried
+  // POST) both clear the check above, and nothing in the schema stops the second
+  // — so instead of failing the director who pressed twice, look again: if the
+  // season is there now, that IS the season they asked for.
+  return seasonIdByLabel(supabase, args.programId, args.label);
+}
+
+// The id of this program's season with that label, if it has one. `limit(1)`
+// rather than a bare maybeSingle so a program that somehow ended up with two
+// same-label seasons resolves to one instead of erroring.
+async function seasonIdByLabel(
+  supabase: Db,
+  programId: string,
+  label: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("seasons")
+    .select("id")
+    .eq("program_id", programId)
+    .eq("label", label)
+    .limit(1)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
 }
 
 // Flip the active season atomically: clear whatever is active, then set this
@@ -94,8 +111,13 @@ export async function startFirstSeason(formData: FormData): Promise<void> {
   const slug = String(formData.get("slug") ?? "");
   await requireRole(programId, SETTINGS_ROLES);
 
+  // Fail closed on the slug too: it arrives as a form field, and a value like
+  // "/evil.com" interpolated into a path makes a protocol-relative URL the
+  // browser happily follows off-site (lib/return-path).
   const back =
-    returnPath(slug, String(formData.get("from") ?? "")) ?? `/${slug}/dashboard`;
+    returnPath(slug, String(formData.get("from") ?? "")) ??
+    programPath(slug, "dashboard") ??
+    "/";
 
   const label = String(formData.get("label") ?? "").trim();
   if (!label) redirect(`${back}?seasonError=label`);
@@ -103,13 +125,25 @@ export async function startFirstSeason(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   // This card only renders for a program with NO seasons. If one appeared in the
-  // meantime (a second tab, the wizard), WHICH season should be active is a
-  // human decision — send them to Settings rather than guess.
-  const { count } = await supabase
+  // meantime it is usually the director's own second submit, which already did
+  // exactly this — say "done", not "something went wrong". Anything else (a
+  // season from another tab, from the wizard) is a real human decision about
+  // WHICH season should be active, so that goes to Settings.
+  const { data: existingData } = await supabase
     .from("seasons")
-    .select("id", { count: "exact", head: true })
+    .select("id, label, is_active")
     .eq("program_id", programId);
-  if ((count ?? 0) > 0) redirect(`${back}?seasonError=exists`);
+  const existing =
+    (existingData as { id: string; label: string; is_active: boolean }[] | null) ??
+    [];
+  if (existing.length > 0) {
+    const alreadyDone = existing.some((s) => s.label === label && s.is_active);
+    if (alreadyDone) {
+      revalidatePath(`/${slug}`, "layout");
+      redirect(`${back}?seasonStarted=1`);
+    }
+    redirect(`${back}?seasonError=exists`);
+  }
 
   const seasonId = await findOrCreateSeason(supabase, {
     programId,
@@ -120,7 +154,19 @@ export async function startFirstSeason(formData: FormData): Promise<void> {
   if (!seasonId) redirect(`${back}?seasonError=create`);
 
   const activated = await makeSeasonActive(supabase, programId, seasonId);
-  if (!activated) redirect(`${back}?seasonError=activate`);
+  if (!activated) {
+    // The one-active-season index is what makes a simultaneous flip fail, so a
+    // failure here often means the other submit won. If the program has an
+    // active season now, the job is done however it got done.
+    const { data: active } = await supabase
+      .from("seasons")
+      .select("id")
+      .eq("program_id", programId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle();
+    if (!active) redirect(`${back}?seasonError=activate`);
+  }
 
   // The season label rides in the app-shell header, so revalidate the layout.
   revalidatePath(`/${slug}`, "layout");
