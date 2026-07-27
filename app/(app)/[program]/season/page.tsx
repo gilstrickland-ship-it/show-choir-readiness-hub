@@ -6,6 +6,8 @@ import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import {
   COMPETITION_WRITE_ROLES,
+  COMPETITION_STATUSES,
+  COMPETITION_STATUS_LABELS,
   competitionEnsembleMap,
   eventEnsembleMap,
 } from "@/lib/competitions";
@@ -18,12 +20,13 @@ import { TRAVEL_WRITE_ROLES } from "@/lib/travel";
 import { loadCompReadiness } from "@/lib/readiness";
 import { activeShareLinks, seasonCalendarUrl } from "@/lib/tokens";
 import { regenerateSeasonCalendarShareLink } from "./actions";
-import { createCompetition } from "../competitions/actions";
-import { createEvent } from "../events/actions";
-import { createTrip } from "../travel/actions";
+import { createCompetition, updateCompetition } from "../competitions/actions";
+import { createEvent, updateEvent } from "../events/actions";
+import { createTrip, updateTrip } from "../travel/actions";
 import {
   zonedWallToUtc,
   zonedDateKey,
+  toZonedInputValue,
   formatDateInTz,
   formatTimeInTz,
 } from "@/lib/datetime";
@@ -60,6 +63,40 @@ function monthAbbr(instant: Date, timeZone: string): string {
 
 type ItemKind = "comp" | "event" | "trip" | "hosting";
 
+// Row-edit payloads (US2). Every field here comes out of the query the spine
+// already runs — the popover adds no per-row read. Fields the popover does NOT
+// show still ride along as hidden inputs, because the update actions read an
+// absent field as "clear it": leaving out an event's audience, note or end time
+// (or a trip's linked competition) would quietly wipe them on a date fix.
+interface CompEdit {
+  id: string;
+  name: string;
+  date: string;
+  status: "planned" | "confirmed" | "done";
+  hostSchool: string;
+  venueAddress: string;
+  showchoirUrl: string;
+  ensembleIds: string[];
+}
+interface EventEdit {
+  id: string;
+  title: string;
+  startsWall: string; // program-tz wall clock, the datetime-local shape
+  endsWall: string;
+  location: string;
+  note: string;
+  eventKind: string;
+  ensembleIds: string[];
+}
+interface TripEdit {
+  id: string;
+  name: string;
+  startsOn: string;
+  endsOn: string;
+  isOvernight: boolean;
+  competitionId: string;
+}
+
 interface SeasonItem {
   key: string;
   kind: ItemKind;
@@ -79,6 +116,10 @@ interface SeasonItem {
   compStatus?: "planned" | "confirmed" | "done";
   result?: string | null;
   needsTrip?: boolean;
+  // Edit-popover payload (writer roles only; hosting rows never carry one).
+  compEdit?: CompEdit;
+  eventEdit?: EventEdit;
+  tripEdit?: TripEdit;
 }
 
 const FILTERS = ["everything", "competitions", "events", "trips"] as const;
@@ -117,6 +158,26 @@ const ADD_KIND_LABEL: Record<AddKind, string> = {
   trip: "Trip",
 };
 
+// Row-edit errors, in the same words the record's own page uses. `?edit=<key>`
+// reopens that row's popover with the message inside it.
+const EDIT_ERROR: Record<AddKind, Record<string, string>> = {
+  comp: {
+    name: "A competition needs a name.",
+    ensemble: "Pick at least one ensemble for the competition.",
+    save: "Couldn't save. Try again.",
+  },
+  event: {
+    title: "An event needs a title.",
+    save: "Couldn't save. Try again.",
+  },
+  trip: {
+    name: "A trip needs a name.",
+    dates: "A trip can't end before it starts.",
+    overnight_rooms: "Remove this trip's rooms before making it a day trip.",
+    save: "Couldn't save the trip. Try again.",
+  },
+};
+
 const EVENT_TAG: Record<string, { tag: string; cls: string }> = {
   rehearsal: { tag: "Rehearsal", cls: "rehearsal" },
   fundraiser: { tag: "Fundraiser", cls: "fundraiser" },
@@ -135,8 +196,10 @@ export default async function SeasonPage({
     calShare?: string;
     calError?: string;
     add?: string;
+    edit?: string;
     error?: string;
     created?: string;
+    saved?: string;
   }>;
 }) {
   const { program: slug } = await params;
@@ -163,8 +226,10 @@ export default async function SeasonPage({
     calShare,
     calError,
     add: addParam,
+    edit: editKey,
     error: errorParam,
     created,
+    saved,
   } = await searchParams;
   const filter: Filter = FILTERS.includes(filterParam as Filter)
     ? (filterParam as Filter)
@@ -175,6 +240,17 @@ export default async function SeasonPage({
   )
     ? (addParam as AddKind)
     : null;
+
+  // Per-kind write affordances — the season spine absorbs the module lists, so
+  // it must also be where a writer adds and corrects. Each is gated by its flag
+  // AND its module's write-role set (re-checked server-side in every action); a
+  // role with no write access sees no "+ Add" and no row Edit at all (the pills
+  // and rows still browse). One "+ Add" drawer holds every kind the viewer may
+  // create; the full forms stay on the module pages behind "More options →".
+  const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
+  const canAddEvent = flags.events && EVENTS_WRITE_ROLES.includes(role);
+  const canAddTrip = flags.travel && TRAVEL_WRITE_ROLES.includes(role);
+  const canAddAny = canAddComp || canAddEvent || canAddTrip;
 
   const supabase = await createClient();
 
@@ -251,9 +327,14 @@ export default async function SeasonPage({
   // we already fetch; no extra query.
   let compsWithoutTrip: { id: string; name: string; date: string | null }[] = [];
   if (flags.competitions && seasonId) {
+    // venue_address + showchoir_com_url ride along for the row's edit popover
+    // only (updateCompetition clears what a form omits) — two extra columns on
+    // a query the spine already runs.
     const { data: compData } = await supabase
       .from("competitions")
-      .select("id, name, date, host_school, status")
+      .select(
+        "id, name, date, host_school, venue_address, showchoir_com_url, status",
+      )
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .order("date", { ascending: true, nullsFirst: false });
@@ -264,6 +345,8 @@ export default async function SeasonPage({
             name: string;
             date: string | null;
             host_school: string | null;
+            venue_address: string | null;
+            showchoir_com_url: string | null;
             status: "planned" | "confirmed" | "done";
           }[]
         | null) ?? [];
@@ -344,6 +427,18 @@ export default async function SeasonPage({
         compStatus: c.status,
         result: c.status === "done" ? placement.get(c.id) ?? null : null,
         needsTrip: flags.travel && !linkedCompIds.has(c.id),
+        compEdit: canAddComp
+          ? {
+              id: c.id,
+              name: c.name,
+              date: c.date,
+              status: c.status,
+              hostSchool: c.host_school ?? "",
+              venueAddress: c.venue_address ?? "",
+              showchoirUrl: c.showchoir_com_url ?? "",
+              ensembleIds: compEnsembles.get(c.id) ?? [],
+            }
+          : undefined,
       });
     }
 
@@ -378,9 +473,12 @@ export default async function SeasonPage({
 
   // ---- Events ---------------------------------------------------------------
   if (flags.events && seasonId) {
+    // ends_at + note are here only so the row's edit popover can carry them back
+    // untouched (updateEvent clears what a form omits) — no extra query, two
+    // extra columns.
     const { data: eventData } = await supabase
       .from("events")
-      .select("id, title, starts_at, kind, location")
+      .select("id, title, starts_at, ends_at, kind, location, note")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .not("starts_at", "is", null)
@@ -391,8 +489,10 @@ export default async function SeasonPage({
             id: string;
             title: string;
             starts_at: string;
+            ends_at: string | null;
             kind: string;
             location: string | null;
+            note: string | null;
           }[]
         | null) ?? [];
     // Targeted ensembles per event (Feature 004 junction; empty = whole program).
@@ -421,15 +521,29 @@ export default async function SeasonPage({
         title: e.title,
         href: null,
         meta,
+        eventEdit: canAddEvent
+          ? {
+              id: e.id,
+              title: e.title,
+              startsWall: toZonedInputValue(e.starts_at, tz),
+              endsWall: toZonedInputValue(e.ends_at, tz),
+              location: e.location ?? "",
+              note: e.note ?? "",
+              eventKind: e.kind,
+              ensembleIds: evEnsIds,
+            }
+          : undefined,
       });
     }
   }
 
   // ---- Trips ----------------------------------------------------------------
   if (flags.travel && seasonId) {
+    // ends_on + competition_id ride along for the row's edit popover only
+    // (updateTrip clears the link a form omits) — two extra columns, no query.
     const { data: tripData } = await supabase
       .from("trips")
-      .select("id, name, starts_on, is_overnight")
+      .select("id, name, starts_on, ends_on, is_overnight, competition_id")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .not("starts_on", "is", null)
@@ -439,7 +553,9 @@ export default async function SeasonPage({
           id: string;
           name: string;
           starts_on: string;
+          ends_on: string | null;
           is_overnight: boolean;
+          competition_id: string | null;
         }[]
       | null) ?? []) {
       const instant = zonedWallToUtc(`${t.starts_on}T00:00`, tz);
@@ -452,6 +568,16 @@ export default async function SeasonPage({
         title: t.name,
         href: `${base}/travel/${t.id}`,
         meta: t.is_overnight ? "Overnight trip" : "Day trip",
+        tripEdit: canAddTrip
+          ? {
+              id: t.id,
+              name: t.name,
+              startsOn: t.starts_on,
+              endsOn: t.ends_on ?? "",
+              isOvernight: t.is_overnight,
+              competitionId: t.competition_id ?? "",
+            }
+          : undefined,
       });
     }
   }
@@ -532,19 +658,10 @@ export default async function SeasonPage({
   // shifts" link only shows when both are on (otherwise it would 404).
   const canFillShifts = flags.shifts && flags.comms && SHIFT_WRITE_ROLES.includes(role);
 
-  // Per-kind add affordances — the season spine absorbs the module lists, so it
-  // must also be where a writer starts a new item. Each is gated by its flag AND
-  // its module's write-role set (re-checked server-side in each create action);
-  // a role with no write access sees no add button at all (the pills/rows still
-  // browse). One "+ Add" drawer holds every kind the viewer may create; the full
-  // forms stay on the module pages behind each section's "More options →".
-  const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
-  const canAddEvent = flags.events && EVENTS_WRITE_ROLES.includes(role);
-  const canAddTrip = flags.travel && TRAVEL_WRITE_ROLES.includes(role);
-  const canAddAny = canAddComp || canAddEvent || canAddTrip;
-
   // "Competition added." after a quick add — the created key is `<kind>-<id>`.
   const createdKind = created?.split("-")[0] ?? null;
+  // A just-added or just-corrected row is the one the eye should land on.
+  const highlightKey = created ?? saved ?? null;
 
   return (
     <section className="season">
@@ -721,7 +838,7 @@ export default async function SeasonPage({
               {g.rows.map((it) =>
                 it.compId && it.compId === nextCompId ? (
                   <div
-                    className={`season-feature${it.key === created ? " just-added" : ""}`}
+                    className={`season-feature${it.key === highlightKey ? " just-added" : ""}`}
                     id={`item-${it.key}`}
                     key={it.key}
                   >
@@ -774,13 +891,24 @@ export default async function SeasonPage({
                             Fill shifts
                           </Link>
                         )}
+                        <RowEdit
+                          item={it}
+                          variant="feature"
+                          slug={slug}
+                          base={base}
+                          programId={program.id}
+                          seasonId={seasonId}
+                          tz={tz}
+                          openKey={editKey ?? null}
+                          error={errorParam ?? null}
+                        />
                       </div>
                     </div>
                   </div>
                 ) : (
                   <div
                     className={`season-row${it.isPast ? " past" : ""}${
-                      it.key === created ? " just-added" : ""
+                      it.key === highlightKey ? " just-added" : ""
                     }`}
                     id={`item-${it.key}`}
                     key={it.key}
@@ -832,6 +960,17 @@ export default async function SeasonPage({
                           Open
                         </Link>
                       )}
+                      <RowEdit
+                        item={it}
+                        variant="row"
+                        slug={slug}
+                        base={base}
+                        programId={program.id}
+                        seasonId={seasonId}
+                        tz={tz}
+                        openKey={editKey ?? null}
+                        error={errorParam ?? null}
+                      />
                     </div>
                   </div>
                 ),
@@ -841,6 +980,242 @@ export default async function SeasonPage({
         </section>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Row edit (US2) — a small popover on the row itself for the correction this
+// domain makes constantly: a name or a date that moved. Same native <details>
+// as the quick-add drawer, no client JS, and no per-row query: everything the
+// form needs was already loaded for the spine. Deeper work (who's going, the
+// itinerary, rooms and buses) stays on the record's own page, one link away.
+// A read-only role never gets here — the payloads are only built for writers.
+// ---------------------------------------------------------------------------
+function RowEdit({
+  item,
+  variant,
+  slug,
+  base,
+  programId,
+  seasonId,
+  tz,
+  openKey,
+  error,
+}: {
+  item: SeasonItem;
+  variant: "row" | "feature";
+  slug: string;
+  base: string;
+  programId: string;
+  seasonId: string | null;
+  tz: string;
+  openKey: string | null;
+  error: string | null;
+}) {
+  const kind: AddKind | null = item.compEdit
+    ? "comp"
+    : item.eventEdit
+      ? "event"
+      : item.tripEdit
+        ? "trip"
+        : null;
+  if (!kind) return null;
+
+  const isOpen = openKey === item.key;
+  const message =
+    isOpen && error ? EDIT_ERROR[kind][error] ?? EDIT_ERROR[kind].save : null;
+  // The row popover hangs off the spine's right edge; the feature row's action
+  // bar sits at the left, so its panel opens the other way (both stay put on a
+  // phone, where the page-head drawer flips).
+  const panelClass =
+    variant === "feature" ? "season-feature-edit-panel" : "season-edit-panel";
+
+  return (
+    <details className="drawer" open={isOpen}>
+      <summary className="season-link">Edit</summary>
+      <div className={`drawer-panel ${panelClass}`}>
+        <h3 className="drawer-title">Quick edit</h3>
+        {message && <p className="alert-error">{message}</p>}
+
+        {item.compEdit && (
+          <form action={updateCompetition} className="stack">
+            <input type="hidden" name="programId" value={programId} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="competitionId" value={item.compEdit.id} />
+            <input type="hidden" name="seasonId" value={seasonId ?? ""} />
+            <input type="hidden" name="from" value="season" />
+            {/* Carried through untouched — updateCompetition clears a field the
+                form leaves out, and who's going is detail-page work. */}
+            <input
+              type="hidden"
+              name="host_school"
+              value={item.compEdit.hostSchool}
+            />
+            <input
+              type="hidden"
+              name="venue_address"
+              value={item.compEdit.venueAddress}
+            />
+            <input
+              type="hidden"
+              name="showchoir_com_url"
+              value={item.compEdit.showchoirUrl}
+            />
+            {item.compEdit.ensembleIds.map((id) => (
+              <input key={id} type="hidden" name="ensemble_ids" value={id} />
+            ))}
+            <label>
+              Name
+              <input
+                type="text"
+                name="name"
+                defaultValue={item.compEdit.name}
+                required
+              />
+            </label>
+            <div className="row-inline">
+              <label>
+                Date
+                <input
+                  type="date"
+                  name="date"
+                  defaultValue={item.compEdit.date}
+                />
+              </label>
+              <label>
+                Status
+                <select name="status" defaultValue={item.compEdit.status}>
+                  {COMPETITION_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {COMPETITION_STATUS_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button type="submit">Save</button>
+            <p className="muted">
+              <Link href={`${base}/competitions/${item.compEdit.id}`}>
+                All details →
+              </Link>
+            </p>
+          </form>
+        )}
+
+        {item.eventEdit && (
+          <form action={updateEvent} className="stack">
+            <input type="hidden" name="programId" value={programId} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="eventId" value={item.eventEdit.id} />
+            <input type="hidden" name="tz" value={tz} />
+            <input type="hidden" name="from" value="season" />
+            {/* Carried through untouched — updateEvent clears a field the form
+                leaves out, and who it's for is detail-page work. */}
+            <input type="hidden" name="kind" value={item.eventEdit.eventKind} />
+            <input
+              type="hidden"
+              name="ends_at"
+              value={item.eventEdit.endsWall}
+            />
+            <input type="hidden" name="note" value={item.eventEdit.note} />
+            {item.eventEdit.ensembleIds.map((id) => (
+              <input key={id} type="hidden" name="ensemble_ids" value={id} />
+            ))}
+            <label>
+              Title
+              <input
+                type="text"
+                name="title"
+                defaultValue={item.eventEdit.title}
+                required
+              />
+            </label>
+            <div className="row-inline">
+              <label>
+                Starts
+                <input
+                  type="datetime-local"
+                  name="starts_at"
+                  defaultValue={item.eventEdit.startsWall}
+                />
+              </label>
+              <label>
+                Location
+                <input
+                  type="text"
+                  name="location"
+                  defaultValue={item.eventEdit.location}
+                />
+              </label>
+            </div>
+            <button type="submit">Save</button>
+            <p className="muted">
+              Who it&apos;s for, an end time, a note:{" "}
+              <Link href={`${base}/events/${item.eventEdit.id}`}>
+                All details →
+              </Link>
+            </p>
+          </form>
+        )}
+
+        {item.tripEdit && (
+          <form action={updateTrip} className="stack">
+            <input type="hidden" name="programId" value={programId} />
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="tripId" value={item.tripEdit.id} />
+            <input type="hidden" name="from" value="season" />
+            {/* Keeps the trip attached to its competition — updateTrip unlinks
+                a trip whose form omits the field. */}
+            <input
+              type="hidden"
+              name="competition_id"
+              value={item.tripEdit.competitionId}
+            />
+            <label>
+              Name
+              <input
+                type="text"
+                name="name"
+                defaultValue={item.tripEdit.name}
+                required
+              />
+            </label>
+            <div className="row-inline">
+              <label>
+                Starts
+                <input
+                  type="date"
+                  name="starts_on"
+                  defaultValue={item.tripEdit.startsOn}
+                />
+              </label>
+              <label>
+                Ends
+                <input
+                  type="date"
+                  name="ends_on"
+                  defaultValue={item.tripEdit.endsOn}
+                />
+              </label>
+            </div>
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                name="is_overnight"
+                defaultChecked={item.tripEdit.isOvernight}
+              />{" "}
+              Overnight (rooms + buses)
+            </label>
+            <button type="submit">Save</button>
+            <p className="muted">
+              <Link href={`${base}/travel/${item.tripEdit.id}`}>
+                All details →
+              </Link>
+            </p>
+          </form>
+        )}
+      </div>
+    </details>
   );
 }
 

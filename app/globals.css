@@ -2164,6 +2164,10 @@
 
   .season-row-right {
     flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.15rem;
     text-align: right;
   }
 
@@ -3031,6 +3035,27 @@
 
   .quick-add-kind > summary:hover {
     color: var(--accent);
+  }
+
+  /* Spine row-edit popovers (Season). Same drawer, narrower, and pinned to the
+     side that keeps it on screen: rows hang off the spine's right edge, the
+     next-comp feature row's action bar starts at the left. Compound selectors
+     so neither the base `.drawer-panel` nor its phone override can win by
+     source order (the T061/T066 cascade trap). */
+  .drawer-panel.season-edit-panel,
+  .drawer-panel.season-feature-edit-panel {
+    width: min(24rem, 88vw);
+    text-align: left;
+  }
+
+  .drawer-panel.season-edit-panel {
+    right: 0;
+    left: auto;
+  }
+
+  .drawer-panel.season-feature-edit-panel {
+    left: 0;
+    right: auto;
   }
 
   /* Metric strip — 1px-gap grid on --line, cells --paper (Money). */
@@ -4466,6 +4491,23 @@
       right: auto;
       left: 0;
       width: min(34rem, 92vw);
+    }
+
+    /* …but the spine's row popovers keep their own anchoring — flipping them
+       would push the panel off the side of the phone. */
+    .drawer-panel.season-edit-panel,
+    .drawer-panel.season-feature-edit-panel {
+      width: min(24rem, 88vw);
+    }
+
+    .drawer-panel.season-edit-panel {
+      right: 0;
+      left: auto;
+    }
+
+    .drawer-panel.season-feature-edit-panel {
+      left: 0;
+      right: auto;
     }
 
     .alt-row {
