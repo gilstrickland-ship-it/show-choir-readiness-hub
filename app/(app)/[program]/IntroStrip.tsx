@@ -54,9 +54,9 @@ const STRIP_COPY: Record<StripSurfaceKey, StripCopy> = {
       "compare each row to the source on the left and fix anything flagged.",
   },
   trip: {
-    lead: "Load buses and rooms by tapping a student onto a group; counts and capacity fill in as you go, and deactivating a student frees their seat automatically.",
+    lead: "Load a bus or a room by picking it, then tapping names until it's full; counts and capacity fill in as you go, and deactivating a student frees their seat automatically.",
     first:
-      "add your buses — and rooms, if it's an overnight — then start placing students.",
+      "add your buses — and rooms, if it's an overnight — then pick one and start tapping names.",
   },
   hosting_event: {
     lead: "Everything to run your own invitational lives here — visiting schools, the running order, and the day-of documents that print straight from it.",
