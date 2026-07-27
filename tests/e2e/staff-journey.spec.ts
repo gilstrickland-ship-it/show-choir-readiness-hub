@@ -98,7 +98,10 @@ test.describe("staff journey (demo director)", () => {
     await expect(
       page.getByText("Competition added to your season."),
     ).toBeVisible();
-    await expect(page.getByText(quickName)).toBeVisible();
+    // Scoped to the spine row's title link on purpose: a plain getByText would
+    // also match this competition's <option> in the trip section of the (closed)
+    // + Add drawer — options in a closed <details> are still in the DOM.
+    await expect(page.getByRole("link", { name: quickName })).toBeVisible();
 
     // --- Spine row edit (spec 005 US2): fix the date without navigating ------
     const createdKey = new URL(page.url()).searchParams.get("created") ?? "";
@@ -109,6 +112,6 @@ test.describe("staff journey (demo director)", () => {
 
     // Still on Season, row re-rendered in its new position.
     await page.waitForURL(new RegExp(`/demo/season\\?saved=${createdKey}`));
-    await expect(page.getByText(quickName)).toBeVisible();
+    await expect(page.getByRole("link", { name: quickName })).toBeVisible();
   });
 });
