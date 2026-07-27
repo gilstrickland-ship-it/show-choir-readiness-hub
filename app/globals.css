@@ -1931,6 +1931,29 @@
     color: var(--muted-ink);
   }
 
+  /* Calendar-subscribe disclosure — a once-a-year job that used to hold a
+     permanent block above the spine. One line collapsed; the box inside is
+     unchanged (and opens itself for the one-time URL and for errors). */
+  .season-subscribe {
+    width: 100%;
+  }
+
+  .season-subscribe > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--ink-2);
+    padding: 0.2rem 0;
+  }
+
+  .season-subscribe > summary:hover {
+    color: var(--accent);
+  }
+
+  .season-subscribe[open] > summary {
+    margin-bottom: 0.6rem;
+  }
+
   .season-months {
     display: flex;
     flex-direction: column;

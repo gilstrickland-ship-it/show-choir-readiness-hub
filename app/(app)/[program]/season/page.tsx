@@ -742,63 +742,71 @@ export default async function SeasonPage({
       </div>
 
       {/* Subscribe in your calendar (Wave G / G1) — director/admin. One live
-          feed of the whole season for Google Calendar / Apple Calendar. */}
+          feed of the whole season for Google Calendar / Apple Calendar. You set
+          this up once a year, so it is one line until you ask for it — and it
+          opens itself on the two occasions you need to see inside: a freshly
+          minted URL (shown once, never again) and an error. */}
       {canManageCalendar && season && (
-        <div className="confirm-box stack" style={{ width: "100%" }}>
-          <h2>Subscribe in your calendar</h2>
-          {calError === "season" && (
-            <p className="alert-error">Activate a season before creating a calendar link.</p>
-          )}
-          {calError === "mint" && (
-            <p className="alert-error">
-              The old calendar link was retired, but a new one couldn&apos;t be created. Try
-              again.
-            </p>
-          )}
-          {freshSeasonCalUrl ? (
-            <>
-              <p className="muted">
-                A live calendar feed of {season.label} — every competition, event,
-                and trip. Copy it now (for privacy the URL is shown only this once).
-                It stays current all season — new comps and time changes appear
-                automatically.
+        <details
+          className="season-subscribe"
+          open={Boolean(calShare || calError)}
+        >
+          <summary>📅 Subscribe in your calendar</summary>
+          <div className="confirm-box stack" style={{ width: "100%" }}>
+            {calError === "season" && (
+              <p className="alert-error">Activate a season before creating a calendar link.</p>
+            )}
+            {calError === "mint" && (
+              <p className="alert-error">
+                The old calendar link was retired, but a new one couldn&apos;t be created. Try
+                again.
               </p>
+            )}
+            {freshSeasonCalUrl ? (
+              <>
+                <p className="muted">
+                  A live calendar feed of {season.label} — every competition, event,
+                  and trip. Copy it now (for privacy the URL is shown only this once).
+                  It stays current all season — new comps and time changes appear
+                  automatically.
+                </p>
+                <p className="muted">
+                  <strong>Google Calendar:</strong> use the https link (Other calendars →
+                  From URL).
+                </p>
+                <code style={{ wordBreak: "break-all" }}>{freshSeasonCalUrl}</code>
+                <p className="muted">
+                  <strong>Apple Calendar:</strong> the webcal link opens Subscribe directly.
+                </p>
+                <code style={{ wordBreak: "break-all" }}>{freshSeasonCalWebcal}</code>
+              </>
+            ) : activeSeasonCalLinks.length > 0 ? (
               <p className="muted">
-                <strong>Google Calendar:</strong> use the https link (Other calendars →
-                From URL).
+                A season calendar link is active for {season.label}. For privacy the
+                URL is only shown once at creation — regenerate to get a fresh copyable
+                link (the old one stops working). Active links are listed in{" "}
+                <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
               </p>
-              <code style={{ wordBreak: "break-all" }}>{freshSeasonCalUrl}</code>
+            ) : (
               <p className="muted">
-                <strong>Apple Calendar:</strong> the webcal link opens Subscribe directly.
+                Create a live calendar feed of the whole season. Paste it into Google
+                Calendar (<strong>Other calendars → From URL</strong>) or Apple
+                Calendar — it updates itself as the season changes, so you never
+                re-enter a date.
               </p>
-              <code style={{ wordBreak: "break-all" }}>{freshSeasonCalWebcal}</code>
-            </>
-          ) : activeSeasonCalLinks.length > 0 ? (
-            <p className="muted">
-              A season calendar link is active for {season.label}. For privacy the
-              URL is only shown once at creation — regenerate to get a fresh copyable
-              link (the old one stops working). Active links are listed in{" "}
-              <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
-            </p>
-          ) : (
-            <p className="muted">
-              Create a live calendar feed of the whole season. Paste it into Google
-              Calendar (<strong>Other calendars → From URL</strong>) or Apple
-              Calendar — it updates itself as the season changes, so you never
-              re-enter a date.
-            </p>
-          )}
-          <form action={regenerateSeasonCalendarShareLink}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="seasonId" value={season.id} />
-            <button type="submit" className="secondary">
-              {activeSeasonCalLinks.length > 0
-                ? "Regenerate calendar link"
-                : "Create calendar link"}
-            </button>
-          </form>
-        </div>
+            )}
+            <form action={regenerateSeasonCalendarShareLink}>
+              <input type="hidden" name="programId" value={program.id} />
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="seasonId" value={season.id} />
+              <button type="submit" className="secondary">
+                {activeSeasonCalLinks.length > 0
+                  ? "Regenerate calendar link"
+                  : "Create calendar link"}
+              </button>
+            </form>
+          </div>
+        </details>
       )}
 
       {undatedCompCount > 0 && (
