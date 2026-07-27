@@ -1053,7 +1053,11 @@ function RowEdit({
 
   return (
     <details className="drawer" open={isOpen}>
-      <summary className="season-link">Edit</summary>
+      {/* Every row on the spine has an "Edit" — the accessible name says which
+          one, the way the travel page's tap/remove controls do. */}
+      <summary className="season-link" aria-label={`Edit ${item.title}`}>
+        Edit
+      </summary>
       <div className={`drawer-panel ${panelClass}`}>
         <h3 className="drawer-title">Quick edit</h3>
         {message && <p className="alert-error">{message}</p>}

@@ -80,5 +80,35 @@ test.describe("staff journey (demo director)", () => {
       page.locator(".chip", { hasText: "Varsity Mixed" }).first(),
     ).toBeVisible();
     await expect(page.locator(".chip", { hasText: "Prep" }).first()).toBeVisible();
+
+    // --- Season quick-add (spec 005 US1): two fields, and you land back on the
+    // spine rather than on a module list --------------------------------------
+    // ?add=comp opens the drawer on its competition section server-side — the
+    // same URL a failed create comes back on, so this exercises the real path.
+    await page.goto("/demo/season?add=comp");
+    const quickName = `Quick Add ${Date.now()}`;
+    const quickAdd = page.locator("form", { hasText: "Add competition" });
+    await quickAdd.getByLabel("Name").fill(quickName);
+    // A past date on purpose: it keeps this row off the "next comp" slot, so it
+    // disturbs neither the spine's feature row nor any other spec.
+    await quickAdd.getByLabel("Date").fill("2020-03-07");
+    await quickAdd.getByRole("button", { name: "Add competition" }).click();
+
+    await page.waitForURL(/\/demo\/season\?created=comp-[0-9a-f-]+/);
+    await expect(
+      page.getByText("Competition added to your season."),
+    ).toBeVisible();
+    await expect(page.getByText(quickName)).toBeVisible();
+
+    // --- Spine row edit (spec 005 US2): fix the date without navigating ------
+    const createdKey = new URL(page.url()).searchParams.get("created") ?? "";
+    await page.goto(`/demo/season?edit=${createdKey}`);
+    const editPanel = page.locator("details[open] .drawer-panel");
+    await editPanel.getByLabel("Date").fill("2020-03-14");
+    await editPanel.getByRole("button", { name: "Save" }).click();
+
+    // Still on Season, row re-rendered in its new position.
+    await page.waitForURL(new RegExp(`/demo/season\\?saved=${createdKey}`));
+    await expect(page.getByText(quickName)).toBeVisible();
   });
 });

@@ -2303,6 +2303,9 @@
     display: flex;
     gap: 0.6rem;
     flex-wrap: wrap;
+    /* Centers the quiet "Edit" disclosure against the solid buttons beside it
+       (they are all one height, so nothing else moves). */
+    align-items: center;
   }
 
   .season-feature-actions .button-link {
@@ -4413,6 +4416,12 @@
     .season-actions .button-link {
       flex: 1;
       text-align: center;
+    }
+
+    /* The "+ Add" drawer is a <details> wrapping the button, so the stretch
+       has to land on the wrapper for it to sit level with Trophy case. */
+    .season-actions .drawer {
+      flex: 1;
     }
 
     .season-filter-note {
