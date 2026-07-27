@@ -12,9 +12,9 @@
 
 ## Phase 2 — Wave 2: Trip planning
 
-- [ ] T125 One assignment model (US5): remove `?sel=` select-then-place from `travel/[tripId]` (links, selected-state UI, per-group "Assign here"); fill-target flow (`?fill=`, sticky bar, chip queue) becomes the sole path; unassigned list becomes read-only status; e2e specs exercising `?sel=` rewritten to fill-flow parity.
-- [ ] T126 Scannable trip page (US6): constant section order (Overview · Schedule · Buses · Rooms · Chaperones · Papers · Danger zone), live-summary `<summary>` lines on every disclosure, edit-trip popover summary, section-local error rendering, delete under Danger zone.
-- [ ] T127 Wave-2 verification: full gate + e2e listing + visual QA (fill flow on 375px, section summaries, contrast).
+- [X] T125 One assignment model (US5): remove `?sel=` select-then-place from `travel/[tripId]` (links, selected-state UI, per-group "Assign here"); fill-target flow (`?fill=`, sticky bar, chip queue) becomes the sole path; unassigned list becomes read-only status; e2e specs exercising `?sel=` rewritten to fill-flow parity.
+- [X] T126 Scannable trip page (US6): constant section order (Overview · Schedule · Buses · Rooms · Chaperones · Papers · Danger zone), live-summary `<summary>` lines on every disclosure, edit-trip popover summary, section-local error rendering, delete under Danger zone.
+- [X] T127 Wave-2 verification: full gate + e2e listing + visual QA (fill flow on 375px, section summaries, contrast).
 
 ## Phase 3 — Wave 3: Comp week
 
