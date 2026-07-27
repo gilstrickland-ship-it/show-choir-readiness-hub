@@ -49,6 +49,7 @@
 - [ ] T141 Role-aware mobile tabs: `MobileNav` backfills tab slots from the viewer's visible nav items (ordered preference), More sheet holds the rest.
 - [ ] T142 Shared components: one SubTabs (six copies retired, one visual class), one ShareLinkCard (three duplicated blocks retired), `<Flash>` helper adopted on hotspot pages (shifts, hosting, trip, treasury).
 - [ ] T143 Dead-weight cleanup: `support_access` flag removed from registry (real gate documented), `/costumes/alterations` stub deleted (backTarget default corrected), single `TIMEZONES` source, quick-change explainer sentence.
+- [ ] T143a Slug-redirect hardening (Wave-1 review follow-up): every module-page `fail()`/redirect that interpolates the form's `slug` goes through the fail-closed `returnPath`/`programPath` guard (protocol-relative open-redirect class fixed app-wide, F6 pattern); rollover page `ERR[sp.error]` gets the Object.hasOwn + array-typed-param guards like the season page.
 - [ ] T144 Wave-8 verification: full gate + e2e + visual QA (per-role mobile nav screenshots).
 
 ## Phase 9 — Wave 9: Tutorials & first-use refresh (runs LAST, after Waves 1–8)
