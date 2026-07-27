@@ -2001,7 +2001,16 @@
     border-top: 1px solid var(--line);
   }
 
-  .season-row.past {
+  /* Past rows read quieter — by dimming the row's CONTENTS, one by one, rather
+     than the row box. Fading the box would take the open edit popover down with
+     it (it lives inside the row), and a translucent popover lets the spine bleed
+     through its own form. Compound selectors, so nothing here can outrank the
+     base-layer element styles it sits next to (the T061/T066 cascade trap). */
+  .season-row.past > .season-date,
+  .season-row.past > .kind-tag,
+  .season-row.past > .season-row-main,
+  .season-row.past > .season-row-right > :not(.drawer),
+  .season-row.past > .season-row-right > .drawer > summary {
     opacity: 0.72;
   }
 
@@ -2051,6 +2060,14 @@
   .kind-tag.comp {
     background: var(--accent-soft);
     color: var(--accent-strong);
+    /* `comp` is ALSO the class on the competition command center's page root
+       (`.comp`, further down this layer), which is a full-width flex column.
+       Same specificity, later in source, so it wins — and the spine's Comp pill
+       stretches across the row, shoving the title and the right slot out of it.
+       This compound selector is the fix and the guard: any single-class rule
+       that borrows one of these variant names loses to it. */
+    display: inline-block;
+    width: auto;
   }
 
   .kind-tag.rehearsal,
@@ -2249,6 +2266,8 @@
     flex-direction: column;
     gap: 0.6rem;
     min-width: 0;
+    /* Anchor for the row's edit popover — see .season-feature-actions .drawer. */
+    position: relative;
   }
 
   .season-feature-badges {
@@ -2311,6 +2330,15 @@
   .season-feature-actions .button-link {
     font-size: 0.84rem;
     padding: 0.5rem 0.95rem;
+  }
+
+  /* The feature row's action bar wraps, so its "Edit" summary sits at whatever
+     x the buttons before it leave — a panel anchored to the summary walks off
+     the right edge of a narrow screen. Turning the wrapper static hands the
+     anchoring to .season-feature-body instead: one predictable left edge, and a
+     panel that can be sized against the body it hangs from. */
+  .season-feature-actions .drawer {
+    position: static;
   }
 
   /* ---------------- Competition command center ---------------- */
@@ -3065,21 +3093,25 @@
 
   /* Spine row-edit popovers (Season). Same drawer, narrower, and pinned to the
      side that keeps it on screen: rows hang off the spine's right edge, the
-     next-comp feature row's action bar starts at the left. Compound selectors
-     so neither the base `.drawer-panel` nor its phone override can win by
-     source order (the T061/T066 cascade trap). */
+     next-comp feature row's panel hangs off the left edge of the row body it is
+     anchored to. Compound selectors so neither the base `.drawer-panel` nor its
+     phone override can win by source order (the T061/T066 cascade trap). */
   .drawer-panel.season-edit-panel,
   .drawer-panel.season-feature-edit-panel {
-    width: min(24rem, 88vw);
     text-align: left;
   }
 
   .drawer-panel.season-edit-panel {
+    width: min(24rem, 88vw);
     right: 0;
     left: auto;
   }
 
+  /* Anchored to .season-feature-body, so "no wider than that body" is the width
+     that fits at every viewport — the body is already inset by the date column,
+     and 88vw would hang the same distance past the right edge. */
   .drawer-panel.season-feature-edit-panel {
+    width: min(24rem, 100%);
     left: 0;
     right: auto;
   }
@@ -4419,9 +4451,17 @@
     }
 
     /* The "+ Add" drawer is a <details> wrapping the button, so the stretch
-       has to land on the wrapper for it to sit level with Trophy case. */
+       has to land on the wrapper for it to sit level with Trophy case — and
+       then on the summary inside it, or the button stays text-width and half
+       the stretched row isn't tappable. */
     .season-actions .drawer {
       flex: 1;
+    }
+
+    .season-actions .drawer > summary {
+      display: block;
+      width: 100%;
+      text-align: center;
     }
 
     .season-filter-note {
@@ -4527,17 +4567,18 @@
 
     /* …but the spine's row popovers keep their own anchoring — flipping them
        would push the panel off the side of the phone. */
-    .drawer-panel.season-edit-panel,
-    .drawer-panel.season-feature-edit-panel {
-      width: min(24rem, 88vw);
-    }
-
     .drawer-panel.season-edit-panel {
+      width: min(24rem, 88vw);
       right: 0;
       left: auto;
     }
 
+    /* The feature panel hangs off the row BODY, which on a 375px phone is the
+       screen minus the page padding (2.2rem) and the 76px date column plus its
+       1.1rem gutter — about 246px. Sizing to that body is what keeps it on
+       screen; 88vw (330px) would run 84px past the right edge. */
     .drawer-panel.season-feature-edit-panel {
+      width: min(24rem, 100%);
       left: 0;
       right: auto;
     }
