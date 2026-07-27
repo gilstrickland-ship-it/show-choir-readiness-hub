@@ -34,6 +34,13 @@ function seasonReturn(fd: FormData, slug: string): string | null {
   return returnPath(slug, str(fd, "from"));
 }
 
+// A SPARSE save carries only the fields it edits (the Season page's row-edit
+// popover: name, date, status). Full forms — the module pages' — carry the whole
+// record, where an absent field still means "cleared", byte-for-byte as before.
+function isSparse(fd: FormData): boolean {
+  return str(fd, "sparse") === "1";
+}
+
 function nullable(fd: FormData, key: string): string | null {
   const v = str(fd, key);
   return v || null;
@@ -116,7 +123,9 @@ export async function createCompetition(formData: FormData): Promise<void> {
   revalidatePath(`/${slug}/competitions`);
   if (back) {
     revalidatePath(back);
-    redirect(`${back}?created=comp-${data.id}`);
+    // The fragment scrolls the new row into view; ?created= is what actually
+    // highlights it, and still does the whole job on its own.
+    redirect(`${back}?created=comp-${data.id}#item-comp-${data.id}`);
   }
   redirect(`/${slug}/competitions/${data.id}?created=1`);
 }
@@ -143,40 +152,63 @@ export async function updateCompetition(formData: FormData): Promise<void> {
       ? `${back}?error=${code}&edit=comp-${competitionId}`
       : `/${slug}/competitions/${competitionId}?error=${code}`;
 
-  const name = str(formData, "name");
-  if (!name) redirect(fail("name"));
+  // The spine popover edits three fields and sends three fields; everything it
+  // doesn't send is left exactly as it is. That is what keeps a name/date fix
+  // from stomping a host school someone else just typed on the detail page —
+  // and, below, from computing an ensemble "removal" out of a set the form was
+  // never carrying in the first place.
+  const sparse = isSparse(formData);
+  const sends = (key: string): boolean => !sparse || formData.get(key) !== null;
 
-  const newEnsembleIds = ensembleIdsFrom(formData);
-  // ≥1 ensemble required (F6, D3).
-  if (newEnsembleIds.length === 0) redirect(fail("ensemble"));
-  const confirmed = str(formData, "confirm_ensemble") === "1";
+  const name = str(formData, "name");
+  if (sends("name") && !name) redirect(fail("name"));
+
+  const fields: Record<string, unknown> = {};
+  if (sends("name")) fields.name = name;
+  if (sends("date")) fields.date = nullable(formData, "date");
+  if (sends("status")) {
+    const status = str(formData, "status") as CompetitionStatus;
+    fields.status = COMPETITION_STATUSES.includes(status) ? status : "planned";
+  }
+  if (sends("host_school")) fields.host_school = nullable(formData, "host_school");
+  if (sends("venue_address")) {
+    fields.venue_address = nullable(formData, "venue_address");
+  }
+  if (sends("showchoir_com_url")) {
+    fields.showchoir_com_url = nullable(formData, "showchoir_com_url");
+  }
 
   const supabase = await createClient();
 
-  const currentEnsembleIds = await competitionEnsembleIds(supabase, competitionId);
-  const currentSet = new Set(currentEnsembleIds);
-  const newSet = new Set(newEnsembleIds);
-  const added = newEnsembleIds.filter((id) => !currentSet.has(id));
-  const removed = currentEnsembleIds.filter((id) => !newSet.has(id));
+  // Who is going is detail-page work, so a sparse save never diffs the junction:
+  // it has no opinion about the set, and treating "didn't say" as "remove" is how
+  // a concurrent ensemble add turned a date fix into a removal-confirm bounce.
+  let added: string[] = [];
+  let removed: string[] = [];
+  let newEnsembleIds: string[] = [];
+  if (!sparse) {
+    newEnsembleIds = ensembleIdsFrom(formData);
+    // ≥1 ensemble required (F6, D3).
+    if (newEnsembleIds.length === 0) redirect(fail("ensemble"));
+    const confirmed = str(formData, "confirm_ensemble") === "1";
 
-  // Guard: removing an ensemble drops students from eligibility — confirm first.
-  if (removed.length > 0 && !confirmed) {
-    redirect(
-      `/${slug}/competitions/${competitionId}?confirm=ensemble&pending_ensembles=${encodeURIComponent(newEnsembleIds.join(","))}`,
-    );
+    const currentEnsembleIds = await competitionEnsembleIds(supabase, competitionId);
+    const currentSet = new Set(currentEnsembleIds);
+    const newSet = new Set(newEnsembleIds);
+    added = newEnsembleIds.filter((id) => !currentSet.has(id));
+    removed = currentEnsembleIds.filter((id) => !newSet.has(id));
+
+    // Guard: removing an ensemble drops students from eligibility — confirm first.
+    if (removed.length > 0 && !confirmed) {
+      redirect(
+        `/${slug}/competitions/${competitionId}?confirm=ensemble&pending_ensembles=${encodeURIComponent(newEnsembleIds.join(","))}`,
+      );
+    }
   }
 
-  const status = str(formData, "status") as CompetitionStatus;
   const { error } = await supabase
     .from("competitions")
-    .update({
-      name,
-      host_school: nullable(formData, "host_school"),
-      venue_address: nullable(formData, "venue_address"),
-      date: nullable(formData, "date"),
-      showchoir_com_url: nullable(formData, "showchoir_com_url"),
-      status: COMPETITION_STATUSES.includes(status) ? status : "planned",
-    })
+    .update(fields)
     .eq("id", competitionId)
     .eq("program_id", programId);
 
@@ -225,7 +257,7 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   revalidatePath(`/${slug}/competitions/${competitionId}`);
   if (back) {
     revalidatePath(back);
-    redirect(`${back}?saved=comp-${competitionId}`);
+    redirect(`${back}?saved=comp-${competitionId}#item-comp-${competitionId}`);
   }
   redirect(`/${slug}/competitions/${competitionId}?saved=1`);
 }

@@ -39,6 +39,13 @@ function seasonReturn(fd: FormData, slug: string): string | null {
   return returnPath(slug, str(fd, "from"));
 }
 
+// A SPARSE save carries only the fields it edits (the Season page's row-edit
+// popover: name, the two dates, overnight). Full forms — the trip page's — carry
+// the whole record, where an absent field still means "cleared", as before.
+function isSparse(fd: FormData): boolean {
+  return str(fd, "sparse") === "1";
+}
+
 // ---- Trips -----------------------------------------------------------------
 
 export async function createTrip(formData: FormData): Promise<void> {
@@ -103,7 +110,9 @@ export async function createTrip(formData: FormData): Promise<void> {
   revalidatePath(`/${slug}/travel`);
   if (back) {
     revalidatePath(back);
-    redirect(`${back}?created=trip-${data.id}`);
+    // The fragment scrolls the new row into view; ?created= is what actually
+    // highlights it, and still does the whole job on its own.
+    redirect(`${back}?created=trip-${data.id}#item-trip-${data.id}`);
   }
   redirect(`/${slug}/travel/${data.id}`);
 }
@@ -133,6 +142,9 @@ export async function updateTrip(formData: FormData): Promise<void> {
     redirect(fail("dates"));
   }
 
+  // Both forms show this checkbox, so both modes read it. (A checkbox can't use
+  // the "was it sent?" test the other fields use: an unticked box sends nothing,
+  // and unticking it is precisely the case the room guard below exists for.)
   const isOvernight = str(formData, "is_overnight") === "on";
 
   const supabase = await createClient();
@@ -153,15 +165,22 @@ export async function updateTrip(formData: FormData): Promise<void> {
     }
   }
 
+  // Which competition a trip belongs to is trip-page work. A sparse save doesn't
+  // carry it, so it doesn't touch it — reading that silence as "unlink" is how a
+  // date fix used to cut a trip loose from its competition.
+  const fields: Record<string, unknown> = {
+    name,
+    starts_on: startsOn,
+    ends_on: endsOn,
+    is_overnight: isOvernight,
+  };
+  if (!isSparse(formData)) {
+    fields.competition_id = nullable(formData, "competition_id");
+  }
+
   const { error } = await supabase
     .from("trips")
-    .update({
-      name,
-      starts_on: startsOn,
-      ends_on: endsOn,
-      is_overnight: isOvernight,
-      competition_id: nullable(formData, "competition_id"),
-    })
+    .update(fields)
     .eq("id", tripId)
     .eq("program_id", programId);
 
@@ -170,7 +189,7 @@ export async function updateTrip(formData: FormData): Promise<void> {
   revalidatePath(`/${slug}/travel/${tripId}`);
   if (back) {
     revalidatePath(back);
-    redirect(`${back}?saved=trip-${tripId}`);
+    redirect(`${back}?saved=trip-${tripId}#item-trip-${tripId}`);
   }
   redirect(`/${slug}/travel/${tripId}`);
 }

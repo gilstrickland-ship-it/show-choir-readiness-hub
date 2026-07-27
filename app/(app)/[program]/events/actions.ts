@@ -5,7 +5,11 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { zonedWallToUtc } from "@/lib/datetime";
-import { EVENTS_WRITE_ROLES, EVENT_KINDS } from "@/lib/events";
+import {
+  EVENTS_WRITE_ROLES,
+  EVENT_KINDS,
+  shiftedEndInstant,
+} from "@/lib/events";
 import { returnPath } from "@/lib/return-path";
 
 // General events CRUD + weekly repeat helper (§5a, T013). Writers: director/admin
@@ -22,6 +26,13 @@ function str(fd: FormData, key: string): string {
 // client-supplied URL. Absent/unknown ⇒ null ⇒ today's redirects, unchanged.
 function seasonReturn(fd: FormData, slug: string): string | null {
   return returnPath(slug, str(fd, "from"));
+}
+
+// A SPARSE save carries only the fields it edits (the Season page's row-edit
+// popover: title, start, location). Full forms — the detail page's — carry the
+// whole record, where an absent field still means "cleared", exactly as before.
+function isSparse(fd: FormData): boolean {
+  return str(fd, "sparse") === "1";
 }
 
 // Selected ensemble ids from the audience checkbox group. Zero = whole program
@@ -76,6 +87,20 @@ export async function createEvent(formData: FormData): Promise<void> {
   const startsWall = str(formData, "starts_at");
   const endsWall = str(formData, "ends_at");
 
+  // An event added from the Season page must have a start: the spine is
+  // chronological, so an undated event would be created and then be invisible on
+  // the very page the director is looking at. The Events page's own create keeps
+  // allowing undated events — its calendar is not the only way to reach them.
+  if (back && !startsWall) redirect(fail("starts"));
+
+  // An end before its start is a typo, every time. Checking the first occurrence
+  // is enough: a weekly repeat shifts both ends by the same whole weeks.
+  const firstStart = zonedWallToUtc(startsWall, tz);
+  const firstEnd = zonedWallToUtc(endsWall, tz);
+  if (firstStart && firstEnd && firstEnd.getTime() < firstStart.getTime()) {
+    redirect(fail("dates"));
+  }
+
   // Repeat: weekly, count-limited (1 = single event).
   let count = Number(str(formData, "repeat_count")) || 1;
   if (count < 1) count = 1;
@@ -122,8 +147,11 @@ export async function createEvent(formData: FormData): Promise<void> {
   revalidatePath(`/${slug}/events`);
   if (back) {
     revalidatePath(back);
-    // A weekly repeat makes many rows; the spine highlights the first one.
-    redirect(`${back}?created=event-${(inserted as { id: string }[])[0]?.id ?? ""}`);
+    // A weekly repeat makes many rows; the spine highlights the first one. The
+    // fragment scrolls it into view; ?created= is what highlights it, and still
+    // does the whole job on its own.
+    const key = `event-${(inserted as { id: string }[])[0]?.id ?? ""}`;
+    redirect(`${back}?created=${key}#item-${key}`);
   }
   redirect(`/${slug}/events?created=${rows.length}`);
 }
@@ -143,51 +171,104 @@ export async function updateEvent(formData: FormData): Promise<void> {
       ? `${back}?error=${code}&edit=event-${eventId}`
       : `/${slug}/events/${eventId}?error=${code}`;
 
-  const title = str(formData, "title");
-  if (!title) redirect(fail("title"));
+  // The spine popover edits three fields and sends three fields; everything it
+  // doesn't send is left exactly as it is, instead of being cleared by a save
+  // that had no opinion about it.
+  const sparse = isSparse(formData);
+  const sends = (key: string): boolean => !sparse || formData.get(key) !== null;
 
-  const kindRaw = str(formData, "kind");
-  const kind = (EVENT_KINDS as readonly string[]).includes(kindRaw) ? kindRaw : "other";
+  const title = str(formData, "title");
+  if (sends("title") && !title) redirect(fail("title"));
+
+  const supabase = await createClient();
+
+  // A sparse save needs the stored row: to move the end time along with the
+  // start (below) and to date-check a start against an end it never carried.
+  let current: { starts_at: string | null; ends_at: string | null } | null = null;
+  if (sparse) {
+    const { data } = await supabase
+      .from("events")
+      .select("starts_at, ends_at")
+      .eq("id", eventId)
+      .eq("program_id", programId)
+      .maybeSingle();
+    current = data as { starts_at: string | null; ends_at: string | null } | null;
+  }
+
+  const fields: Record<string, unknown> = {};
+  if (sends("title")) fields.title = title;
+  if (sends("kind")) {
+    const kindRaw = str(formData, "kind");
+    fields.kind = (EVENT_KINDS as readonly string[]).includes(kindRaw)
+      ? kindRaw
+      : "other";
+  }
+  if (sends("location")) fields.location = str(formData, "location") || null;
+  if (sends("note")) fields.note = str(formData, "note") || null;
+
   const startsUtc = zonedWallToUtc(str(formData, "starts_at"), tz);
   const endsUtc = zonedWallToUtc(str(formData, "ends_at"), tz);
+  if (sends("starts_at")) {
+    fields.starts_at = startsUtc ? startsUtc.toISOString() : null;
+  }
+  if (sends("ends_at")) {
+    fields.ends_at = endsUtc ? endsUtc.toISOString() : null;
+  } else if (sends("starts_at")) {
+    // Moving the start on the spine moves the end with it, so the event keeps
+    // its length. Null when there's nothing to move — then ends_at is untouched.
+    const shifted = shiftedEndInstant(
+      current?.starts_at ?? null,
+      (fields.starts_at as string | null) ?? null,
+      current?.ends_at ?? null,
+    );
+    if (shifted) fields.ends_at = shifted;
+  }
 
-  const ensembleIds = ensembleIdsFrom(formData);
-  const supabase = await createClient();
+  // An end before its start is a typo, every time. Whichever side this save
+  // supplied, it is checked against the value the row will actually hold.
+  const nextStart = "starts_at" in fields
+    ? (fields.starts_at as string | null)
+    : current?.starts_at ?? null;
+  const nextEnd = "ends_at" in fields
+    ? (fields.ends_at as string | null)
+    : current?.ends_at ?? null;
+  if (nextStart && nextEnd && Date.parse(nextEnd) < Date.parse(nextStart)) {
+    redirect(fail("dates"));
+  }
+
   const { error } = await supabase
     .from("events")
-    .update({
-      title,
-      kind,
-      location: str(formData, "location") || null,
-      note: str(formData, "note") || null,
-      starts_at: startsUtc ? startsUtc.toISOString() : null,
-      ends_at: endsUtc ? endsUtc.toISOString() : null,
-    })
+    .update(fields)
     .eq("id", eventId)
     .eq("program_id", programId);
 
   if (error) redirect(fail("save"));
 
   // Replace the targeted-ensemble subset. Zero selected ⇒ whole program (D2).
-  await supabase
-    .from("event_ensembles")
-    .delete()
-    .eq("program_id", programId)
-    .eq("event_id", eventId);
-  if (ensembleIds.length > 0) {
-    await supabase.from("event_ensembles").insert(
-      ensembleIds.map((ensemble_id) => ({
-        program_id: programId,
-        event_id: eventId,
-        ensemble_id,
-      })),
-    );
+  // Who an event is for is detail-page work, so a sparse save leaves it alone
+  // rather than reading its silence as "nobody in particular".
+  if (!sparse) {
+    const ensembleIds = ensembleIdsFrom(formData);
+    await supabase
+      .from("event_ensembles")
+      .delete()
+      .eq("program_id", programId)
+      .eq("event_id", eventId);
+    if (ensembleIds.length > 0) {
+      await supabase.from("event_ensembles").insert(
+        ensembleIds.map((ensemble_id) => ({
+          program_id: programId,
+          event_id: eventId,
+          ensemble_id,
+        })),
+      );
+    }
   }
 
   revalidatePath(`/${slug}/events`);
   if (back) {
     revalidatePath(back);
-    redirect(`${back}?saved=event-${eventId}`);
+    redirect(`${back}?saved=event-${eventId}#item-event-${eventId}`);
   }
   redirect(`/${slug}/events/${eventId}?saved=1`);
 }

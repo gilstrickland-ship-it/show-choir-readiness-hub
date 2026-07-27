@@ -69,6 +69,9 @@ export default async function EventDetailPage({
 
       {sp.saved && <p className="alert-ok">Saved.</p>}
       {sp.error === "title" && <p className="alert-error">An event needs a title.</p>}
+      {sp.error === "dates" && (
+        <p className="alert-error">The end time is before the start.</p>
+      )}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
 
       <p className="muted">

@@ -148,6 +148,9 @@ export default async function EventsPage({
       {sp.error === "season" && (
         <p className="alert-error">Activate a season before adding events.</p>
       )}
+      {sp.error === "dates" && (
+        <p className="alert-error">The end time is before the start.</p>
+      )}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
 
       <div className="settings-tabs">
