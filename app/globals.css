@@ -1982,6 +1982,16 @@
     opacity: 0.72;
   }
 
+  /* The row you just added, on the way back from the quick-add drawer (or the
+     row you just corrected in its edit popover). Compound selectors on purpose:
+     a bare `.just-added` in this layer would outrank the base-layer element
+     variants it sits next to (the T061/T066 cascade trap). */
+  .season-row.just-added,
+  .season-feature.just-added {
+    background: var(--ok-soft);
+    box-shadow: inset 3px 0 0 var(--ok-text);
+  }
+
   .season-date {
     width: 76px;
     flex: none;
@@ -2968,6 +2978,59 @@
     border-bottom: none;
     padding: 0;
     width: auto;
+  }
+
+  /* Quick-add sections inside the drawer (Season "+ Add"). One accordion — the
+     sections share a `name` so opening one closes the others — holding the true
+     minimum per kind; everything else is a "More options →" away. */
+  .quick-add-kinds {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .quick-add-kind {
+    border-top: 1px solid var(--line);
+  }
+
+  .quick-add-kind:first-child {
+    border-top: none;
+  }
+
+  .quick-add-kind[open] {
+    padding-bottom: 0.9rem;
+  }
+
+  .quick-add-kind > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.6rem 0;
+    font-family: var(--font-display-stack);
+    font-size: 0.95rem;
+    font-weight: 650;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .quick-add-kind > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .quick-add-kind > summary::marker {
+    content: "";
+  }
+
+  .quick-add-kind > summary::before {
+    content: "+ ";
+    color: var(--accent);
+  }
+
+  .quick-add-kind[open] > summary::before {
+    content: "– ";
+  }
+
+  .quick-add-kind > summary:hover {
+    color: var(--accent);
   }
 
   /* Metric strip — 1px-gap grid on --line, cells --paper (Money). */

@@ -9,14 +9,22 @@ import {
   competitionEnsembleMap,
   eventEnsembleMap,
 } from "@/lib/competitions";
-import { EVENTS_WRITE_ROLES } from "@/lib/events";
+import {
+  EVENTS_WRITE_ROLES,
+  EVENT_KINDS,
+  EVENT_KIND_LABELS,
+} from "@/lib/events";
 import { TRAVEL_WRITE_ROLES } from "@/lib/travel";
 import { loadCompReadiness } from "@/lib/readiness";
 import { activeShareLinks, seasonCalendarUrl } from "@/lib/tokens";
 import { regenerateSeasonCalendarShareLink } from "./actions";
+import { createCompetition } from "../competitions/actions";
+import { createEvent } from "../events/actions";
+import { createTrip } from "../travel/actions";
 import {
   zonedWallToUtc,
   zonedDateKey,
+  formatDateInTz,
   formatTimeInTz,
 } from "@/lib/datetime";
 import { formatHostedDateRange } from "@/lib/hosting";
@@ -76,6 +84,39 @@ interface SeasonItem {
 const FILTERS = ["everything", "competitions", "events", "trips"] as const;
 type Filter = (typeof FILTERS)[number];
 
+// Quick-add drawer sections. `?add=<kind>` opens the drawer on that section —
+// which is also how a failed create comes back (the action redirects here with
+// its existing ?error= code plus the section key, the roster-drawer pattern).
+const ADD_KINDS = ["comp", "event", "trip"] as const;
+type AddKind = (typeof ADD_KINDS)[number];
+
+// The create actions' error codes, reworded not at all: these are the same
+// messages the module pages show, rendered inside the section that produced them.
+const ADD_ERROR: Record<AddKind, Record<string, string>> = {
+  comp: {
+    name: "A competition needs a name.",
+    ensemble: "Pick at least one ensemble for the competition.",
+    season: "Activate a season before adding competitions.",
+    save: "Couldn't save. Try again.",
+  },
+  event: {
+    title: "An event needs a title.",
+    season: "Activate a season before adding events.",
+    save: "Couldn't save. Try again.",
+  },
+  trip: {
+    name: "A trip needs a name.",
+    season: "Activate a season before adding trips.",
+    save: "Couldn't save. Try again.",
+  },
+};
+
+const ADD_KIND_LABEL: Record<AddKind, string> = {
+  comp: "Competition",
+  event: "Event",
+  trip: "Trip",
+};
+
 const EVENT_TAG: Record<string, { tag: string; cls: string }> = {
   rehearsal: { tag: "Rehearsal", cls: "rehearsal" },
   fundraiser: { tag: "Fundraiser", cls: "fundraiser" },
@@ -89,7 +130,14 @@ export default async function SeasonPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ filter?: string; calShare?: string; calError?: string }>;
+  searchParams: Promise<{
+    filter?: string;
+    calShare?: string;
+    calError?: string;
+    add?: string;
+    error?: string;
+    created?: string;
+  }>;
 }) {
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
@@ -110,10 +158,23 @@ export default async function SeasonPage({
   const base = `/${slug}`;
   const seasonId = season?.id ?? null;
 
-  const { filter: filterParam, calShare, calError } = await searchParams;
+  const {
+    filter: filterParam,
+    calShare,
+    calError,
+    add: addParam,
+    error: errorParam,
+    created,
+  } = await searchParams;
   const filter: Filter = FILTERS.includes(filterParam as Filter)
     ? (filterParam as Filter)
     : "everything";
+  // Which quick-add section is open (and therefore which error belongs to it).
+  const addKind: AddKind | null = (ADD_KINDS as readonly string[]).includes(
+    addParam ?? "",
+  )
+    ? (addParam as AddKind)
+    : null;
 
   const supabase = await createClient();
 
@@ -136,14 +197,18 @@ export default async function SeasonPage({
     ? freshSeasonCalUrl.replace(/^https:\/\//, "webcal://")
     : null;
 
-  // Ensemble names (shared by comp + event meta).
+  // Ensemble names (shared by comp + event meta) — ordered, because the same
+  // list is the quick-add drawer's "who's going" checkboxes.
   const ensembleName = new Map<string, string>();
+  let ensembles: { id: string; name: string }[] = [];
   if (seasonId && (flags.competitions || flags.events)) {
     const { data: ensData } = await supabase
       .from("ensembles")
       .select("id, name")
-      .eq("program_id", program.id);
-    for (const e of (ensData as { id: string; name: string }[] | null) ?? []) {
+      .eq("program_id", program.id)
+      .order("sort_order", { ascending: true });
+    ensembles = (ensData as { id: string; name: string }[] | null) ?? [];
+    for (const e of ensembles) {
       ensembleName.set(e.id, e.name);
     }
   }
@@ -181,6 +246,10 @@ export default async function SeasonPage({
   // pointer. Counted from the comps we already fetch (no extra query), surfaced
   // as a muted note near the top of the spine.
   let undatedCompCount = 0;
+  // Competitions with no trip yet — the quick-add drawer's primary trip path
+  // (and the same set the travel page suggests trips for). Filled from the comps
+  // we already fetch; no extra query.
+  let compsWithoutTrip: { id: string; name: string; date: string | null }[] = [];
   if (flags.competitions && seasonId) {
     const { data: compData } = await supabase
       .from("competitions")
@@ -243,6 +312,9 @@ export default async function SeasonPage({
         []) {
         if (t.competition_id) linkedCompIds.add(t.competition_id);
       }
+      compsWithoutTrip = comps
+        .filter((c) => !linkedCompIds.has(c.id))
+        .map((c) => ({ id: c.id, name: c.name, date: c.date }));
     }
 
     // Next comp = earliest upcoming planned/confirmed comp (feature row).
@@ -463,12 +535,16 @@ export default async function SeasonPage({
   // Per-kind add affordances — the season spine absorbs the module lists, so it
   // must also be where a writer starts a new item. Each is gated by its flag AND
   // its module's write-role set (re-checked server-side in each create action);
-  // a role with no write access sees no add buttons (the pills/rows still browse).
-  // Links target the #add anchor on each module's create form.
+  // a role with no write access sees no add button at all (the pills/rows still
+  // browse). One "+ Add" drawer holds every kind the viewer may create; the full
+  // forms stay on the module pages behind each section's "More options →".
   const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
   const canAddEvent = flags.events && EVENTS_WRITE_ROLES.includes(role);
   const canAddTrip = flags.travel && TRAVEL_WRITE_ROLES.includes(role);
   const canAddAny = canAddComp || canAddEvent || canAddTrip;
+
+  // "Competition added." after a quick add — the created key is `<kind>-<id>`.
+  const createdKind = created?.split("-")[0] ?? null;
 
   return (
     <section className="season">
@@ -478,20 +554,21 @@ export default async function SeasonPage({
           <h1 className="season-h1">The Season</h1>
         </div>
         <div className="season-actions">
-          {canAddComp && (
-            <Link href={`${base}/competitions#add`} className="button-link accent">
-              + Competition
-            </Link>
-          )}
-          {canAddEvent && (
-            <Link href={`${base}/events#add`} className="button-link secondary">
-              + Event
-            </Link>
-          )}
-          {canAddTrip && (
-            <Link href={`${base}/travel#add`} className="button-link secondary">
-              + Trip
-            </Link>
+          {canAddAny && (
+            <QuickAdd
+              slug={slug}
+              base={base}
+              programId={program.id}
+              seasonId={seasonId}
+              tz={tz}
+              ensembles={ensembles}
+              compsWithoutTrip={compsWithoutTrip}
+              canAddComp={canAddComp}
+              canAddEvent={canAddEvent}
+              canAddTrip={canAddTrip}
+              openKind={addKind}
+              error={errorParam ?? null}
+            />
           )}
           {flags.archive && (
             <Link href={`${base}/history`} className="button-link secondary">
@@ -505,6 +582,16 @@ export default async function SeasonPage({
         <p className="alert-error">
           No active season yet.{" "}
           <Link href={`${base}/settings/rollover`}>Start a season</Link> to begin.
+        </p>
+      )}
+
+      {createdKind && (
+        <p className="alert-ok">
+          {createdKind === "comp"
+            ? "Competition added to your season."
+            : createdKind === "event"
+              ? "Event added to your season."
+              : "Trip added to your season."}
         </p>
       )}
 
@@ -607,15 +694,15 @@ export default async function SeasonPage({
               {" "}
               Add{" "}
               {canAddComp && (
-                <Link href={`${base}/competitions#add`}>a competition</Link>
+                <Link href={`${base}/season?add=comp`}>a competition</Link>
               )}
               {canAddComp && (canAddEvent || canAddTrip) &&
                 (canAddEvent && canAddTrip ? ", " : " or ")}
               {canAddEvent && (
-                <Link href={`${base}/events#add`}>an event</Link>
+                <Link href={`${base}/season?add=event`}>an event</Link>
               )}
               {canAddEvent && canAddTrip && " or "}
-              {canAddTrip && <Link href={`${base}/travel#add`}>a trip</Link>}
+              {canAddTrip && <Link href={`${base}/season?add=trip`}>a trip</Link>}
               {" to get started."}
             </>
           )}
@@ -633,7 +720,11 @@ export default async function SeasonPage({
               </div>
               {g.rows.map((it) =>
                 it.compId && it.compId === nextCompId ? (
-                  <div className="season-feature" key={it.key}>
+                  <div
+                    className={`season-feature${it.key === created ? " just-added" : ""}`}
+                    id={`item-${it.key}`}
+                    key={it.key}
+                  >
                     <div className="season-feature-date">
                       <div className="season-feature-num">{it.dayNum}</div>
                       <div className="season-date-dow">{it.weekday}</div>
@@ -688,7 +779,10 @@ export default async function SeasonPage({
                   </div>
                 ) : (
                   <div
-                    className={`season-row${it.isPast ? " past" : ""}`}
+                    className={`season-row${it.isPast ? " past" : ""}${
+                      it.key === created ? " just-added" : ""
+                    }`}
+                    id={`item-${it.key}`}
                     key={it.key}
                   >
                     <div className="season-date">
@@ -747,5 +841,329 @@ export default async function SeasonPage({
         </section>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Quick add (US1) — one "+ Add" drawer holding a minimal form per kind. Native
+// <details> only: the outer drawer is the roster-page popover, the inner
+// sections share a `name` so opening one closes the others. No client JS, no
+// state — `?add=<kind>` opens a section, and a failed create comes back on that
+// same URL with its error code. Anything beyond the true minimum lives behind
+// each section's "More options →" (the module page's full form).
+// ---------------------------------------------------------------------------
+function QuickAdd({
+  slug,
+  base,
+  programId,
+  seasonId,
+  tz,
+  ensembles,
+  compsWithoutTrip,
+  canAddComp,
+  canAddEvent,
+  canAddTrip,
+  openKind,
+  error,
+}: {
+  slug: string;
+  base: string;
+  programId: string;
+  seasonId: string | null;
+  tz: string;
+  ensembles: { id: string; name: string }[];
+  compsWithoutTrip: { id: string; name: string; date: string | null }[];
+  canAddComp: boolean;
+  canAddEvent: boolean;
+  canAddTrip: boolean;
+  openKind: AddKind | null;
+  error: string | null;
+}) {
+  // The section that produced the error is the one that reopens with it.
+  const errorFor = (kind: AddKind): string | null =>
+    openKind === kind && error ? ADD_ERROR[kind][error] ?? ADD_ERROR[kind].save : null;
+
+  return (
+    <details className="drawer" open={openKind !== null}>
+      <summary className="button-link accent">+ Add</summary>
+      <div className="drawer-panel">
+        <h2 className="drawer-title">Add to the season</h2>
+        {!seasonId ? (
+          <p className="muted">
+            Start your season first — competitions, events, and trips all belong
+            to a season.
+          </p>
+        ) : (
+          <div className="quick-add-kinds">
+            {canAddComp && (
+              <details
+                name="season-add-kind"
+                className="quick-add-kind"
+                open={openKind === "comp"}
+              >
+                <summary>{ADD_KIND_LABEL.comp}</summary>
+                {errorFor("comp") && (
+                  <p className="alert-error">{errorFor("comp")}</p>
+                )}
+                {ensembles.length === 0 ? (
+                  <p className="muted">
+                    Competitions need at least one ensemble (a performing group).{" "}
+                    <Link href={`${base}/roster/ensembles`}>
+                      Create one first →
+                    </Link>
+                  </p>
+                ) : (
+                  <form action={createCompetition} className="stack">
+                    <input type="hidden" name="programId" value={programId} />
+                    <input type="hidden" name="slug" value={slug} />
+                    <input type="hidden" name="seasonId" value={seasonId} />
+                    <input type="hidden" name="from" value="season" />
+                    {/* Everything new starts Planned; change it on the row or
+                        the comp page once the host confirms. */}
+                    <input type="hidden" name="status" value="planned" />
+                    <div className="row-inline">
+                      <label>
+                        Name
+                        <input
+                          type="text"
+                          name="name"
+                          required
+                          placeholder="Midwest Invitational"
+                        />
+                      </label>
+                      <label>
+                        Date
+                        <input type="date" name="date" />
+                      </label>
+                    </div>
+                    {/* One ensemble is not a choice — it rides along hidden.
+                        More than one and they all come pre-ticked (§004). */}
+                    {ensembles.length === 1 ? (
+                      <input
+                        type="hidden"
+                        name="ensemble_ids"
+                        value={ensembles[0].id}
+                      />
+                    ) : (
+                      <fieldset className="stack">
+                        <legend>Who is going</legend>
+                        <div className="row-inline" style={{ flexWrap: "wrap" }}>
+                          {ensembles.map((e) => (
+                            <label key={e.id} className="checkbox-inline">
+                              <input
+                                type="checkbox"
+                                name="ensemble_ids"
+                                value={e.id}
+                                defaultChecked
+                              />
+                              {e.name}
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                    )}
+                    <button type="submit">Add competition</button>
+                    <p className="muted">
+                      Host school, venue, and the rest:{" "}
+                      <Link href={`${base}/competitions#add`}>More options →</Link>
+                    </p>
+                  </form>
+                )}
+              </details>
+            )}
+
+            {canAddEvent && (
+              <details
+                name="season-add-kind"
+                className="quick-add-kind"
+                open={openKind === "event"}
+              >
+                <summary>{ADD_KIND_LABEL.event}</summary>
+                {errorFor("event") && (
+                  <p className="alert-error">{errorFor("event")}</p>
+                )}
+                <form action={createEvent} className="stack">
+                  <input type="hidden" name="programId" value={programId} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="seasonId" value={seasonId} />
+                  <input type="hidden" name="tz" value={tz} />
+                  <input type="hidden" name="from" value="season" />
+                  <div className="row-inline">
+                    <label>
+                      Title
+                      <input type="text" name="title" required />
+                    </label>
+                    <label>
+                      Starts
+                      <input type="datetime-local" name="starts_at" />
+                    </label>
+                    <label>
+                      Kind
+                      <select name="kind" defaultValue="rehearsal">
+                        {EVENT_KINDS.map((k) => (
+                          <option key={k} value={k}>
+                            {EVENT_KIND_LABELS[k]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  {/* Both of these are the exception, not the rule, so they stay
+                      folded away until someone needs them. */}
+                  {ensembles.length > 1 && (
+                    <details className="stack">
+                      <summary className="muted">Only some groups?</summary>
+                      <div className="row-inline" style={{ flexWrap: "wrap" }}>
+                        {ensembles.map((e) => (
+                          <label key={e.id} className="checkbox-inline">
+                            <input
+                              type="checkbox"
+                              name="ensemble_ids"
+                              value={e.id}
+                            />
+                            {e.name}
+                          </label>
+                        ))}
+                      </div>
+                      <p className="muted">
+                        Leave every box unticked and the whole program is invited.
+                      </p>
+                    </details>
+                  )}
+                  <details className="stack">
+                    <summary className="muted">Repeats weekly?</summary>
+                    <label>
+                      How many weeks
+                      <input
+                        type="number"
+                        name="repeat_count"
+                        className="num"
+                        min="1"
+                        max="52"
+                        defaultValue="1"
+                      />
+                    </label>
+                    <p className="muted">
+                      Each week becomes its own event you can change or delete on
+                      its own.
+                    </p>
+                  </details>
+                  <button type="submit">Add event</button>
+                  <p className="muted">
+                    Where it is, an end time, a note:{" "}
+                    <Link href={`${base}/events#add`}>More options →</Link>
+                  </p>
+                </form>
+              </details>
+            )}
+
+            {canAddTrip && (
+              <details
+                name="season-add-kind"
+                className="quick-add-kind"
+                open={openKind === "trip"}
+              >
+                <summary>{ADD_KIND_LABEL.trip}</summary>
+                {errorFor("trip") && (
+                  <p className="alert-error">{errorFor("trip")}</p>
+                )}
+                {compsWithoutTrip.length > 0 ? (
+                  <>
+                    {/* The common case by far: a bus (and rooms) for a
+                        competition already on the calendar. Name and dates come
+                        from that competition, server-side. */}
+                    <form action={createTrip} className="stack">
+                      <input type="hidden" name="programId" value={programId} />
+                      <input type="hidden" name="slug" value={slug} />
+                      <input type="hidden" name="seasonId" value={seasonId} />
+                      <input type="hidden" name="from" value="season" />
+                      <label>
+                        For a competition
+                        <select name="competition_id">
+                          {compsWithoutTrip.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.date
+                                ? ` · ${formatDateInTz(`${c.date}T12:00:00Z`, tz)}`
+                                : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="checkbox-inline">
+                        <input type="checkbox" name="is_overnight" /> Overnight
+                        (rooms + buses)
+                      </label>
+                      <button type="submit">Add trip</button>
+                      <p className="muted">
+                        The trip takes its name and date from the competition.
+                      </p>
+                    </form>
+                    <details className="stack">
+                      <summary className="muted">Not for a competition?</summary>
+                      <StandaloneTripForm
+                        slug={slug}
+                        programId={programId}
+                        seasonId={seasonId}
+                      />
+                    </details>
+                  </>
+                ) : (
+                  <StandaloneTripForm
+                    slug={slug}
+                    programId={programId}
+                    seasonId={seasonId}
+                  />
+                )}
+                <p className="muted">
+                  Rooms, buses, and chaperones:{" "}
+                  <Link href={`${base}/travel#add`}>More options →</Link>
+                </p>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// A trip that isn't tied to a competition (banquet, tour) — the alternative path
+// inside the trip section, and the only one when every competition already has
+// a trip.
+function StandaloneTripForm({
+  slug,
+  programId,
+  seasonId,
+}: {
+  slug: string;
+  programId: string;
+  seasonId: string;
+}) {
+  return (
+    <form action={createTrip} className="stack">
+      <input type="hidden" name="programId" value={programId} />
+      <input type="hidden" name="slug" value={slug} />
+      <input type="hidden" name="seasonId" value={seasonId} />
+      <input type="hidden" name="from" value="season" />
+      <div className="row-inline">
+        <label>
+          Name
+          <input type="text" name="name" required placeholder="Spring Trip" />
+        </label>
+        <label>
+          Starts
+          <input type="date" name="starts_on" />
+        </label>
+        <label>
+          Ends
+          <input type="date" name="ends_on" />
+        </label>
+      </div>
+      <label className="checkbox-inline">
+        <input type="checkbox" name="is_overnight" /> Overnight (rooms + buses)
+      </label>
+      <button type="submit">Add trip</button>
+    </form>
   );
 }

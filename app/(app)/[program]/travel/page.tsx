@@ -140,14 +140,14 @@ export default async function TravelPage({
           <ul className="stack" style={{ listStyle: "none", padding: 0 }}>
             {compsWithoutTrip.map((c) => (
               <li key={c.id} style={{ borderBottom: "1px solid var(--border)", padding: "0.5rem 0" }}>
+                {/* Name and dates are left off on purpose: createTrip takes them
+                    from the competition, so this row and the Season page's quick
+                    add share one server-side code path. */}
                 <form action={createTrip} className="row-inline">
                   <input type="hidden" name="programId" value={program.id} />
                   <input type="hidden" name="slug" value={slug} />
                   <input type="hidden" name="seasonId" value={season.id} />
                   <input type="hidden" name="competition_id" value={c.id} />
-                  <input type="hidden" name="name" value={`${c.name} — travel`} />
-                  <input type="hidden" name="starts_on" value={c.date ?? ""} />
-                  <input type="hidden" name="ends_on" value={c.date ?? ""} />
                   <span>
                     <strong>{c.name}</strong>{" "}
                     <span className="muted">{dateOnly(c.date, tz)}</span>

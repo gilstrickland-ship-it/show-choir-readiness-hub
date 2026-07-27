@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { zonedWallToUtc } from "@/lib/datetime";
 import { EVENTS_WRITE_ROLES, EVENT_KINDS } from "@/lib/events";
+import { returnPath } from "@/lib/return-path";
 
 // General events CRUD + weekly repeat helper (§5a, T013). Writers: director/admin
 // (events_write). Times arrive as program-tz wall clock and store UTC
@@ -14,6 +15,13 @@ import { EVENTS_WRITE_ROLES, EVENT_KINDS } from "@/lib/events";
 
 function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
+}
+
+// Where a create/edit launched from the Season page goes back to. `from` is an
+// opaque allow-listed key resolved server-side (lib/return-path) — never a
+// client-supplied URL. Absent/unknown ⇒ null ⇒ today's redirects, unchanged.
+function seasonReturn(fd: FormData, slug: string): string | null {
+  return returnPath(slug, str(fd, "from"));
 }
 
 // Selected ensemble ids from the audience checkbox group. Zero = whole program
@@ -50,9 +58,15 @@ export async function createEvent(formData: FormData): Promise<void> {
   const tz = str(formData, "tz") || "UTC";
   await requireRole(programId, EVENTS_WRITE_ROLES);
 
+  // Quick-add from the Season page comes back to Season with the drawer's event
+  // section reopened on the same error message it always used.
+  const back = seasonReturn(formData, slug);
+  const fail = (code: string): string =>
+    back ? `${back}?error=${code}&add=event` : `/${slug}/events?error=${code}`;
+
   const title = str(formData, "title");
-  if (!title) redirect(`/${slug}/events?error=title`);
-  if (!seasonId) redirect(`/${slug}/events?error=season`);
+  if (!title) redirect(fail("title"));
+  if (!seasonId) redirect(fail("season"));
 
   const kindRaw = str(formData, "kind");
   const kind = (EVENT_KINDS as readonly string[]).includes(kindRaw) ? kindRaw : "other";
@@ -90,7 +104,7 @@ export async function createEvent(formData: FormData): Promise<void> {
     .from("events")
     .insert(rows)
     .select("id");
-  if (error || !inserted) redirect(`/${slug}/events?error=save`);
+  if (error || !inserted) redirect(fail("save"));
 
   // Attach the targeted-ensemble subset to each materialized occurrence. Zero
   // ensembles selected ⇒ no junction rows ⇒ whole program (D2).
@@ -106,6 +120,11 @@ export async function createEvent(formData: FormData): Promise<void> {
   }
 
   revalidatePath(`/${slug}/events`);
+  if (back) {
+    revalidatePath(back);
+    // A weekly repeat makes many rows; the spine highlights the first one.
+    redirect(`${back}?created=event-${(inserted as { id: string }[])[0]?.id ?? ""}`);
+  }
   redirect(`/${slug}/events?created=${rows.length}`);
 }
 
@@ -116,8 +135,16 @@ export async function updateEvent(formData: FormData): Promise<void> {
   const tz = str(formData, "tz") || "UTC";
   await requireRole(programId, EVENTS_WRITE_ROLES);
 
+  // Spine edit popover (Season page): failures reopen that row's popover, saves
+  // land back on the spine. Allow-listed server-side; detail-page edits unchanged.
+  const back = seasonReturn(formData, slug);
+  const fail = (code: string): string =>
+    back
+      ? `${back}?error=${code}&edit=event-${eventId}`
+      : `/${slug}/events/${eventId}?error=${code}`;
+
   const title = str(formData, "title");
-  if (!title) redirect(`/${slug}/events/${eventId}?error=title`);
+  if (!title) redirect(fail("title"));
 
   const kindRaw = str(formData, "kind");
   const kind = (EVENT_KINDS as readonly string[]).includes(kindRaw) ? kindRaw : "other";
@@ -139,7 +166,7 @@ export async function updateEvent(formData: FormData): Promise<void> {
     .eq("id", eventId)
     .eq("program_id", programId);
 
-  if (error) redirect(`/${slug}/events/${eventId}?error=save`);
+  if (error) redirect(fail("save"));
 
   // Replace the targeted-ensemble subset. Zero selected ⇒ whole program (D2).
   await supabase
@@ -158,6 +185,10 @@ export async function updateEvent(formData: FormData): Promise<void> {
   }
 
   revalidatePath(`/${slug}/events`);
+  if (back) {
+    revalidatePath(back);
+    redirect(`${back}?saved=event-${eventId}`);
+  }
   redirect(`/${slug}/events/${eventId}?saved=1`);
 }
 

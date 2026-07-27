@@ -10,6 +10,7 @@ import {
   isAlreadyPlacedError,
   type TravelGroupKind,
 } from "@/lib/travel";
+import { returnPath } from "@/lib/return-path";
 
 // Travel CRUD + assignment (§6, T016). Writes are director/admin ("Travel
 // rosters" write in §2); every action re-checks the role via requireRole
@@ -31,6 +32,13 @@ function intOrNull(fd: FormData, key: string): number | null {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
+// Where a create/edit launched from the Season page goes back to. `from` is an
+// opaque allow-listed key resolved server-side (lib/return-path) — never a
+// client-supplied URL. Absent/unknown ⇒ null ⇒ today's redirects, unchanged.
+function seasonReturn(fd: FormData, slug: string): string | null {
+  return returnPath(slug, str(fd, "from"));
+}
+
 // ---- Trips -----------------------------------------------------------------
 
 export async function createTrip(formData: FormData): Promise<void> {
@@ -39,28 +47,64 @@ export async function createTrip(formData: FormData): Promise<void> {
   const seasonId = nullable(formData, "seasonId");
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
-  const name = str(formData, "name");
-  if (!name) redirect(`/${slug}/travel?error=name`);
-  if (!seasonId) redirect(`/${slug}/travel?error=season`);
+  // Quick-add from the Season page comes back to Season with the drawer's trip
+  // section reopened on the same error message it always used.
+  const back = seasonReturn(formData, slug);
+  const fail = (code: string): string =>
+    back ? `${back}?error=${code}&add=trip` : `/${slug}/travel?error=${code}`;
+
+  const competitionId = nullable(formData, "competition_id");
+  let name = str(formData, "name");
+  let startsOn = nullable(formData, "starts_on");
+  let endsOn = nullable(formData, "ends_on");
 
   const supabase = await createClient();
+
+  // A trip FOR a competition takes its name and date from that competition when
+  // the form didn't supply them. One server-side code path serves both the
+  // Season quick-add (which asks for neither) and the travel page's per-comp
+  // suggestion rows (which used to carry the same values as hidden inputs).
+  if (competitionId && (!name || !startsOn)) {
+    const { data: compData } = await supabase
+      .from("competitions")
+      .select("name, date")
+      .eq("id", competitionId)
+      .eq("program_id", programId)
+      .maybeSingle();
+    const comp = compData as { name: string; date: string | null } | null;
+    if (comp) {
+      if (!name) name = `${comp.name} — travel`;
+      if (!startsOn) {
+        startsOn = comp.date;
+        if (!endsOn) endsOn = comp.date;
+      }
+    }
+  }
+
+  if (!name) redirect(fail("name"));
+  if (!seasonId) redirect(fail("season"));
+
   const { data, error } = await supabase
     .from("trips")
     .insert({
       program_id: programId,
       season_id: seasonId,
-      competition_id: nullable(formData, "competition_id"),
+      competition_id: competitionId,
       name,
-      starts_on: nullable(formData, "starts_on"),
-      ends_on: nullable(formData, "ends_on"),
+      starts_on: startsOn,
+      ends_on: endsOn,
       is_overnight: str(formData, "is_overnight") === "on",
     })
     .select("id")
     .single();
 
-  if (error || !data) redirect(`/${slug}/travel?error=save`);
+  if (error || !data) redirect(fail("save"));
 
   revalidatePath(`/${slug}/travel`);
+  if (back) {
+    revalidatePath(back);
+    redirect(`${back}?created=trip-${data.id}`);
+  }
   redirect(`/${slug}/travel/${data.id}`);
 }
 
@@ -70,15 +114,23 @@ export async function updateTrip(formData: FormData): Promise<void> {
   const tripId = str(formData, "tripId");
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
+  // Spine edit popover (Season page): failures reopen that row's popover, saves
+  // land back on the spine. Allow-listed server-side; detail-page edits unchanged.
+  const back = seasonReturn(formData, slug);
+  const fail = (code: string): string =>
+    back
+      ? `${back}?error=${code}&edit=trip-${tripId}`
+      : `/${slug}/travel/${tripId}?error=${code}`;
+
   const name = str(formData, "name");
-  if (!name) redirect(`/${slug}/travel/${tripId}?error=name`);
+  if (!name) redirect(fail("name"));
 
   const startsOn = nullable(formData, "starts_on");
   const endsOn = nullable(formData, "ends_on");
   // Date sanity: a trip can't end before it starts. createTrip predates this
   // guard; it lives here where an editor can flip the two dates by hand.
   if (startsOn && endsOn && endsOn < startsOn) {
-    redirect(`/${slug}/travel/${tripId}?error=dates`);
+    redirect(fail("dates"));
   }
 
   const isOvernight = str(formData, "is_overnight") === "on";
@@ -97,7 +149,7 @@ export async function updateTrip(formData: FormData): Promise<void> {
       .eq("trip_id", tripId)
       .eq("kind", "room");
     if ((roomCount ?? 0) > 0) {
-      redirect(`/${slug}/travel/${tripId}?error=overnight_rooms`);
+      redirect(fail("overnight_rooms"));
     }
   }
 
@@ -113,9 +165,13 @@ export async function updateTrip(formData: FormData): Promise<void> {
     .eq("id", tripId)
     .eq("program_id", programId);
 
-  if (error) redirect(`/${slug}/travel/${tripId}?error=save`);
+  if (error) redirect(fail("save"));
 
   revalidatePath(`/${slug}/travel/${tripId}`);
+  if (back) {
+    revalidatePath(back);
+    redirect(`${back}?saved=trip-${tripId}`);
+  }
   redirect(`/${slug}/travel/${tripId}`);
 }
 

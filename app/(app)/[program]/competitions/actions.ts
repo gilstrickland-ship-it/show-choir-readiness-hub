@@ -14,6 +14,7 @@ import {
   type CompetitionStatus,
 } from "@/lib/competitions";
 import { flag, type FlaggableProgram } from "@/lib/flags";
+import { returnPath } from "@/lib/return-path";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { runPacketParse } from "@/lib/ai/packet-parse";
 
@@ -23,6 +24,14 @@ import { runPacketParse } from "@/lib/ai/packet-parse";
 
 function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
+}
+
+// Where a create/edit launched from the Season page goes back to. `from` is an
+// opaque allow-listed key resolved server-side (lib/return-path) — never a
+// client-supplied URL. Absent/unknown ⇒ null ⇒ the module-page redirects below
+// are unchanged.
+function seasonReturn(fd: FormData, slug: string): string | null {
+  return returnPath(slug, str(fd, "from"));
 }
 
 function nullable(fd: FormData, key: string): string | null {
@@ -52,15 +61,21 @@ export async function createCompetition(formData: FormData): Promise<void> {
   const seasonId = nullable(formData, "seasonId");
   await requireRole(programId, COMPETITION_WRITE_ROLES);
 
+  // Quick-add from the Season page comes back to Season with the drawer's
+  // competition section reopened on the same error message it always used.
+  const back = seasonReturn(formData, slug);
+  const fail = (code: string): string =>
+    back ? `${back}?error=${code}&add=comp` : `/${slug}/competitions?error=${code}`;
+
   const name = str(formData, "name");
-  if (!name) redirect(`/${slug}/competitions?error=name`);
-  if (!seasonId) redirect(`/${slug}/competitions?error=season`);
+  if (!name) redirect(fail("name"));
+  if (!seasonId) redirect(fail("season"));
 
   const status = str(formData, "status") as CompetitionStatus;
   const ensembleIds = ensembleIdsFrom(formData);
   // ≥1 ensemble required (F6, D3): a competition with no ensembles can never seed
   // attendance/meals/checkout. Enforced here in the server action.
-  if (ensembleIds.length === 0) redirect(`/${slug}/competitions?error=ensemble`);
+  if (ensembleIds.length === 0) redirect(fail("ensemble"));
 
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -78,7 +93,7 @@ export async function createCompetition(formData: FormData): Promise<void> {
     .select("id")
     .single();
 
-  if (error || !data) redirect(`/${slug}/competitions?error=save`);
+  if (error || !data) redirect(fail("save"));
 
   const { error: junctionErr } = await supabase
     .from("competition_ensembles")
@@ -89,7 +104,7 @@ export async function createCompetition(formData: FormData): Promise<void> {
         ensemble_id,
       })),
     );
-  if (junctionErr) redirect(`/${slug}/competitions?error=save`);
+  if (junctionErr) redirect(fail("save"));
 
   await seedAttendance(supabase, {
     programId,
@@ -99,6 +114,10 @@ export async function createCompetition(formData: FormData): Promise<void> {
   });
 
   revalidatePath(`/${slug}/competitions`);
+  if (back) {
+    revalidatePath(back);
+    redirect(`${back}?created=comp-${data.id}`);
+  }
   redirect(`/${slug}/competitions/${data.id}?created=1`);
 }
 
@@ -116,13 +135,20 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   const seasonId = nullable(formData, "seasonId");
   await requireRole(programId, COMPETITION_WRITE_ROLES);
 
+  // Spine edit popover (Season page): failures reopen that row's popover, saves
+  // land back on the spine. Allow-listed server-side; module-page edits unchanged.
+  const back = seasonReturn(formData, slug);
+  const fail = (code: string): string =>
+    back
+      ? `${back}?error=${code}&edit=comp-${competitionId}`
+      : `/${slug}/competitions/${competitionId}?error=${code}`;
+
   const name = str(formData, "name");
-  if (!name) redirect(`/${slug}/competitions/${competitionId}?error=name`);
+  if (!name) redirect(fail("name"));
 
   const newEnsembleIds = ensembleIdsFrom(formData);
   // ≥1 ensemble required (F6, D3).
-  if (newEnsembleIds.length === 0)
-    redirect(`/${slug}/competitions/${competitionId}?error=ensemble`);
+  if (newEnsembleIds.length === 0) redirect(fail("ensemble"));
   const confirmed = str(formData, "confirm_ensemble") === "1";
 
   const supabase = await createClient();
@@ -154,7 +180,7 @@ export async function updateCompetition(formData: FormData): Promise<void> {
     .eq("id", competitionId)
     .eq("program_id", programId);
 
-  if (error) redirect(`/${slug}/competitions/${competitionId}?error=save`);
+  if (error) redirect(fail("save"));
 
   // Apply junction changes.
   if (added.length > 0) {
@@ -197,6 +223,10 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   }
 
   revalidatePath(`/${slug}/competitions/${competitionId}`);
+  if (back) {
+    revalidatePath(back);
+    redirect(`${back}?saved=comp-${competitionId}`);
+  }
   redirect(`/${slug}/competitions/${competitionId}?saved=1`);
 }
 
