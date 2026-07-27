@@ -18,14 +18,19 @@ import {
 // Season rollover wizard + archive (§3, §9.4, T028). director/admin. The wizard
 // is a linear step flow driven by ?step= and ?newSeason=; the archive controls at
 // the bottom freeze a past season read-only (RLS enforces it) and unarchive it.
+//
+// Rollover-only since spec 005 US3: starting a FIRST season is one submit on the
+// Season/Today card, so nothing here special-cases "you have no seasons". What
+// the copy does branch on is whether there is a season to roll FROM, which is a
+// real difference a director can see.
 
 const STEPS = ["new", "ensembles", "students", "costumes", "activate", "archive"] as const;
 type Step = (typeof STEPS)[number];
 
 const ERR: Record<string, string> = {
-  label: "A season label is required (e.g. 2027-28).",
+  label: "Give the season a name, like 2027-28.",
   create: "Could not create the season. Try again.",
-  activate: "Could not activate the new season. Try again.",
+  activate: "Could not make the new season active. Try again.",
   archive: "Could not archive that season.",
   unarchive: "Could not unarchive that season.",
 };
@@ -78,14 +83,6 @@ export default async function RolloverPage({
     }[] | null) ?? [];
   const newSeason = seasons.find((s) => s.id === newSeasonId) ?? null;
 
-  // First-season framing: when nothing exists to roll *from* (no prior season
-  // besides the one this wizard is creating), the carry-forward steps have no
-  // source data. We present the flow as "Start your first season" and the
-  // create action jumps straight to activate. Excluding newSeasonId keeps this
-  // correct on every step — at "new" it counts all seasons, later it ignores the
-  // just-created one.
-  const isFirstSeason = seasons.filter((s) => s.id !== newSeasonId).length === 0;
-
   // Data needed only for the interactive steps.
   const ensembles =
     step === "ensembles" || step === "students"
@@ -109,8 +106,8 @@ export default async function RolloverPage({
 
       <SettingsTabs slug={slug} active="seasons" />
       <p className="muted">
-        Create your first season below, roll over into next year, and archive past
-        seasons to freeze them read-only.
+        Roll over into next year — new season, who is coming back, costume set
+        names — and archive past seasons to freeze them read-only.
       </p>
 
       {sp.error && <p className="alert-error">{ERR[sp.error] ?? "Something went wrong."}</p>}
@@ -119,18 +116,16 @@ export default async function RolloverPage({
 
       {/* --- Wizard --- */}
       <div className="confirm-box stack" style={{ width: "100%" }}>
-        {isFirstSeason ? (
+        {season ? (
           <p className="muted">
-            Starting your first season. There&apos;s nothing to carry over from a
-            prior year, so you go straight from creating the season to activating
-            it — add students, ensembles, and competitions afterward from Today.
+            Rolling over from <strong>{season.label}</strong>. Your ensembles come
+            along on their own; you choose who is returning, copy your costume set
+            names, then make the new season the active one.
           </p>
         ) : (
           <p className="muted">
-            Rolling over from{" "}
-            <strong>{season ? season.label : "no active season"}</strong>.
-            Ensembles carry forward automatically; you choose which students
-            return, re-point costume sets, then activate the new season.
+            Making a new season. Your ensembles come along on their own — you
+            choose who is in it, then make it the active one.
           </p>
         )}
 
@@ -138,13 +133,9 @@ export default async function RolloverPage({
           <form action={createRolloverSeason} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
-            <h2>
-              {isFirstSeason
-                ? "Create your first season"
-                : "Step 1 · Create the new season"}
-            </h2>
+            <h2>Step 1 · Create the new season</h2>
             <label>
-              Season label
+              Season name
               <input type="text" name="label" placeholder="2027-28" required />
             </label>
             <div className="row-inline">
@@ -166,10 +157,10 @@ export default async function RolloverPage({
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="newSeasonId" value={newSeasonId} />
-            <h2>Step 2 · Ensembles</h2>
+            <h2>Step 2 · Your groups</h2>
             <p className="muted">
-              Ensembles are program-level and carry forward automatically. The new
-              season will use these:
+              Ensembles belong to the program, not to one year, so they come along
+              on their own. The new season will use these:
             </p>
             <ul>
               {ensembles.map((e) => (
@@ -207,52 +198,35 @@ export default async function RolloverPage({
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="newSeasonId" value={newSeasonId} />
-            <h2>
-              {isFirstSeason ? "Activate" : "Step 5 · Activate"}{" "}
-              {newSeason?.label ?? "the new season"}
-            </h2>
-            {isFirstSeason ? (
-              <p className="muted">
-                This makes <strong>{newSeason?.label}</strong> your active season.
-                That&apos;s it — you&apos;re ready to build your roster.
-              </p>
-            ) : (
-              <p className="muted">
-                This makes <strong>{newSeason?.label}</strong> the active season
-                and deactivates{" "}
-                <strong>{season?.label ?? "the current season"}</strong>. You can
-                archive the old season next.
-              </p>
-            )}
-            <button type="submit">
-              {isFirstSeason ? "Activate season" : "Activate new season"}
-            </button>
+            <h2>Step 5 · Switch to {newSeason?.label ?? "the new season"}</h2>
+            <p className="muted">
+              This makes <strong>{newSeason?.label}</strong> the season the whole
+              app works in
+              {season ? (
+                <>
+                  {" "}
+                  and closes out <strong>{season.label}</strong>. You can archive
+                  the old one next.
+                </>
+              ) : (
+                "."
+              )}
+            </p>
+            <button type="submit">Make this the active season</button>
           </form>
         )}
 
         {step === "archive" && (
           <div className="stack">
-            <h2>
-              {isFirstSeason
-                ? "Your first season is live 🎉"
-                : "Step 6 · You're rolled over 🎉"}
-            </h2>
+            <h2>Step 6 · You&apos;re rolled over 🎉</h2>
             <p className="alert-ok">
               {newSeason?.label} is now your active season.
             </p>
-            {isFirstSeason ? (
-              <p className="muted">
-                You&apos;re all set. Head to Today to add students, put them in an
-                ensemble, and schedule your first competition.
-              </p>
-            ) : (
-              <p className="muted">
-                Archive the previous season to freeze it read-only — its roster,
-                results, and PDFs stay browsable in History and Export, but
-                nothing can be changed. You can do this now or later from the list
-                below.
-              </p>
-            )}
+            <p className="muted">
+              Archive the previous season to freeze it read-only — its roster,
+              results, and PDFs stay browsable in History and Export, but nothing
+              can be changed. You can do this now or later from the list below.
+            </p>
             <Link href={`/${slug}/dashboard`}>Go to dashboard</Link>
           </div>
         )}
@@ -312,7 +286,7 @@ export default async function RolloverPage({
                     <span className="muted">Director only</span>
                   )
                 ) : s.is_active ? (
-                  <span className="muted">Deactivate via rollover first</span>
+                  <span className="muted">Switch to another season first</span>
                 ) : (
                   <form action={archiveSeason}>
                     <input type="hidden" name="programId" value={program.id} />
@@ -394,12 +368,12 @@ async function StudentsStep({
       <input type="hidden" name="programId" value={programId} />
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="newSeasonId" value={newSeasonId} />
-      <h2>Step 3 · Returning students</h2>
+      <h2>Step 3 · Who is coming back</h2>
       <p className="muted">
-        Uncheck students who are leaving — the graduating class (
-        {graduatingYear ?? "seniors"}) is pre-unchecked and will be marked
-        graduated. Everyone else is re-added to the ensemble you pick (defaulting
-        to their current one).
+        Untick anyone who is leaving — the graduating class (
+        {graduatingYear ?? "seniors"}) is already unticked and will be marked
+        graduated. Everyone still ticked joins the group you pick, which starts
+        as the one they are in now.
       </p>
       <table className="members">
         <thead>
@@ -485,12 +459,12 @@ async function CostumesStep({
 
   return (
     <div className="stack">
-      <h2>Step 4 · Costume sets</h2>
+      <h2>Step 4 · Copy costume set names into the new season</h2>
       <p className="muted">
-        Costume <em>pieces</em> are program-level inventory and always persist
-        (§4). Re-pointing copies the {oldSetCount} set name
-        {oldSetCount === 1 ? "" : "s"} from the current season into the new one as
-        empty sets, ready to re-assign — or skip and build sets fresh.
+        Your costume <em>pieces</em> belong to the program and never move. This
+        copies the {oldSetCount} set name
+        {oldSetCount === 1 ? "" : "s"} from this season into the new one as empty
+        sets, ready to fill — or skip it and build your sets from scratch.
       </p>
       <div className="row-inline">
         <form action={repointCostumeSets}>
@@ -499,7 +473,7 @@ async function CostumesStep({
           <input type="hidden" name="newSeasonId" value={newSeasonId} />
           <input type="hidden" name="fromSeasonId" value={fromSeasonId ?? ""} />
           <button type="submit" disabled={oldSetCount === 0}>
-            Re-point {oldSetCount} set{oldSetCount === 1 ? "" : "s"} &amp; continue
+            Copy {oldSetCount} set name{oldSetCount === 1 ? "" : "s"} &amp; continue
           </button>
         </form>
         <form action={repointCostumeSets}>

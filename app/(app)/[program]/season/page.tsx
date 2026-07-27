@@ -31,6 +31,7 @@ import {
   formatTimeInTz,
 } from "@/lib/datetime";
 import { formatHostedDateRange } from "@/lib/hosting";
+import { StartSeasonCard } from "../StartSeasonCard";
 
 // Season (season-workflow redesign, "Season" design ref) — one chronological
 // spine for the active season, absorbing the old Competitions/Events/Travel/
@@ -200,6 +201,8 @@ export default async function SeasonPage({
     error?: string;
     created?: string;
     saved?: string;
+    seasonError?: string;
+    seasonStarted?: string;
   }>;
 }) {
   const { program: slug } = await params;
@@ -230,6 +233,8 @@ export default async function SeasonPage({
     error: errorParam,
     created,
     saved,
+    seasonError,
+    seasonStarted,
   } = await searchParams;
   const filter: Filter = FILTERS.includes(filterParam as Filter)
     ? (filterParam as Filter)
@@ -696,10 +701,18 @@ export default async function SeasonPage({
       </div>
 
       {!season && (
-        <p className="alert-error">
-          No active season yet.{" "}
-          <Link href={`${base}/settings/rollover`}>Start a season</Link> to begin.
-        </p>
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={tz}
+          from="season"
+          error={seasonError ?? null}
+        />
+      )}
+
+      {seasonStarted && season && (
+        <p className="alert-ok">{season.label} is now your active season.</p>
       )}
 
       {createdKind && (

@@ -193,7 +193,8 @@ describe("loadJourneyPanel — lean short-circuits", () => {
     expect(model!.doneCount).toBe(1);
     expect(model!.total).toBe(7);
     expect(model!.steps[0].done).toBe(true); // "Start your season"
-    expect(model!.steps[0].href).toBe("/demo/settings/rollover");
+    // Spec 005 US3: step 1 points at Season, home of the one-submit card.
+    expect(model!.steps[0].href).toBe("/demo/season");
   });
 
   test("mid-progress (≥2 done, terminal not met) → pill, no takeover", async () => {

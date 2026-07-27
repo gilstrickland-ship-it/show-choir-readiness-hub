@@ -14,6 +14,7 @@ import { DIGEST_WRITE_ROLES } from "@/lib/comms";
 import { OPEN_ALTERATION_STATUSES } from "@/lib/costumes";
 import { loadGuideState, loadJourneyPanel } from "@/lib/guide";
 import { JourneyPanel } from "../JourneyPanel";
+import { StartSeasonCard } from "../StartSeasonCard";
 import { formatCents, sumActuals, type LedgerAmountRow } from "@/lib/treasury";
 import { loadCompReadiness, type ReadinessCheck } from "@/lib/readiness";
 import {
@@ -375,10 +376,18 @@ export default async function DashboardPage({
       {!takeover && (
         <>
       {!season && (
-        <p className="alert-error">
-          No active season yet.{" "}
-          <Link href={`${base}/settings/rollover`}>Start a season</Link> to begin.
-        </p>
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={tz}
+          from="dashboard"
+          error={typeof sp.seasonError === "string" ? sp.seasonError : null}
+        />
+      )}
+
+      {sp.seasonStarted && season && (
+        <p className="alert-ok">{season.label} is now your active season.</p>
       )}
 
       {show.comp && (

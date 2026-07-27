@@ -5,16 +5,126 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
+import { returnPath } from "@/lib/return-path";
 
 // Season rollover wizard actions (§3, §9.4, T028). Every step is a director/admin
 // server action that re-checks the role (Constitution I) and is idempotent /
 // re-runnable — a director can back up and re-submit any step without creating
 // duplicates or double-activating a season. Ensembles are program-level (§4), so
 // they carry forward automatically; the season-scoped work is re-adding students
-// (ensemble_members), re-pointing costume sets, and flipping the active season.
+// (ensemble_members), copying costume set names, and flipping the active season.
+//
+// The wizard is now ROLLOVER-only (spec 005 US3): starting a first season is one
+// submit on the Season/Today card, which calls startFirstSeason below. Both use
+// the same two primitives, so there is one implementation of "make a season" and
+// one of "make it the active one".
+
+type Db = Awaited<ReturnType<typeof createClient>>;
 
 function wizardPath(slug: string, step: string, newSeasonId: string): string {
   return `/${slug}/settings/rollover?step=${step}&newSeason=${newSeasonId}`;
+}
+
+// Insert a season, or reuse the same-label one that is already there (which is
+// what makes every caller re-runnable). Returns its id, or null on failure.
+async function findOrCreateSeason(
+  supabase: Db,
+  args: {
+    programId: string;
+    label: string;
+    startsOn: string | null;
+    endsOn: string | null;
+  },
+): Promise<string | null> {
+  const { data: existing } = await supabase
+    .from("seasons")
+    .select("id")
+    .eq("program_id", args.programId)
+    .eq("label", args.label)
+    .maybeSingle();
+  const existingId = (existing as { id: string } | null)?.id ?? null;
+  if (existingId) return existingId;
+
+  const { data: created, error } = await supabase
+    .from("seasons")
+    .insert({
+      program_id: args.programId,
+      label: args.label,
+      starts_on: args.startsOn,
+      ends_on: args.endsOn,
+      is_active: false,
+    })
+    .select("id")
+    .single();
+  if (error || !created) return null;
+  return (created as { id: string }).id;
+}
+
+// Flip the active season atomically: clear whatever is active, then set this
+// one. The partial unique index (one active season per program) guards against a
+// double-active state; clearing first keeps the flip valid and a re-run a no-op.
+async function makeSeasonActive(
+  supabase: Db,
+  programId: string,
+  seasonId: string,
+): Promise<boolean> {
+  const { error: clearErr } = await supabase
+    .from("seasons")
+    .update({ is_active: false })
+    .eq("program_id", programId)
+    .eq("is_active", true)
+    .neq("id", seasonId);
+  if (clearErr) return false;
+
+  const { error: setErr } = await supabase
+    .from("seasons")
+    .update({ is_active: true })
+    .eq("program_id", programId)
+    .eq("id", seasonId);
+  return !setErr;
+}
+
+// Start your season (spec 005 US3) — the first-run path, one submit. A brand-new
+// director used to be routed into the six-step ROLLOVER wizard for what is one
+// insert plus one activation. `from` is an allow-listed key resolved server-side
+// (lib/return-path), never a client-supplied URL, so the director lands back on
+// whichever surface asked.
+export async function startFirstSeason(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  await requireRole(programId, SETTINGS_ROLES);
+
+  const back =
+    returnPath(slug, String(formData.get("from") ?? "")) ?? `/${slug}/dashboard`;
+
+  const label = String(formData.get("label") ?? "").trim();
+  if (!label) redirect(`${back}?seasonError=label`);
+
+  const supabase = await createClient();
+
+  // This card only renders for a program with NO seasons. If one appeared in the
+  // meantime (a second tab, the wizard), WHICH season should be active is a
+  // human decision — send them to Settings rather than guess.
+  const { count } = await supabase
+    .from("seasons")
+    .select("id", { count: "exact", head: true })
+    .eq("program_id", programId);
+  if ((count ?? 0) > 0) redirect(`${back}?seasonError=exists`);
+
+  const seasonId = await findOrCreateSeason(supabase, {
+    programId,
+    label,
+    startsOn: String(formData.get("starts_on") ?? "").trim() || null,
+    endsOn: String(formData.get("ends_on") ?? "").trim() || null,
+  });
+  if (!seasonId) redirect(`${back}?seasonError=create`);
+
+  const activated = await makeSeasonActive(supabase, programId, seasonId);
+  if (!activated) redirect(`${back}?seasonError=activate`);
+
+  // The season label rides in the app-shell header, so revalidate the layout.
+  revalidatePath(`/${slug}`, "layout");
+  redirect(`${back}?seasonStarted=1`);
 }
 
 // Step 1 — create the new (inactive, unarchived) season.
@@ -24,46 +134,25 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
   await requireRole(programId, SETTINGS_ROLES);
 
   const label = String(formData.get("label") ?? "").trim();
-  const startsOn = String(formData.get("starts_on") ?? "").trim() || null;
-  const endsOn = String(formData.get("ends_on") ?? "").trim() || null;
   if (!label) {
     redirect(`/${slug}/settings/rollover?error=label`);
   }
 
   const supabase = await createClient();
-
-  // Idempotent: reuse an existing same-label season rather than creating a twin.
-  const { data: existing } = await supabase
-    .from("seasons")
-    .select("id")
-    .eq("program_id", programId)
-    .eq("label", label)
-    .maybeSingle();
-
-  let newSeasonId = (existing as { id: string } | null)?.id ?? null;
+  const newSeasonId = await findOrCreateSeason(supabase, {
+    programId,
+    label,
+    startsOn: String(formData.get("starts_on") ?? "").trim() || null,
+    endsOn: String(formData.get("ends_on") ?? "").trim() || null,
+  });
   if (!newSeasonId) {
-    const { data: created, error } = await supabase
-      .from("seasons")
-      .insert({
-        program_id: programId,
-        label,
-        starts_on: startsOn,
-        ends_on: endsOn,
-        is_active: false,
-      })
-      .select("id")
-      .single();
-    if (error || !created) {
-      redirect(`/${slug}/settings/rollover?error=create`);
-    }
-    newSeasonId = (created as { id: string }).id;
+    redirect(`/${slug}/settings/rollover?error=create`);
   }
 
-  // First-season shortcut: with no prior season to roll from, the ensembles /
-  // returning-students / costume carry-forward steps have no source data. Skip
-  // them and go straight to activate. Counting seasons other than the one we
-  // just created keeps this idempotent — a re-run reuses the same season and
-  // still lands on activate.
+  // Nothing to carry over? Then the ensembles / returning-students / costume
+  // steps have no source data — go straight to activate. Counting seasons other
+  // than the one we just made keeps this idempotent: a re-run reuses the same
+  // season and still lands on activate.
   const { count: priorCount } = await supabase
     .from("seasons")
     .select("id", { count: "exact", head: true })
@@ -192,10 +281,7 @@ export async function repointCostumeSets(formData: FormData): Promise<void> {
   redirect(wizardPath(slug, "activate", newSeasonId));
 }
 
-// Step 5 — activate the new season atomically: clear whatever is active, then set
-// the new season active. The partial unique index (one active season per program)
-// guards against a double-active state; clearing first keeps the flip valid and
-// makes a re-run a no-op.
+// Step 5 — make the new season the active one (see makeSeasonActive above).
 export async function activateNewSeason(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
@@ -203,24 +289,11 @@ export async function activateNewSeason(formData: FormData): Promise<void> {
   await requireRole(programId, SETTINGS_ROLES);
 
   const supabase = await createClient();
-  // Clear the current active season (if any) first — the partial unique index
-  // forbids two active seasons, so this ordering keeps the transition legal.
-  const { error: clearErr } = await supabase
-    .from("seasons")
-    .update({ is_active: false })
-    .eq("program_id", programId)
-    .eq("is_active", true)
-    .neq("id", newSeasonId);
-  if (clearErr) {
-    redirect(`/${slug}/settings/rollover?step=activate&newSeason=${newSeasonId}&error=activate`);
-  }
-  const { error: setErr } = await supabase
-    .from("seasons")
-    .update({ is_active: true })
-    .eq("program_id", programId)
-    .eq("id", newSeasonId);
-  if (setErr) {
-    redirect(`/${slug}/settings/rollover?step=activate&newSeason=${newSeasonId}&error=activate`);
+  const activated = await makeSeasonActive(supabase, programId, newSeasonId);
+  if (!activated) {
+    redirect(
+      `/${slug}/settings/rollover?step=activate&newSeason=${newSeasonId}&error=activate`,
+    );
   }
 
   revalidatePath(`/${slug}`, "layout");

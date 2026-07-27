@@ -117,8 +117,11 @@ const DIRECTOR_JOURNEY: JourneyDef = {
     "A few steps and you're ready. Takes about ten minutes with the spreadsheet you already have.",
   steps: [
     {
+      // Points at Season, where the one-submit "Start your season" card lives
+      // (spec 005 US3). The rollover wizard is still reachable from that card
+      // and from Settings; it is for year-over-year rollover, not first runs.
       label: "Start your season",
-      hrefSuffix: "/settings/rollover",
+      hrefSuffix: "/season",
       verify: async (ctx) => ctx.seasonId != null,
     },
     {
