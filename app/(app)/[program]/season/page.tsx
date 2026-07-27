@@ -6,32 +6,24 @@ import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import {
   COMPETITION_WRITE_ROLES,
-  COMPETITION_STATUSES,
-  COMPETITION_STATUS_LABELS,
   competitionEnsembleMap,
   eventEnsembleMap,
 } from "@/lib/competitions";
-import {
-  EVENTS_WRITE_ROLES,
-  EVENT_KINDS,
-  EVENT_KIND_LABELS,
-} from "@/lib/events";
+import { EVENTS_WRITE_ROLES } from "@/lib/events";
 import { TRAVEL_WRITE_ROLES } from "@/lib/travel";
 import { loadCompReadiness } from "@/lib/readiness";
 import { activeShareLinks, seasonCalendarUrl } from "@/lib/tokens";
 import { regenerateSeasonCalendarShareLink } from "./actions";
-import { createCompetition, updateCompetition } from "../competitions/actions";
-import { createEvent, updateEvent } from "../events/actions";
-import { createTrip, updateTrip } from "../travel/actions";
 import {
   zonedWallToUtc,
   zonedDateKey,
   toZonedInputValue,
-  formatDateInTz,
   formatTimeInTz,
 } from "@/lib/datetime";
 import { formatHostedDateRange } from "@/lib/hosting";
 import { StartSeasonCard } from "../StartSeasonCard";
+import { QuickAdd, ADD_KINDS, type AddKind } from "./QuickAdd";
+import { RowEdit, type RowEditTarget } from "./RowEdit";
 
 // Season (season-workflow redesign, "Season" design ref) — one chronological
 // spine for the active season, absorbing the old Competitions/Events/Travel/
@@ -64,42 +56,9 @@ function monthAbbr(instant: Date, timeZone: string): string {
 
 type ItemKind = "comp" | "event" | "trip" | "hosting";
 
-// Row-edit payloads (US2). Every field here comes out of the query the spine
-// already runs — the popover adds no per-row read. Fields the popover does NOT
-// show still ride along as hidden inputs, because the update actions read an
-// absent field as "clear it": leaving out an event's audience, note or end time
-// (or a trip's linked competition) would quietly wipe them on a date fix.
-interface CompEdit {
-  id: string;
-  name: string;
-  date: string;
-  status: "planned" | "confirmed" | "done";
-  hostSchool: string;
-  venueAddress: string;
-  showchoirUrl: string;
-  ensembleIds: string[];
-}
-interface EventEdit {
-  id: string;
-  title: string;
-  startsWall: string; // program-tz wall clock, the datetime-local shape
-  endsWall: string;
-  location: string;
-  note: string;
-  eventKind: string;
-  ensembleIds: string[];
-}
-interface TripEdit {
-  id: string;
-  name: string;
-  startsOn: string;
-  endsOn: string;
-  isOvernight: boolean;
-  competitionId: string;
-}
-
-interface SeasonItem {
-  key: string;
+// A spine row. The edit-popover payloads (compEdit/eventEdit/tripEdit, built for
+// writer roles only) come from RowEdit, which owns what its forms need.
+interface SeasonItem extends RowEditTarget {
   kind: ItemKind;
   instant: Date;
   dateKey: string; // YYYY-MM-DD in program tz
@@ -109,7 +68,6 @@ interface SeasonItem {
   isPast: boolean;
   tag: string; // pill label
   tagClass: string; // pill variant
-  title: string;
   href: string | null; // title link (comps only)
   meta: string;
   // Right-slot payloads (mutually exclusive; resolved at render).
@@ -117,67 +75,10 @@ interface SeasonItem {
   compStatus?: "planned" | "confirmed" | "done";
   result?: string | null;
   needsTrip?: boolean;
-  // Edit-popover payload (writer roles only; hosting rows never carry one).
-  compEdit?: CompEdit;
-  eventEdit?: EventEdit;
-  tripEdit?: TripEdit;
 }
 
 const FILTERS = ["everything", "competitions", "events", "trips"] as const;
 type Filter = (typeof FILTERS)[number];
-
-// Quick-add drawer sections. `?add=<kind>` opens the drawer on that section —
-// which is also how a failed create comes back (the action redirects here with
-// its existing ?error= code plus the section key, the roster-drawer pattern).
-const ADD_KINDS = ["comp", "event", "trip"] as const;
-type AddKind = (typeof ADD_KINDS)[number];
-
-// The create actions' error codes, reworded not at all: these are the same
-// messages the module pages show, rendered inside the section that produced them.
-const ADD_ERROR: Record<AddKind, Record<string, string>> = {
-  comp: {
-    name: "A competition needs a name.",
-    ensemble: "Pick at least one ensemble for the competition.",
-    season: "Activate a season before adding competitions.",
-    save: "Couldn't save. Try again.",
-  },
-  event: {
-    title: "An event needs a title.",
-    season: "Activate a season before adding events.",
-    save: "Couldn't save. Try again.",
-  },
-  trip: {
-    name: "A trip needs a name.",
-    season: "Activate a season before adding trips.",
-    save: "Couldn't save. Try again.",
-  },
-};
-
-const ADD_KIND_LABEL: Record<AddKind, string> = {
-  comp: "Competition",
-  event: "Event",
-  trip: "Trip",
-};
-
-// Row-edit errors, in the same words the record's own page uses. `?edit=<key>`
-// reopens that row's popover with the message inside it.
-const EDIT_ERROR: Record<AddKind, Record<string, string>> = {
-  comp: {
-    name: "A competition needs a name.",
-    ensemble: "Pick at least one ensemble for the competition.",
-    save: "Couldn't save. Try again.",
-  },
-  event: {
-    title: "An event needs a title.",
-    save: "Couldn't save. Try again.",
-  },
-  trip: {
-    name: "A trip needs a name.",
-    dates: "A trip can't end before it starts.",
-    overnight_rooms: "Remove this trip's rooms before making it a day trip.",
-    save: "Couldn't save the trip. Try again.",
-  },
-};
 
 const EVENT_TAG: Record<string, { tag: string; cls: string }> = {
   rehearsal: { tag: "Rehearsal", cls: "rehearsal" },
@@ -192,18 +93,9 @@ export default async function SeasonPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    filter?: string;
-    calShare?: string;
-    calError?: string;
-    add?: string;
-    edit?: string;
-    error?: string;
-    created?: string;
-    saved?: string;
-    seasonError?: string;
-    seasonStarted?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?add=comp&add=trip), so
+  // every read below goes through `one()` — a hand-typed URL must not 500 a page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
@@ -224,22 +116,26 @@ export default async function SeasonPage({
   const base = `/${slug}`;
   const seasonId = season?.id ?? null;
 
-  const {
-    filter: filterParam,
-    calShare,
-    calError,
-    add: addParam,
-    edit: editKey,
-    error: errorParam,
-    created,
-    saved,
-    seasonError,
-    seasonStarted,
-  } = await searchParams;
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const calShare = one("calShare");
+  const calError = one("calError");
+  const editKey = one("edit");
+  const errorParam = one("error");
+  const created = one("created");
+  const saved = one("saved");
+  const seasonError = one("seasonError");
+  const seasonStarted = one("seasonStarted");
+
+  const filterParam = one("filter");
   const filter: Filter = FILTERS.includes(filterParam as Filter)
     ? (filterParam as Filter)
     : "everything";
   // Which quick-add section is open (and therefore which error belongs to it).
+  const addParam = one("add");
   const addKind: AddKind | null = (ADD_KINDS as readonly string[]).includes(
     addParam ?? "",
   )
@@ -327,19 +223,16 @@ export default async function SeasonPage({
   // pointer. Counted from the comps we already fetch (no extra query), surfaced
   // as a muted note near the top of the spine.
   let undatedCompCount = 0;
-  // Competitions with no trip yet — the quick-add drawer's primary trip path
-  // (and the same set the travel page suggests trips for). Filled from the comps
-  // we already fetch; no extra query.
-  let compsWithoutTrip: { id: string; name: string; date: string | null }[] = [];
+  // DATED competitions with no trip yet — the quick-add drawer's primary trip
+  // path. Filled from the comps we already fetch; no extra query. Undated comps
+  // are excluded because a trip that inherits no dates lands nowhere on the
+  // spine, behind a banner saying it was added (the travel page, which lists
+  // trips regardless of date, still offers them).
+  let compsWithoutTrip: { id: string; name: string; date: string }[] = [];
   if (flags.competitions && seasonId) {
-    // venue_address + showchoir_com_url ride along for the row's edit popover
-    // only (updateCompetition clears what a form omits) — two extra columns on
-    // a query the spine already runs.
     const { data: compData } = await supabase
       .from("competitions")
-      .select(
-        "id, name, date, host_school, venue_address, showchoir_com_url, status",
-      )
+      .select("id, name, date, host_school, status")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .order("date", { ascending: true, nullsFirst: false });
@@ -350,8 +243,6 @@ export default async function SeasonPage({
             name: string;
             date: string | null;
             host_school: string | null;
-            venue_address: string | null;
-            showchoir_com_url: string | null;
             status: "planned" | "confirmed" | "done";
           }[]
         | null) ?? [];
@@ -401,8 +292,8 @@ export default async function SeasonPage({
         if (t.competition_id) linkedCompIds.add(t.competition_id);
       }
       compsWithoutTrip = comps
-        .filter((c) => !linkedCompIds.has(c.id))
-        .map((c) => ({ id: c.id, name: c.name, date: c.date }));
+        .filter((c) => c.date != null && !linkedCompIds.has(c.id))
+        .map((c) => ({ id: c.id, name: c.name, date: c.date as string }));
     }
 
     // Next comp = earliest upcoming planned/confirmed comp (feature row).
@@ -433,16 +324,7 @@ export default async function SeasonPage({
         result: c.status === "done" ? placement.get(c.id) ?? null : null,
         needsTrip: flags.travel && !linkedCompIds.has(c.id),
         compEdit: canAddComp
-          ? {
-              id: c.id,
-              name: c.name,
-              date: c.date,
-              status: c.status,
-              hostSchool: c.host_school ?? "",
-              venueAddress: c.venue_address ?? "",
-              showchoirUrl: c.showchoir_com_url ?? "",
-              ensembleIds: compEnsembles.get(c.id) ?? [],
-            }
+          ? { id: c.id, name: c.name, date: c.date, status: c.status }
           : undefined,
       });
     }
@@ -478,12 +360,9 @@ export default async function SeasonPage({
 
   // ---- Events ---------------------------------------------------------------
   if (flags.events && seasonId) {
-    // ends_at + note are here only so the row's edit popover can carry them back
-    // untouched (updateEvent clears what a form omits) — no extra query, two
-    // extra columns.
     const { data: eventData } = await supabase
       .from("events")
-      .select("id, title, starts_at, ends_at, kind, location, note")
+      .select("id, title, starts_at, kind, location")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .not("starts_at", "is", null)
@@ -494,10 +373,8 @@ export default async function SeasonPage({
             id: string;
             title: string;
             starts_at: string;
-            ends_at: string | null;
             kind: string;
             location: string | null;
-            note: string | null;
           }[]
         | null) ?? [];
     // Targeted ensembles per event (Feature 004 junction; empty = whole program).
@@ -531,11 +408,7 @@ export default async function SeasonPage({
               id: e.id,
               title: e.title,
               startsWall: toZonedInputValue(e.starts_at, tz),
-              endsWall: toZonedInputValue(e.ends_at, tz),
               location: e.location ?? "",
-              note: e.note ?? "",
-              eventKind: e.kind,
-              ensembleIds: evEnsIds,
             }
           : undefined,
       });
@@ -544,11 +417,10 @@ export default async function SeasonPage({
 
   // ---- Trips ----------------------------------------------------------------
   if (flags.travel && seasonId) {
-    // ends_on + competition_id ride along for the row's edit popover only
-    // (updateTrip clears the link a form omits) — two extra columns, no query.
+    // ends_on rides along for the row's edit popover, which shows both dates.
     const { data: tripData } = await supabase
       .from("trips")
-      .select("id, name, starts_on, ends_on, is_overnight, competition_id")
+      .select("id, name, starts_on, ends_on, is_overnight")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .not("starts_on", "is", null)
@@ -560,7 +432,6 @@ export default async function SeasonPage({
           starts_on: string;
           ends_on: string | null;
           is_overnight: boolean;
-          competition_id: string | null;
         }[]
       | null) ?? []) {
       const instant = zonedWallToUtc(`${t.starts_on}T00:00`, tz);
@@ -580,7 +451,6 @@ export default async function SeasonPage({
               startsOn: t.starts_on,
               endsOn: t.ends_on ?? "",
               isOvernight: t.is_overnight,
-              competitionId: t.competition_id ?? "",
             }
           : undefined,
       });
@@ -689,7 +559,7 @@ export default async function SeasonPage({
               canAddEvent={canAddEvent}
               canAddTrip={canAddTrip}
               openKind={addKind}
-              error={errorParam ?? null}
+              error={errorParam}
             />
           )}
           {flags.archive && (
@@ -918,10 +788,9 @@ export default async function SeasonPage({
                           slug={slug}
                           base={base}
                           programId={program.id}
-                          seasonId={seasonId}
                           tz={tz}
-                          openKey={editKey ?? null}
-                          error={errorParam ?? null}
+                          openKey={editKey}
+                          error={errorParam}
                         />
                       </div>
                     </div>
@@ -987,10 +856,9 @@ export default async function SeasonPage({
                         slug={slug}
                         base={base}
                         programId={program.id}
-                        seasonId={seasonId}
                         tz={tz}
-                        openKey={editKey ?? null}
-                        error={errorParam ?? null}
+                        openKey={editKey}
+                        error={errorParam}
                       />
                     </div>
                   </div>
@@ -1001,569 +869,5 @@ export default async function SeasonPage({
         </section>
       )}
     </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Row edit (US2) — a small popover on the row itself for the correction this
-// domain makes constantly: a name or a date that moved. Same native <details>
-// as the quick-add drawer, no client JS, and no per-row query: everything the
-// form needs was already loaded for the spine. Deeper work (who's going, the
-// itinerary, rooms and buses) stays on the record's own page, one link away.
-// A read-only role never gets here — the payloads are only built for writers.
-// ---------------------------------------------------------------------------
-function RowEdit({
-  item,
-  variant,
-  slug,
-  base,
-  programId,
-  seasonId,
-  tz,
-  openKey,
-  error,
-}: {
-  item: SeasonItem;
-  variant: "row" | "feature";
-  slug: string;
-  base: string;
-  programId: string;
-  seasonId: string | null;
-  tz: string;
-  openKey: string | null;
-  error: string | null;
-}) {
-  const kind: AddKind | null = item.compEdit
-    ? "comp"
-    : item.eventEdit
-      ? "event"
-      : item.tripEdit
-        ? "trip"
-        : null;
-  if (!kind) return null;
-
-  const isOpen = openKey === item.key;
-  const message =
-    isOpen && error ? EDIT_ERROR[kind][error] ?? EDIT_ERROR[kind].save : null;
-  // The row popover hangs off the spine's right edge; the feature row's action
-  // bar sits at the left, so its panel opens the other way (both stay put on a
-  // phone, where the page-head drawer flips).
-  const panelClass =
-    variant === "feature" ? "season-feature-edit-panel" : "season-edit-panel";
-
-  return (
-    <details className="drawer" open={isOpen}>
-      {/* Every row on the spine has an "Edit" — the accessible name says which
-          one, the way the travel page's tap/remove controls do. */}
-      <summary className="season-link" aria-label={`Edit ${item.title}`}>
-        Edit
-      </summary>
-      <div className={`drawer-panel ${panelClass}`}>
-        <h3 className="drawer-title">Quick edit</h3>
-        {message && <p className="alert-error">{message}</p>}
-
-        {item.compEdit && (
-          <form action={updateCompetition} className="stack">
-            <input type="hidden" name="programId" value={programId} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="competitionId" value={item.compEdit.id} />
-            <input type="hidden" name="seasonId" value={seasonId ?? ""} />
-            <input type="hidden" name="from" value="season" />
-            {/* Carried through untouched — updateCompetition clears a field the
-                form leaves out, and who's going is detail-page work. */}
-            <input
-              type="hidden"
-              name="host_school"
-              value={item.compEdit.hostSchool}
-            />
-            <input
-              type="hidden"
-              name="venue_address"
-              value={item.compEdit.venueAddress}
-            />
-            <input
-              type="hidden"
-              name="showchoir_com_url"
-              value={item.compEdit.showchoirUrl}
-            />
-            {item.compEdit.ensembleIds.map((id) => (
-              <input key={id} type="hidden" name="ensemble_ids" value={id} />
-            ))}
-            <label>
-              Name
-              <input
-                type="text"
-                name="name"
-                defaultValue={item.compEdit.name}
-                required
-              />
-            </label>
-            <div className="row-inline">
-              <label>
-                Date
-                <input
-                  type="date"
-                  name="date"
-                  defaultValue={item.compEdit.date}
-                />
-              </label>
-              <label>
-                Status
-                <select name="status" defaultValue={item.compEdit.status}>
-                  {COMPETITION_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {COMPETITION_STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <button type="submit">Save</button>
-            <p className="muted">
-              <Link href={`${base}/competitions/${item.compEdit.id}`}>
-                All details →
-              </Link>
-            </p>
-          </form>
-        )}
-
-        {item.eventEdit && (
-          <form action={updateEvent} className="stack">
-            <input type="hidden" name="programId" value={programId} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="eventId" value={item.eventEdit.id} />
-            <input type="hidden" name="tz" value={tz} />
-            <input type="hidden" name="from" value="season" />
-            {/* Carried through untouched — updateEvent clears a field the form
-                leaves out, and who it's for is detail-page work. */}
-            <input type="hidden" name="kind" value={item.eventEdit.eventKind} />
-            <input
-              type="hidden"
-              name="ends_at"
-              value={item.eventEdit.endsWall}
-            />
-            <input type="hidden" name="note" value={item.eventEdit.note} />
-            {item.eventEdit.ensembleIds.map((id) => (
-              <input key={id} type="hidden" name="ensemble_ids" value={id} />
-            ))}
-            <label>
-              Title
-              <input
-                type="text"
-                name="title"
-                defaultValue={item.eventEdit.title}
-                required
-              />
-            </label>
-            <div className="row-inline">
-              <label>
-                Starts
-                <input
-                  type="datetime-local"
-                  name="starts_at"
-                  defaultValue={item.eventEdit.startsWall}
-                />
-              </label>
-              <label>
-                Location
-                <input
-                  type="text"
-                  name="location"
-                  defaultValue={item.eventEdit.location}
-                />
-              </label>
-            </div>
-            <button type="submit">Save</button>
-            <p className="muted">
-              Who it&apos;s for, an end time, a note:{" "}
-              <Link href={`${base}/events/${item.eventEdit.id}`}>
-                All details →
-              </Link>
-            </p>
-          </form>
-        )}
-
-        {item.tripEdit && (
-          <form action={updateTrip} className="stack">
-            <input type="hidden" name="programId" value={programId} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="tripId" value={item.tripEdit.id} />
-            <input type="hidden" name="from" value="season" />
-            {/* Keeps the trip attached to its competition — updateTrip unlinks
-                a trip whose form omits the field. */}
-            <input
-              type="hidden"
-              name="competition_id"
-              value={item.tripEdit.competitionId}
-            />
-            <label>
-              Name
-              <input
-                type="text"
-                name="name"
-                defaultValue={item.tripEdit.name}
-                required
-              />
-            </label>
-            <div className="row-inline">
-              <label>
-                Starts
-                <input
-                  type="date"
-                  name="starts_on"
-                  defaultValue={item.tripEdit.startsOn}
-                />
-              </label>
-              <label>
-                Ends
-                <input
-                  type="date"
-                  name="ends_on"
-                  defaultValue={item.tripEdit.endsOn}
-                />
-              </label>
-            </div>
-            <label className="checkbox-inline">
-              <input
-                type="checkbox"
-                name="is_overnight"
-                defaultChecked={item.tripEdit.isOvernight}
-              />{" "}
-              Overnight (rooms + buses)
-            </label>
-            <button type="submit">Save</button>
-            <p className="muted">
-              <Link href={`${base}/travel/${item.tripEdit.id}`}>
-                All details →
-              </Link>
-            </p>
-          </form>
-        )}
-      </div>
-    </details>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Quick add (US1) — one "+ Add" drawer holding a minimal form per kind. Native
-// <details> only: the outer drawer is the roster-page popover, the inner
-// sections share a `name` so opening one closes the others. No client JS, no
-// state — `?add=<kind>` opens a section, and a failed create comes back on that
-// same URL with its error code. Anything beyond the true minimum lives behind
-// each section's "More options →" (the module page's full form).
-// ---------------------------------------------------------------------------
-function QuickAdd({
-  slug,
-  base,
-  programId,
-  seasonId,
-  tz,
-  ensembles,
-  compsWithoutTrip,
-  canAddComp,
-  canAddEvent,
-  canAddTrip,
-  openKind,
-  error,
-}: {
-  slug: string;
-  base: string;
-  programId: string;
-  seasonId: string | null;
-  tz: string;
-  ensembles: { id: string; name: string }[];
-  compsWithoutTrip: { id: string; name: string; date: string | null }[];
-  canAddComp: boolean;
-  canAddEvent: boolean;
-  canAddTrip: boolean;
-  openKind: AddKind | null;
-  error: string | null;
-}) {
-  // The section that produced the error is the one that reopens with it.
-  const errorFor = (kind: AddKind): string | null =>
-    openKind === kind && error ? ADD_ERROR[kind][error] ?? ADD_ERROR[kind].save : null;
-
-  return (
-    <details className="drawer" open={openKind !== null}>
-      <summary className="button-link accent">+ Add</summary>
-      <div className="drawer-panel">
-        <h2 className="drawer-title">Add to the season</h2>
-        {!seasonId ? (
-          <p className="muted">
-            Start your season first — competitions, events, and trips all belong
-            to a season.
-          </p>
-        ) : (
-          <div className="quick-add-kinds">
-            {canAddComp && (
-              <details
-                name="season-add-kind"
-                className="quick-add-kind"
-                open={openKind === "comp"}
-              >
-                <summary>{ADD_KIND_LABEL.comp}</summary>
-                {errorFor("comp") && (
-                  <p className="alert-error">{errorFor("comp")}</p>
-                )}
-                {ensembles.length === 0 ? (
-                  <p className="muted">
-                    Competitions need at least one ensemble (a performing group).{" "}
-                    <Link href={`${base}/roster/ensembles`}>
-                      Create one first →
-                    </Link>
-                  </p>
-                ) : (
-                  <form action={createCompetition} className="stack">
-                    <input type="hidden" name="programId" value={programId} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="seasonId" value={seasonId} />
-                    <input type="hidden" name="from" value="season" />
-                    {/* Everything new starts Planned; change it on the row or
-                        the comp page once the host confirms. */}
-                    <input type="hidden" name="status" value="planned" />
-                    <div className="row-inline">
-                      <label>
-                        Name
-                        <input
-                          type="text"
-                          name="name"
-                          required
-                          placeholder="Midwest Invitational"
-                        />
-                      </label>
-                      <label>
-                        Date
-                        <input type="date" name="date" />
-                      </label>
-                    </div>
-                    {/* One ensemble is not a choice — it rides along hidden.
-                        More than one and they all come pre-ticked (§004). */}
-                    {ensembles.length === 1 ? (
-                      <input
-                        type="hidden"
-                        name="ensemble_ids"
-                        value={ensembles[0].id}
-                      />
-                    ) : (
-                      <fieldset className="stack">
-                        <legend>Who is going</legend>
-                        <div className="row-inline" style={{ flexWrap: "wrap" }}>
-                          {ensembles.map((e) => (
-                            <label key={e.id} className="checkbox-inline">
-                              <input
-                                type="checkbox"
-                                name="ensemble_ids"
-                                value={e.id}
-                                defaultChecked
-                              />
-                              {e.name}
-                            </label>
-                          ))}
-                        </div>
-                      </fieldset>
-                    )}
-                    <button type="submit">Add competition</button>
-                    <p className="muted">
-                      Host school, venue, and the rest:{" "}
-                      <Link href={`${base}/competitions#add`}>More options →</Link>
-                    </p>
-                  </form>
-                )}
-              </details>
-            )}
-
-            {canAddEvent && (
-              <details
-                name="season-add-kind"
-                className="quick-add-kind"
-                open={openKind === "event"}
-              >
-                <summary>{ADD_KIND_LABEL.event}</summary>
-                {errorFor("event") && (
-                  <p className="alert-error">{errorFor("event")}</p>
-                )}
-                <form action={createEvent} className="stack">
-                  <input type="hidden" name="programId" value={programId} />
-                  <input type="hidden" name="slug" value={slug} />
-                  <input type="hidden" name="seasonId" value={seasonId} />
-                  <input type="hidden" name="tz" value={tz} />
-                  <input type="hidden" name="from" value="season" />
-                  <div className="row-inline">
-                    <label>
-                      Title
-                      <input type="text" name="title" required />
-                    </label>
-                    <label>
-                      Starts
-                      <input type="datetime-local" name="starts_at" />
-                    </label>
-                    <label>
-                      Kind
-                      <select name="kind" defaultValue="rehearsal">
-                        {EVENT_KINDS.map((k) => (
-                          <option key={k} value={k}>
-                            {EVENT_KIND_LABELS[k]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  {/* Both of these are the exception, not the rule, so they stay
-                      folded away until someone needs them. */}
-                  {ensembles.length > 1 && (
-                    <details className="stack">
-                      <summary className="muted">Only some groups?</summary>
-                      <div className="row-inline" style={{ flexWrap: "wrap" }}>
-                        {ensembles.map((e) => (
-                          <label key={e.id} className="checkbox-inline">
-                            <input
-                              type="checkbox"
-                              name="ensemble_ids"
-                              value={e.id}
-                            />
-                            {e.name}
-                          </label>
-                        ))}
-                      </div>
-                      <p className="muted">
-                        Leave every box unticked and the whole program is invited.
-                      </p>
-                    </details>
-                  )}
-                  <details className="stack">
-                    <summary className="muted">Repeats weekly?</summary>
-                    <label>
-                      How many weeks
-                      <input
-                        type="number"
-                        name="repeat_count"
-                        className="num"
-                        min="1"
-                        max="52"
-                        defaultValue="1"
-                      />
-                    </label>
-                    <p className="muted">
-                      Each week becomes its own event you can change or delete on
-                      its own.
-                    </p>
-                  </details>
-                  <button type="submit">Add event</button>
-                  <p className="muted">
-                    Where it is, an end time, a note:{" "}
-                    <Link href={`${base}/events#add`}>More options →</Link>
-                  </p>
-                </form>
-              </details>
-            )}
-
-            {canAddTrip && (
-              <details
-                name="season-add-kind"
-                className="quick-add-kind"
-                open={openKind === "trip"}
-              >
-                <summary>{ADD_KIND_LABEL.trip}</summary>
-                {errorFor("trip") && (
-                  <p className="alert-error">{errorFor("trip")}</p>
-                )}
-                {compsWithoutTrip.length > 0 ? (
-                  <>
-                    {/* The common case by far: a bus (and rooms) for a
-                        competition already on the calendar. Name and dates come
-                        from that competition, server-side. */}
-                    <form action={createTrip} className="stack">
-                      <input type="hidden" name="programId" value={programId} />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="seasonId" value={seasonId} />
-                      <input type="hidden" name="from" value="season" />
-                      <label>
-                        For a competition
-                        <select name="competition_id">
-                          {compsWithoutTrip.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                              {c.date
-                                ? ` · ${formatDateInTz(`${c.date}T12:00:00Z`, tz)}`
-                                : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="checkbox-inline">
-                        <input type="checkbox" name="is_overnight" /> Overnight
-                        (rooms + buses)
-                      </label>
-                      <button type="submit">Add trip</button>
-                      <p className="muted">
-                        The trip takes its name and date from the competition.
-                      </p>
-                    </form>
-                    <details className="stack">
-                      <summary className="muted">Not for a competition?</summary>
-                      <StandaloneTripForm
-                        slug={slug}
-                        programId={programId}
-                        seasonId={seasonId}
-                      />
-                    </details>
-                  </>
-                ) : (
-                  <StandaloneTripForm
-                    slug={slug}
-                    programId={programId}
-                    seasonId={seasonId}
-                  />
-                )}
-                <p className="muted">
-                  Rooms, buses, and chaperones:{" "}
-                  <Link href={`${base}/travel#add`}>More options →</Link>
-                </p>
-              </details>
-            )}
-          </div>
-        )}
-      </div>
-    </details>
-  );
-}
-
-// A trip that isn't tied to a competition (banquet, tour) — the alternative path
-// inside the trip section, and the only one when every competition already has
-// a trip.
-function StandaloneTripForm({
-  slug,
-  programId,
-  seasonId,
-}: {
-  slug: string;
-  programId: string;
-  seasonId: string;
-}) {
-  return (
-    <form action={createTrip} className="stack">
-      <input type="hidden" name="programId" value={programId} />
-      <input type="hidden" name="slug" value={slug} />
-      <input type="hidden" name="seasonId" value={seasonId} />
-      <input type="hidden" name="from" value="season" />
-      <div className="row-inline">
-        <label>
-          Name
-          <input type="text" name="name" required placeholder="Spring Trip" />
-        </label>
-        <label>
-          Starts
-          <input type="date" name="starts_on" />
-        </label>
-        <label>
-          Ends
-          <input type="date" name="ends_on" />
-        </label>
-      </div>
-      <label className="checkbox-inline">
-        <input type="checkbox" name="is_overnight" /> Overnight (rooms + buses)
-      </label>
-      <button type="submit">Add trip</button>
-    </form>
   );
 }

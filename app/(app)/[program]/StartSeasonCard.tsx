@@ -25,6 +25,16 @@ const SEASON_ERROR: Record<string, string> = {
     "The season was created but couldn't be made active. Finish it in Settings.",
 };
 
+// The code rides in the URL, so the lookup has to be a lookup and not a walk up
+// Object.prototype — ?seasonError=constructor would otherwise hand React a
+// function to render. Anything unrecognized gets the generic message.
+function seasonErrorMessage(code: string | null | undefined): string | null {
+  if (!code) return null;
+  return Object.hasOwn(SEASON_ERROR, code)
+    ? SEASON_ERROR[code]
+    : SEASON_ERROR.create;
+}
+
 export async function StartSeasonCard({
   slug,
   programId,
@@ -48,17 +58,23 @@ export async function StartSeasonCard({
     .select("id", { count: "exact", head: true })
     .eq("program_id", programId);
   const seasonCount = count ?? 0;
+  const message = seasonErrorMessage(error);
 
-  // Seasons exist, just none active — a real choice, made in Settings.
+  // Seasons exist, just none active — a real choice, made in Settings. This is
+  // also where a failed submit lands when the season got created but not
+  // activated, so the message renders here too rather than nowhere.
   if (seasonCount > 0) {
     return (
-      <p className="alert-error">
-        No active season yet.{" "}
-        <Link href={`/${slug}/settings/rollover`}>
-          Choose which season is active
-        </Link>{" "}
-        in Settings.
-      </p>
+      <>
+        {message && <p className="alert-error">{message}</p>}
+        <p className="alert-error">
+          No active season yet.{" "}
+          <Link href={`/${slug}/settings/rollover`}>
+            Choose which season is active
+          </Link>{" "}
+          in Settings.
+        </p>
+      </>
     );
   }
 
@@ -77,9 +93,7 @@ export async function StartSeasonCard({
   return (
     <div className="confirm-box stack" style={{ width: "100%" }}>
       <h2>Start your season</h2>
-      {error && (
-        <p className="alert-error">{SEASON_ERROR[error] ?? SEASON_ERROR.create}</p>
-      )}
+      {message && <p className="alert-error">{message}</p>}
       <p className="muted">
         A season is the school year everything hangs on — your roster, the
         calendar, the money. Name it and you are going.
