@@ -10,7 +10,7 @@ import {
   isAlreadyPlacedError,
   type TravelGroupKind,
 } from "@/lib/travel";
-import { returnPath } from "@/lib/return-path";
+import { returnPath, programPath } from "@/lib/return-path";
 
 // Travel CRUD + assignment (§6, T016). Writes are director/admin ("Travel
 // rosters" write in §2); every action re-checks the role via requireRole
@@ -39,11 +39,25 @@ function seasonReturn(fd: FormData, slug: string): string | null {
   return returnPath(slug, str(fd, "from"));
 }
 
-// A SPARSE save carries only the fields it edits (the Season page's row-edit
-// popover: name, the two dates, overnight). Full forms — the trip page's — carry
-// the whole record, where an absent field still means "cleared", as before.
-function isSparse(fd: FormData): boolean {
-  return str(fd, "sparse") === "1";
+// Fail closed on the slug: it arrives as a form field, and a value like
+// "/evil.com" interpolated into a path makes a protocol-relative URL the browser
+// happily follows off-site (lib/return-path). Anything that isn't a program slug
+// lands on "/" rather than building a target out of it.
+function travelPath(slug: string): string {
+  return programPath(slug, "travel") ?? "/";
+}
+function tripPath(slug: string, tripId: string): string {
+  return programPath(slug, `travel/${tripId}`) ?? "/";
+}
+
+// Which of the two group sections an error belongs to (spec 005 US6-3): the
+// trip page renders each message inside the section that owns what failed, so
+// the redirect has to say which. Validated here — the page reads it straight
+// into a label lookup.
+function kindQuery(kind: string): string {
+  return TRAVEL_GROUP_KINDS.includes(kind as TravelGroupKind)
+    ? `&errorKind=${kind}`
+    : "";
 }
 
 // ---- Trips -----------------------------------------------------------------
@@ -58,7 +72,7 @@ export async function createTrip(formData: FormData): Promise<void> {
   // section reopened on the same error message it always used.
   const back = seasonReturn(formData, slug);
   const fail = (code: string): string =>
-    back ? `${back}?error=${code}&add=trip` : `/${slug}/travel?error=${code}`;
+    back ? `${back}?error=${code}&add=trip` : `${travelPath(slug)}?error=${code}`;
 
   const competitionId = nullable(formData, "competition_id");
   let name = str(formData, "name");
@@ -114,7 +128,7 @@ export async function createTrip(formData: FormData): Promise<void> {
     // highlights it, and still does the whole job on its own.
     redirect(`${back}?created=trip-${data.id}#item-trip-${data.id}`);
   }
-  redirect(`/${slug}/travel/${data.id}`);
+  redirect(tripPath(slug, data.id));
 }
 
 export async function updateTrip(formData: FormData): Promise<void> {
@@ -124,12 +138,12 @@ export async function updateTrip(formData: FormData): Promise<void> {
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
   // Spine edit popover (Season page): failures reopen that row's popover, saves
-  // land back on the spine. Allow-listed server-side; detail-page edits unchanged.
+  // land back on the spine. Allow-listed server-side; trip-page edits come back
+  // to the trip page, where Overview renders the message.
+  const self = tripPath(slug, tripId);
   const back = seasonReturn(formData, slug);
   const fail = (code: string): string =>
-    back
-      ? `${back}?error=${code}&edit=trip-${tripId}`
-      : `/${slug}/travel/${tripId}?error=${code}`;
+    back ? `${back}?error=${code}&edit=trip-${tripId}` : `${self}?error=${code}`;
 
   const name = str(formData, "name");
   if (!name) redirect(fail("name"));
@@ -142,9 +156,9 @@ export async function updateTrip(formData: FormData): Promise<void> {
     redirect(fail("dates"));
   }
 
-  // Both forms show this checkbox, so both modes read it. (A checkbox can't use
-  // the "was it sent?" test the other fields use: an unticked box sends nothing,
-  // and unticking it is precisely the case the room guard below exists for.)
+  // Both popovers show this checkbox, so both read it. (A checkbox can't use the
+  // "was it sent?" test the competition link uses below: an unticked box sends
+  // nothing, and unticking it is precisely the case the room guard exists for.)
   const isOvernight = str(formData, "is_overnight") === "on";
 
   const supabase = await createClient();
@@ -165,16 +179,19 @@ export async function updateTrip(formData: FormData): Promise<void> {
     }
   }
 
-  // Which competition a trip belongs to is trip-page work. A sparse save doesn't
-  // carry it, so it doesn't touch it — reading that silence as "unlink" is how a
-  // date fix used to cut a trip loose from its competition.
+  // Both callers are sparse popovers (`sparse=1`): each posts only the fields it
+  // shows, and everything else is left alone. The competition link is the one
+  // field they differ on — the Season spine's popover doesn't show it, and
+  // reading that silence as "unlink" is how a date fix used to cut a trip loose
+  // from its competition. The trip page's Overview popover does show it, so its
+  // value is written, including the empty "— none" that deliberately unlinks.
   const fields: Record<string, unknown> = {
     name,
     starts_on: startsOn,
     ends_on: endsOn,
     is_overnight: isOvernight,
   };
-  if (!isSparse(formData)) {
+  if (formData.has("competition_id")) {
     fields.competition_id = nullable(formData, "competition_id");
   }
 
@@ -191,7 +208,7 @@ export async function updateTrip(formData: FormData): Promise<void> {
     revalidatePath(back);
     redirect(`${back}?saved=trip-${tripId}#item-trip-${tripId}`);
   }
-  redirect(`/${slug}/travel/${tripId}`);
+  redirect(self);
 }
 
 export async function deleteTrip(formData: FormData): Promise<void> {
@@ -216,7 +233,7 @@ export async function deleteTrip(formData: FormData): Promise<void> {
   await supabase.from("trips").delete().eq("id", tripId).eq("program_id", programId);
 
   revalidatePath(`/${slug}/travel`);
-  redirect(`/${slug}/travel`);
+  redirect(travelPath(slug));
 }
 
 // ---- Groups (rooms / buses) ------------------------------------------------
@@ -227,10 +244,12 @@ export async function createGroup(formData: FormData): Promise<void> {
   const tripId = str(formData, "tripId");
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
+  const self = tripPath(slug, tripId);
   const kind = str(formData, "kind") as TravelGroupKind;
   const label = str(formData, "label");
+  const failGroup = `${self}?error=group${kindQuery(kind)}`;
   if (!TRAVEL_GROUP_KINDS.includes(kind) || !label) {
-    redirect(`/${slug}/travel/${tripId}?error=group`);
+    redirect(failGroup);
   }
 
   const supabase = await createClient();
@@ -243,13 +262,13 @@ export async function createGroup(formData: FormData): Promise<void> {
     notes: nullable(formData, "notes"),
     sort_order: intOrNull(formData, "sort_order") ?? 0,
   });
-  if (error) redirect(`/${slug}/travel/${tripId}?error=group`);
+  if (error) redirect(failGroup);
 
   revalidatePath(`/${slug}/travel/${tripId}`);
   // Land back on the section that was just added to (…#rooms / …#buses) rather
   // than scrolled to the top — a director adding several groups stays in place.
   const anchor = kind === "room" ? "rooms" : "buses";
-  redirect(`/${slug}/travel/${tripId}#${anchor}`);
+  redirect(`${self}#${anchor}`);
 }
 
 export async function updateGroup(formData: FormData): Promise<void> {
@@ -259,8 +278,12 @@ export async function updateGroup(formData: FormData): Promise<void> {
   const groupId = str(formData, "groupId");
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
+  const self = tripPath(slug, tripId);
   const label = str(formData, "label");
-  if (!label) redirect(`/${slug}/travel/${tripId}?error=group`);
+  // The edit form carries its card's kind so a failure comes back into the Buses
+  // or Rooms section it happened in, not both.
+  const failGroup = `${self}?error=group${kindQuery(str(formData, "kind"))}`;
+  if (!label) redirect(failGroup);
 
   const supabase = await createClient();
   const { error } = await supabase
@@ -273,10 +296,10 @@ export async function updateGroup(formData: FormData): Promise<void> {
     })
     .eq("id", groupId)
     .eq("program_id", programId);
-  if (error) redirect(`/${slug}/travel/${tripId}?error=group`);
+  if (error) redirect(failGroup);
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}`);
+  redirect(self);
 }
 
 export async function deleteGroup(formData: FormData): Promise<void> {
@@ -292,7 +315,7 @@ export async function deleteGroup(formData: FormData): Promise<void> {
   await supabase.from("travel_groups").delete().eq("id", groupId).eq("program_id", programId);
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}`);
+  redirect(tripPath(slug, tripId));
 }
 
 // ---- Assignments -----------------------------------------------------------
@@ -304,12 +327,13 @@ export async function assignStudent(formData: FormData): Promise<void> {
   const groupId = str(formData, "travelGroupId");
   const studentId = str(formData, "studentId");
   const kind = str(formData, "kind");
-  // H1 bulk-fill flow: when a fill target is active the chip submits carry the
-  // group id in `fill`. Preserve it through every redirect so the page re-renders
-  // with the sticky "Filling …" bar still up and the next chip a tap away — the
-  // ?sel= precedent, threaded through success/conflict/error alike.
+  // The fill flow is the only way here (spec 005 US5): the chip submits carry
+  // their target group id in `fill`. Preserve it through every redirect so the
+  // page re-renders with the sticky "Filling …" bar still up and the next chip a
+  // tap away — success, conflict, and error alike.
+  const self = tripPath(slug, tripId);
   const fill = str(formData, "fill");
-  const fillQ = fill ? `fill=${fill}` : "";
+  const fillQ = fill ? `&fill=${fill}` : "";
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
   const supabase = await createClient();
@@ -321,23 +345,18 @@ export async function assignStudent(formData: FormData): Promise<void> {
 
   if (isAlreadyPlacedError(error)) {
     // One-room-one-bus (or duplicate) — surface kindly with enough context for the
-    // page to name the student and the group they're already in (§6).
+    // page to name the student and the group they're already in (§6), inside the
+    // section for that kind.
     redirect(
-      `/${slug}/travel/${tripId}?conflict=${studentId}&conflictKind=${kind}${
-        fillQ ? `&${fillQ}` : ""
-      }`,
+      `${self}?conflict=${studentId}&conflictKind=${kind}${fillQ}`,
     );
   }
   if (error) {
-    redirect(
-      `/${slug}/travel/${tripId}?error=assign&sel=${studentId}${
-        fillQ ? `&${fillQ}` : ""
-      }`,
-    );
+    redirect(`${self}?error=assign${kindQuery(kind)}${fillQ}`);
   }
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}${fillQ ? `?${fillQ}` : ""}`);
+  redirect(fill ? `${self}?fill=${fill}` : self);
 }
 
 export async function unassignStudent(formData: FormData): Promise<void> {
@@ -355,7 +374,7 @@ export async function unassignStudent(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}`);
+  redirect(tripPath(slug, tripId));
 }
 
 // ---- Chaperones ------------------------------------------------------------
@@ -367,10 +386,11 @@ export async function addChaperone(formData: FormData): Promise<void> {
   const groupId = str(formData, "travelGroupId");
   await requireRole(programId, TRAVEL_WRITE_ROLES);
 
+  const self = tripPath(slug, tripId);
   const guardianId = nullable(formData, "guardian_id");
   const nameOverride = nullable(formData, "name_override");
   if (!guardianId && !nameOverride) {
-    redirect(`/${slug}/travel/${tripId}?error=chaperone`);
+    redirect(`${self}?error=chaperone`);
   }
 
   const supabase = await createClient();
@@ -381,10 +401,10 @@ export async function addChaperone(formData: FormData): Promise<void> {
     guardian_id: guardianId,
     name_override: guardianId ? null : nameOverride,
   });
-  if (error) redirect(`/${slug}/travel/${tripId}?error=chaperone`);
+  if (error) redirect(`${self}?error=chaperone`);
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}`);
+  redirect(self);
 }
 
 export async function removeChaperone(formData: FormData): Promise<void> {
@@ -402,5 +422,5 @@ export async function removeChaperone(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   revalidatePath(`/${slug}/travel/${tripId}`);
-  redirect(`/${slug}/travel/${tripId}`);
+  redirect(tripPath(slug, tripId));
 }

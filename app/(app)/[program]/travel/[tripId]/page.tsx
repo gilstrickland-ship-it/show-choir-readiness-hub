@@ -7,7 +7,6 @@ import {
   TRAVEL_WRITE_ROLES,
   TRAVEL_GROUP_KINDS,
   GROUP_KIND_LABEL,
-  GROUP_KIND_LABEL_PLURAL,
   relevantKinds,
   type TravelGroupKind,
 } from "@/lib/travel";
@@ -19,27 +18,37 @@ import {
   zonedDateKey,
   dateKeyRange,
 } from "@/lib/datetime";
-import {
-  createGroup,
-  updateGroup,
-  deleteGroup,
-  assignStudent,
-  unassignStudent,
-  addChaperone,
-  removeChaperone,
-  deleteTrip,
-  updateTrip,
-} from "../actions";
+import { deleteTrip } from "../actions";
 import { IntroStrip, HelpDot } from "../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
+import { FillQueue, FillBar, type FillChip } from "./FillQueue";
+import { GroupSection } from "./TripGroups";
+import { ChaperoneSection } from "./TripChaperones";
+import { TripEdit } from "./TripEdit";
+import {
+  asGroupKind,
+  studentName,
+  tripError,
+  type AssignmentRow,
+  type ChaperoneRow,
+  type GroupRow,
+  type Student,
+} from "./shared";
 
-// Two-pane assignment UI (§6, T016). LEFT: the unassigned queue — eligible
-// students (the linked competition's ensemble+season, or every active-season
-// student for a standalone trip) minus those already placed in every relevant
-// group kind, with absent students flagged when competition-linked. RIGHT: group
-// cards (rooms + buses) with per-card capacity meters (over-capacity warns, never
-// blocks). Tap a student (?sel=) → tap a group's "Assign here". The one-room-one-
-// bus trigger is caught in the action and rendered kindly here.
+// The trip page (spec 005 Wave 2). Titled sections in one constant order —
+// Overview · Schedule · Still to place · Buses · Rooms · Chaperones · Papers ·
+// Danger zone — each with a live one-line summary, so the page can be scanned
+// without opening anything and no mutation hides behind a bare triangle (US6).
+//
+// ONE assignment model (US5): pick a group to fill (`?fill=<groupId>`), and the
+// tap-chip queue at the top places riders one tap at a time while a sticky bar
+// keeps the target up. The unassigned list is read-only status. The
+// select-then-place flow that used to run alongside it (`?sel=`) is gone.
+//
+// This file loads the data and composes the sections; each section renders in
+// its own sibling file. Errors are section-local: `?error=` (+ `?errorKind=`)
+// resolves to the section that owns what failed (shared.ts), never a page-top
+// pile.
 
 interface TripRow {
   id: string;
@@ -50,40 +59,10 @@ interface TripRow {
   ends_on: string | null;
   is_overnight: boolean;
 }
-interface GroupRow {
-  id: string;
-  kind: TravelGroupKind;
-  label: string;
-  capacity: number | null;
-  notes: string | null;
-  sort_order: number;
-}
-interface AssignmentRow {
-  id: string;
-  travel_group_id: string;
-  student_id: string;
-  student: { first_name: string; last_name: string } | null;
-}
-interface ChaperoneRow {
-  id: string;
-  travel_group_id: string;
-  guardian_id: string | null;
-  name_override: string | null;
-  guardian: { name: string } | null;
-}
-interface Student {
-  id: string;
-  first_name: string;
-  last_name: string;
-}
 interface GuardianRow {
   id: string;
   name: string;
   student: { last_name: string } | null;
-}
-
-function studentName(s: { first_name: string; last_name: string }): string {
-  return `${s.last_name}, ${s.first_name}`;
 }
 
 export default async function TripPage({
@@ -91,16 +70,9 @@ export default async function TripPage({
   searchParams,
 }: {
   params: Promise<{ program: string; tripId: string }>;
-  searchParams: Promise<{
-    sel?: string;
-    fill?: string;
-    conflict?: string;
-    conflictKind?: string;
-    error?: string;
-    confirm?: string;
-    groupId?: string;
-    help?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?fill=a&fill=b), so every
+  // read below goes through `one()` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, tripId } = await params;
   const { program, role, flags, membership, isSupport } =
@@ -108,11 +80,17 @@ export default async function TripPage({
   requireFlag(program, "travel");
   const canWrite = TRAVEL_WRITE_ROLES.includes(role);
   const tz = program.timezone;
+  const tripHref = `/${slug}/travel/${tripId}`;
+
   const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
 
   const supabase = await createClient();
 
-  // First-use intro strip (spec 003 §3) — how the tap-to-place loading flow works.
+  // First-use intro strip (spec 003 §3) — how the fill flow works.
   const showGuide = flags.guide && !isSupport && !!membership.user_id;
   const guideState =
     showGuide && membership.user_id
@@ -143,8 +121,8 @@ export default async function TripPage({
     compEnsembleIds = await competitionEnsembleIds(supabase, trip.competition_id);
   }
 
-  // This season's competitions for the Edit-trip linker (mirrors the create form
-  // on travel/page.tsx). Writers only — the read-only view has no linker.
+  // This season's competitions for the Overview edit popover's linker (mirrors
+  // the create form on travel/page.tsx). Writers only — read-only has no linker.
   let seasonComps: { id: string; name: string }[] = [];
   if (canWrite) {
     const { data: compRows } = await supabase
@@ -156,7 +134,7 @@ export default async function TripPage({
     seasonComps = (compRows as { id: string; name: string }[] | null) ?? [];
   }
 
-  // Groups for this trip.
+  // Groups for this trip (buses first, then rooms — `kind` sorts that way).
   const { data: groupData } = await supabase
     .from("travel_groups")
     .select("id, kind, label, capacity, notes, sort_order")
@@ -254,6 +232,9 @@ export default async function TripPage({
       studentKinds.set(a.student_id, set);
     }
   }
+  const riderCount = new Map(
+    groups.map((g) => [g.id, assignmentsByGroup.get(g.id)?.length ?? 0]),
+  );
   const chaperonesByGroup = new Map<string, ChaperoneRow[]>();
   for (const c of chaperones) {
     const list = chaperonesByGroup.get(c.travel_group_id) ?? [];
@@ -267,66 +248,74 @@ export default async function TripPage({
     return needed.filter((k) => !has.has(k));
   };
 
-  // Queue: eligible students still missing a relevant kind, sorted by name.
+  // Who still needs a seat (and a bed, on an overnight trip), by name.
   const queue = eligible.filter((s) => neededOf(s.id).length > 0);
 
-  const selId = sp.sel && studentById.has(sp.sel) ? sp.sel : null;
-  const selStudent = selId ? studentById.get(selId)! : null;
-  const selNeeds = selId ? neededOf(selId) : [];
-
-  // H1 bulk-fill flow: `?fill=<groupId>` makes one group the *active target*.
-  // A sticky bar names it and the unassigned queue becomes big tap-chips — one
-  // tap places a rider and the page re-renders (server data) with the bar still
-  // up. Writers only; ignore a stale/foreign id. The chip list offers only riders
-  // who still need this group's kind, so a tap never trips the one-room-one-bus
-  // guard. Counts re-derive from `assignmentsByGroup` every render (no client
-  // state that can lie); over-capacity warns, never blocks.
+  // The fill target: `?fill=<groupId>` makes one group active. Writers only;
+  // a stale or foreign id is ignored.
+  const fillParam = one("fill");
   const fillGroup =
-    canWrite && sp.fill ? (groups.find((g) => g.id === sp.fill) ?? null) : null;
-  const fillKind = fillGroup?.kind ?? null;
-
-  // Cascade-delete confirmations (the ?confirm= confirm-box idiom used across the
-  // app): a group or the whole trip is only removed on the second, explicit tap.
-  const confirmDeleteTrip = sp.confirm === "deletetrip" && canWrite;
-  const confirmDeleteGroup =
-    sp.confirm === "deletegroup" && canWrite ? sp.groupId : null;
+    canWrite && fillParam
+      ? (groups.find((g) => g.id === fillParam) ?? null)
+      : null;
   const fillMembers = fillGroup
     ? (assignmentsByGroup.get(fillGroup.id) ?? [])
     : [];
-  const fillCount = fillMembers.length;
-  const fillOver =
-    fillGroup?.capacity != null && fillCount > fillGroup.capacity;
-  const fillChips =
-    fillGroup && fillKind
-      ? queue.filter((s) => neededOf(s.id).includes(fillKind))
-      : [];
+  const fillChips: FillChip[] = fillGroup
+    ? queue
+        .filter((s) => neededOf(s.id).includes(fillGroup.kind))
+        .map((s) => ({
+          id: s.id,
+          name: studentName(s),
+          absent: absent.has(s.id),
+          needs: neededOf(s.id),
+        }))
+    : [];
 
-  // Kinds/sections to render: buses always (writers can add); rooms when overnight
-  // or any room group already exists.
-  const kindsToShow: TravelGroupKind[] = TRAVEL_GROUP_KINDS.filter((k) => {
-    if (k === "bus") return true;
-    return trip.is_overnight || groups.some((g) => g.kind === "room");
-  });
+  // Cascade-delete confirmations (the ?confirm= confirm-box idiom used across the
+  // app): a group or the whole trip is only removed on the second, explicit tap.
+  const confirmDeleteTrip = one("confirm") === "deletetrip" && canWrite;
+  const confirmDeleteGroup =
+    one("confirm") === "deletegroup" && canWrite ? one("groupId") : null;
 
-  // Friendly one-room-one-bus conflict message (§6).
+  // Section-local messages. Every error code maps to the section that owns what
+  // failed; the two that could belong to either group section carry the kind.
+  const err = tripError(one("error"));
+  const errKind = asGroupKind(one("errorKind")) ?? "bus";
+  const overviewError = err?.slot === "overview" ? err.message : null;
+  const chaperoneError = err?.slot === "chaperones" ? err.message : null;
+  const groupError = (k: TravelGroupKind): string | null =>
+    err?.slot === "group" && errKind === k ? err.message : null;
+
+  // The friendly one-room-one-bus message (§6), rendered in the section of the
+  // kind it happened in.
+  const conflictId = one("conflict");
+  const conflictKind = asGroupKind(one("conflictKind"));
   let conflictMsg: string | null = null;
-  if (sp.conflict && sp.conflictKind) {
-    const s = studentById.get(sp.conflict);
-    const kind = sp.conflictKind as TravelGroupKind;
+  if (conflictId && conflictKind) {
+    const s = studentById.get(conflictId);
     const existing = groups.find(
       (g) =>
-        g.kind === kind &&
+        g.kind === conflictKind &&
         (assignmentsByGroup.get(g.id) ?? []).some(
-          (a) => a.student_id === sp.conflict,
+          (a) => a.student_id === conflictId,
         ),
     );
     const who = s ? s.first_name : "That student";
     conflictMsg = existing
       ? `${who} is already in ${existing.label} — remove them there first.`
-      : `${who} is already assigned to a ${GROUP_KIND_LABEL[kind].toLowerCase()} on this trip.`;
+      : `${who} is already assigned to a ${GROUP_KIND_LABEL[
+          conflictKind
+        ].toLowerCase()} on this trip.`;
   }
 
   const roomsExist = groups.some((g) => g.kind === "room");
+
+  // Which group sections render: buses always (writers can add one); rooms when
+  // the trip is overnight or a room already exists.
+  const kindsToShow: TravelGroupKind[] = TRAVEL_GROUP_KINDS.filter(
+    (k) => k !== "room" || trip.is_overnight || roomsExist,
+  );
 
   // ---- Trip schedule (G2.5): read-only per-day merge, multi-day trips only ----
   // A nationals trip runs several days; staff want one place that shows what
@@ -412,10 +401,9 @@ export default async function TripPage({
       if (bucket)
         bucket.push({
           startsAt: e.starts_at,
-          label: e.title,
-          sublabel: e.location,
-          source: "event",
-        });
+          title: e.title,
+          location: e.location,
+        } as never);
     }
 
     scheduleByDay = dayKeys.map((k) => ({
@@ -426,6 +414,23 @@ export default async function TripPage({
       ),
     }));
   }
+  const scheduleCount = scheduleByDay.reduce(
+    (n, d) => n + d.entries.length,
+    0,
+  );
+
+  // Overview's live summary — also the Edit-trip popover's summary line, so a
+  // collapsed disclosure still says what it holds.
+  const dateText = trip.starts_on
+    ? `${formatDateInTz(`${trip.starts_on}T12:00:00Z`, tz)}${
+        trip.ends_on && trip.ends_on !== trip.starts_on
+          ? ` – ${formatDateInTz(`${trip.ends_on}T12:00:00Z`, tz)}`
+          : ""
+      }`
+    : "No dates yet";
+  const factSummary = `${dateText} · ${
+    trip.is_overnight ? "overnight" : "day trip"
+  }`;
 
   return (
     <section className="stack">
@@ -434,154 +439,75 @@ export default async function TripPage({
       </p>
       <div className="page-title-row">
         <h1>{trip.name}</h1>
-        {showGuide && <HelpDot href={`/${slug}/travel/${tripId}?help=1`} />}
+        {showGuide && <HelpDot href={`${tripHref}?help=1`} />}
       </div>
       {showGuide && (
         <IntroStrip
           surfaceKey="trip"
           programId={program.id}
-          selfPath={`/${slug}/travel/${tripId}`}
+          selfPath={tripHref}
           guideState={guideState}
-          help={sp.help === "1"}
+          help={one("help") === "1"}
         />
       )}
-      <p className="muted">
-        {trip.starts_on
-          ? formatDateInTz(`${trip.starts_on}T12:00:00Z`, tz)
-          : "No dates"}
-        {trip.ends_on && trip.ends_on !== trip.starts_on
-          ? ` – ${formatDateInTz(`${trip.ends_on}T12:00:00Z`, tz)}`
-          : ""}
-        {" · "}
-        <span className="badge">{trip.is_overnight ? "Overnight" : "Day"}</span>
-        {trip.competition_id && compName ? (
-          <>
-            {" · "}
-            <Link href={`/${slug}/competitions/${trip.competition_id}`}>
-              {compName}
-            </Link>
-          </>
-        ) : null}
-      </p>
 
-      {/* Edit trip (name / dates / overnight / linked competition) — writers
-          only, in the two-tap details idiom used across this page. Pre-filled
-          with the current values; the competition select mirrors the create
-          form on travel/page.tsx. The overnight toggle is room-safe: the action
-          rejects clearing it while rooms still exist. */}
-      {canWrite && (
-        <details className="stack">
-          <summary className="muted">Edit trip</summary>
-          <form
-            action={updateTrip}
-            className="stack"
-            style={{ gap: "0.5rem", marginTop: "0.5rem" }}
-          >
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="tripId" value={tripId} />
-            <label>
-              Name
-              <input type="text" name="name" defaultValue={trip.name} required />
-            </label>
-            <div className="row-inline">
-              <label>
-                Starts
-                <input
-                  type="date"
-                  name="starts_on"
-                  defaultValue={trip.starts_on ?? ""}
-                />
-              </label>
-              <label>
-                Ends
-                <input
-                  type="date"
-                  name="ends_on"
-                  defaultValue={trip.ends_on ?? ""}
-                />
-              </label>
-              <label className="checkbox-inline">
-                <input
-                  type="checkbox"
-                  name="is_overnight"
-                  defaultChecked={trip.is_overnight}
-                />{" "}
-                Overnight (rooms + buses)
-              </label>
-            </div>
-            <label>
-              Competition (optional)
-              <select
-                name="competition_id"
-                defaultValue={trip.competition_id ?? ""}
-              >
-                <option value="">— none (banquet, tour, standalone)</option>
-                {seasonComps.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="submit" className="secondary">
-              Save trip
-            </button>
-          </form>
-        </details>
+      {/* The fill queue stays at the top of the page while a group is the active
+          target: every tap reloads the page here, so the next name is already
+          under the thumb. */}
+      {fillGroup && (
+        <FillQueue
+          group={fillGroup}
+          chips={fillChips}
+          programId={program.id}
+          slug={slug}
+          tripId={tripId}
+        />
       )}
 
-      {/* Derived-document downloads (§6, VI) */}
-      <p className="row-inline">
-        <a href={`/api/pdf/bus?trip=${trip.id}`} target="_blank" rel="noopener">
-          Download bus manifest (PDF)
-        </a>
-        {(trip.is_overnight || roomsExist) && (
-          <a
-            href={`/api/pdf/rooms?trip=${trip.id}`}
-            target="_blank"
-            rel="noopener"
-          >
-            Download room sheets (PDF)
-          </a>
+      {/* ---------------------------- Overview ---------------------------- */}
+      <section id="overview" className="travel-section stack">
+        <div className="travel-section-head">
+          <h2>Overview</h2>
+          <span className="travel-section-summary">{factSummary}</span>
+        </div>
+        {overviewError && <p className="alert-error">{overviewError}</p>}
+        <p className="muted">
+          {trip.competition_id && compName ? (
+            <>
+              For{" "}
+              <Link href={`/${slug}/competitions/${trip.competition_id}`}>
+                {compName}
+              </Link>
+            </>
+          ) : (
+            "Not tied to a competition."
+          )}
+        </p>
+        {canWrite && (
+          <TripEdit
+            programId={program.id}
+            slug={slug}
+            tripId={tripId}
+            name={trip.name}
+            startsOn={trip.starts_on ?? ""}
+            endsOn={trip.ends_on ?? ""}
+            isOvernight={trip.is_overnight}
+            competitionId={trip.competition_id ?? ""}
+            seasonComps={seasonComps}
+            summary={factSummary}
+          />
         )}
-      </p>
+      </section>
 
-      {conflictMsg && <p className="alert-error">{conflictMsg}</p>}
-      {sp.error === "name" && (
-        <p className="alert-error">A trip needs a name.</p>
-      )}
-      {sp.error === "dates" && (
-        <p className="alert-error">
-          A trip can&apos;t end before it starts.
-        </p>
-      )}
-      {sp.error === "overnight_rooms" && (
-        <p className="alert-error">
-          Remove this trip&apos;s rooms before making it a day trip.
-        </p>
-      )}
-      {sp.error === "save" && (
-        <p className="alert-error">Couldn&apos;t save the trip. Try again.</p>
-      )}
-      {sp.error === "assign" && (
-        <p className="alert-error">
-          Couldn&apos;t place that student. Try again.
-        </p>
-      )}
-      {sp.error === "group" && (
-        <p className="alert-error">A group needs a kind and a label.</p>
-      )}
-      {sp.error === "chaperone" && (
-        <p className="alert-error">
-          Pick a guardian or type a name for the chaperone.
-        </p>
-      )}
-
-      {/* Trip schedule (G2.5) — read-only per-day view for multi-day trips. */}
+      {/* ---------------------------- Schedule ---------------------------- */}
       {isMultiDay && (
-        <section className="stack trip-schedule" style={{ width: "100%" }}>
-          <h2>Trip schedule</h2>
+        <section id="schedule" className="travel-section stack">
+          <div className="travel-section-head">
+            <h2>Schedule</h2>
+            <span className="travel-section-summary">
+              {scheduleByDay.length} days · {scheduleCount} scheduled
+            </span>
+          </div>
           <p className="muted">
             What happens each day — the linked competition&apos;s published
             itinerary and this season&apos;s events, merged by day. Add park
@@ -594,24 +520,15 @@ export default async function TripPage({
               {day.entries.length === 0 ? (
                 <p className="muted">— nothing scheduled yet</p>
               ) : (
-                <ul
-                  className="stack"
-                  style={{ listStyle: "none", padding: 0, margin: 0 }}
-                >
+                <ul className="travel-day-list">
                   {day.entries.map((e, i) => (
-                    <li
-                      key={i}
-                      className="row-inline"
-                      style={{ gap: "0.5rem" }}
-                    >
+                    <li key={i} className="row-inline" style={{ gap: "0.5rem" }}>
                       <strong>{formatTimeInTz(e.startsAt, tz)}</strong>
                       <span>{e.label}</span>
                       <span className="chip">
                         {e.source === "event" ? "event" : "itinerary"}
                       </span>
-                      {e.sublabel && (
-                        <span className="muted">· {e.sublabel}</span>
-                      )}
+                      {e.sublabel && <span className="muted">· {e.sublabel}</span>}
                     </li>
                   ))}
                 </ul>
@@ -621,747 +538,168 @@ export default async function TripPage({
         </section>
       )}
 
-      {/* ============ H1: bulk-fill tap-chip queue (active target) ============ */}
-      {/* Drag-free bus/room loading for phones: with a target picked, the whole
-          unassigned queue (for that kind) becomes big tap-chips. One tap = one
-          rider placed; the page re-renders from server data and the sticky bar
-          below keeps the target up. Renders for every viewport (great on desktop
-          too) and sits alongside — not replacing — the two-pane flow. */}
-      {fillGroup && (
-        <section className="travel-fill-queue stack">
-          <h2>Tap a name to add to {fillGroup.label}</h2>
-          {fillChips.length === 0 ? (
-            <p className="alert-ok">
-              Everyone who still needs a{" "}
-              {GROUP_KIND_LABEL[fillGroup.kind].toLowerCase()} is placed.
-            </p>
-          ) : (
-            <div className="travel-chip-grid">
-              {fillChips.map((s) => {
-                const isAbsent = absent.has(s.id);
-                const needs = neededOf(s.id);
-                return (
-                  <form
-                    key={s.id}
-                    action={assignStudent}
-                    className="travel-chip-form"
-                  >
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="tripId" value={tripId} />
-                    <input
-                      type="hidden"
-                      name="travelGroupId"
-                      value={fillGroup.id}
-                    />
-                    <input type="hidden" name="studentId" value={s.id} />
-                    <input type="hidden" name="kind" value={fillGroup.kind} />
-                    <input type="hidden" name="fill" value={fillGroup.id} />
-                    <button
-                      type="submit"
-                      className="travel-chip"
-                      style={{ opacity: isAbsent ? 0.6 : 1 }}
-                      aria-label={`Add ${studentName(s)} to ${fillGroup.label}`}
-                    >
-                      <span className="travel-chip-name">{studentName(s)}</span>
-                      <span className="travel-chip-badges">
-                        {isAbsent && (
-                          <span className="chip danger">absent</span>
-                        )}
-                        {needs.map((k) => (
-                          <span key={k} className="chip">
-                            needs {GROUP_KIND_LABEL[k].toLowerCase()}
-                          </span>
-                        ))}
-                      </span>
-                    </button>
-                  </form>
-                );
-              })}
-            </div>
+      {/* ------------------------- Still to place ------------------------- */}
+      {/* Read-only status (US5): who still needs a bus, and a room when it's an
+          overnight. Placing happens by picking a group to fill, below. */}
+      <section id="unassigned" className="travel-section stack">
+        <div className="travel-section-head">
+          <h2>Still to place</h2>
+          <span className="travel-section-summary">
+            {queue.length === 0
+              ? "Everyone is placed"
+              : `${queue.length} to go`}
+          </span>
+        </div>
+        {eligible.length === 0 ? (
+          <p className="muted">
+            No eligible students.{" "}
+            {trip.competition_id
+              ? "Add ensemble members for the linked competition's ensemble this season."
+              : "Add ensemble members for this season."}
+          </p>
+        ) : queue.length === 0 ? (
+          <p className="alert-ok">Everyone eligible is placed.</p>
+        ) : (
+          <>
+            {canWrite && (
+              <p className="muted">
+                Pick a bus or a room below, then tap names to fill it.
+              </p>
+            )}
+            <ul className="travel-unassigned">
+              {queue.map((s) => (
+                <li
+                  key={s.id}
+                  className={absent.has(s.id) ? "is-absent" : undefined}
+                >
+                  <span className="travel-unassigned-name">
+                    {studentName(s)}
+                  </span>
+                  {absent.has(s.id) && <span className="chip danger">absent</span>}
+                  {neededOf(s.id).map((k) => (
+                    <span key={k} className="chip">
+                      needs {GROUP_KIND_LABEL[k].toLowerCase()}
+                    </span>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+
+      {/* ------------------------- Buses · Rooms -------------------------- */}
+      {kindsToShow.map((kind) => (
+        <GroupSection
+          key={kind}
+          kind={kind}
+          groups={groups.filter((g) => g.kind === kind)}
+          membersByGroup={assignmentsByGroup}
+          absent={absent}
+          canWrite={canWrite}
+          programId={program.id}
+          slug={slug}
+          tripId={tripId}
+          tripHref={tripHref}
+          fillGroupId={fillGroup?.id ?? null}
+          confirmDeleteGroupId={confirmDeleteGroup}
+          error={groupError(kind)}
+          conflict={conflictKind === kind ? conflictMsg : null}
+        />
+      ))}
+
+      {/* --------------------------- Chaperones --------------------------- */}
+      <ChaperoneSection
+        groups={groups}
+        chaperonesByGroup={chaperonesByGroup}
+        riderCount={riderCount}
+        guardians={guardians}
+        guardianName={guardianName}
+        canWrite={canWrite}
+        programId={program.id}
+        slug={slug}
+        tripId={tripId}
+        error={chaperoneError}
+      />
+
+      {/* ----------------------------- Papers ----------------------------- */}
+      <section id="papers" className="travel-section stack">
+        <div className="travel-section-head">
+          <h2>Papers</h2>
+          <span className="travel-section-summary">
+            Print-ready, straight from what&apos;s above
+          </span>
+        </div>
+        <p className="row-inline">
+          <a href={`/api/pdf/bus?trip=${trip.id}`} target="_blank" rel="noopener">
+            Bus manifest (PDF)
+          </a>
+          {(trip.is_overnight || roomsExist) && (
+            <a
+              href={`/api/pdf/rooms?trip=${trip.id}`}
+              target="_blank"
+              rel="noopener"
+            >
+              Room sheets (PDF)
+            </a>
           )}
+        </p>
+      </section>
+
+      {/* --------------------------- Danger zone -------------------------- */}
+      {canWrite && (
+        <section id="danger" className="travel-section stack">
+          <div className="travel-section-head">
+            <h2>Danger zone</h2>
+            <span className="travel-section-summary">
+              Deleting a trip can&apos;t be undone
+            </span>
+          </div>
+          <details open={confirmDeleteTrip}>
+            <summary className="travel-disclosure">
+              Delete trip · {groups.length} buses and rooms ·{" "}
+              {assignments.length} placed
+            </summary>
+            {confirmDeleteTrip ? (
+              <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
+                <p>
+                  Delete this trip? All its buses, rooms, and assignments go
+                  with it.
+                </p>
+                <form action={deleteTrip} className="row-inline">
+                  <input type="hidden" name="programId" value={program.id} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="tripId" value={tripId} />
+                  <button type="submit" className="danger">
+                    Confirm delete trip
+                  </button>
+                  <Link href={tripHref}>Cancel</Link>
+                </form>
+              </div>
+            ) : (
+              <p style={{ marginTop: "0.5rem" }}>
+                <Link
+                  className="linklike danger"
+                  href={`${tripHref}?confirm=deletetrip`}
+                >
+                  Delete this trip and all its groups, assignments, and
+                  chaperones
+                </Link>
+              </p>
+            )}
+          </details>
         </section>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "1.5rem",
-          width: "100%",
-        }}
-      >
-        {/* ==================== LEFT: unassigned queue ==================== */}
-        <div className="stack" style={{ flex: "1 1 16rem", minWidth: "14rem" }}>
-          <h2>Unassigned · {queue.length}</h2>
-          {eligible.length === 0 && (
-            <p className="muted">
-              No eligible students.{" "}
-              {trip.competition_id
-                ? "Add ensemble members for the linked competition's ensemble this season."
-                : "Add ensemble members for this season."}
-            </p>
-          )}
-          {eligible.length > 0 && queue.length === 0 && (
-            <p className="alert-ok">Everyone eligible is placed.</p>
-          )}
-
-          <ul className="stack" style={{ listStyle: "none", padding: 0 }}>
-            {queue.map((s) => {
-              const isAbsent = absent.has(s.id);
-              const isSel = s.id === selId;
-              const needs = neededOf(s.id);
-              return (
-                <li
-                  key={s.id}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.25rem",
-                    padding: "0.5rem",
-                    borderBottom: "1px solid var(--border)",
-                    background: isSel ? "var(--border)" : undefined,
-                    borderRadius: isSel ? 6 : undefined,
-                    opacity: isAbsent ? 0.6 : 1,
-                  }}
-                >
-                  <div style={{ fontWeight: 600 }}>
-                    {studentName(s)}
-                    {isAbsent && <span className="chip danger"> absent</span>}
-                  </div>
-                  <div
-                    className="row-inline"
-                    style={{ gap: "0.35rem", flexWrap: "wrap" }}
-                  >
-                    {needs.map((k) => (
-                      <span key={k} className="chip">
-                        needs {GROUP_KIND_LABEL[k].toLowerCase()}
-                      </span>
-                    ))}
-                  </div>
-                  {canWrite &&
-                    (isSel ? (
-                      <div className="row-inline">
-                        <strong>Selected — choose a group →</strong>
-                        <Link
-                          href={`/${slug}/travel/${tripId}`}
-                          className="linklike"
-                        >
-                          Cancel
-                        </Link>
-                      </div>
-                    ) : (
-                      <Link
-                        href={`/${slug}/travel/${tripId}?sel=${s.id}`}
-                        className="linklike"
-                      >
-                        Select to place
-                      </Link>
-                    ))}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        {/* ==================== RIGHT: group cards ==================== */}
-        <div className="stack" style={{ flex: "3 1 26rem", minWidth: "18rem" }}>
-          {kindsToShow.map((kind) => {
-            const kindGroups = groups.filter((g) => g.kind === kind);
-            // Anchor target so the post-add redirect lands back on this section
-            // (createGroup redirects to …#rooms / …#buses) instead of the top.
-            const sectionAnchor = kind === "room" ? "rooms" : "buses";
-            return (
-              <div key={kind} id={sectionAnchor} className="stack">
-                <h2>{GROUP_KIND_LABEL_PLURAL[kind]}</h2>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "1rem",
-                    width: "100%",
-                  }}
-                >
-                  {kindGroups.map((g) => {
-                    const members = (assignmentsByGroup.get(g.id) ?? []).sort(
-                      (a, b) =>
-                        studentName(
-                          a.student ?? { first_name: "", last_name: "" },
-                        ).localeCompare(
-                          studentName(
-                            b.student ?? { first_name: "", last_name: "" },
-                          ),
-                        ),
-                    );
-                    const count = members.length;
-                    const over = g.capacity != null && count > g.capacity;
-                    const groupChaps = chaperonesByGroup.get(g.id) ?? [];
-                    const selAlreadyHere = selId
-                      ? (studentKinds.get(selId)?.has(kind) ?? false)
-                      : false;
-                    const canAssignHere =
-                      selStudent != null && selNeeds.includes(kind);
-                    const isFillTarget = fillGroup?.id === g.id;
-                    return (
-                      <div
-                        key={g.id}
-                        className="stack"
-                        style={{
-                          flex: "1 1 15rem",
-                          minWidth: "13rem",
-                          border: `1px solid ${
-                            isFillTarget
-                              ? "var(--accent)"
-                              : over
-                                ? "var(--warn)"
-                                : "var(--border)"
-                          }`,
-                          background: over ? "rgba(217,119,6,0.08)" : undefined,
-                          borderRadius: 8,
-                          padding: "0.75rem",
-                        }}
-                      >
-                        <div
-                          className="row-inline"
-                          style={{ justifyContent: "space-between" }}
-                        >
-                          <strong>{g.label}</strong>
-                          <span className={over ? "chip danger" : "chip"}>
-                            {count}
-                            {g.capacity != null ? ` / ${g.capacity}` : ""}
-                            {over ? " over" : ""}
-                          </span>
-                        </div>
-                        {g.notes && <p className="muted">{g.notes}</p>}
-
-                        {/* H1: fill affordance — make this group the active target.
-                            Tapping switches the sticky bar + chip queue to it;
-                            when it's already active, "Done" drops ?fill=. */}
-                        {canWrite &&
-                          (isFillTarget ? (
-                            <Link
-                              href={`/${slug}/travel/${tripId}`}
-                              className="travel-fill-toggle is-active"
-                            >
-                              Filling this{" "}
-                              {GROUP_KIND_LABEL[kind].toLowerCase()} — Done
-                            </Link>
-                          ) : (
-                            <Link
-                              href={`/${slug}/travel/${tripId}?fill=${g.id}`}
-                              className="travel-fill-toggle"
-                            >
-                              Fill this {GROUP_KIND_LABEL[kind].toLowerCase()}
-                            </Link>
-                          ))}
-
-                        {/* Members */}
-                        <ul
-                          style={{ listStyle: "none", padding: 0, margin: 0 }}
-                        >
-                          {members.map((a) => (
-                            <li
-                              key={a.id}
-                              className="row-inline"
-                              style={{
-                                justifyContent: "space-between",
-                                gap: "0.5rem",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  opacity: absent.has(a.student_id) ? 0.6 : 1,
-                                }}
-                              >
-                                {a.student ? studentName(a.student) : "?"}
-                                {absent.has(a.student_id) && (
-                                  <span className="chip danger"> absent</span>
-                                )}
-                              </span>
-                              {canWrite && (
-                                <form action={unassignStudent}>
-                                  <input
-                                    type="hidden"
-                                    name="programId"
-                                    value={program.id}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="slug"
-                                    value={slug}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="tripId"
-                                    value={tripId}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="assignmentId"
-                                    value={a.id}
-                                  />
-                                  <button
-                                    type="submit"
-                                    className="linklike danger"
-                                    aria-label={`Remove ${
-                                      a.student ? studentName(a.student) : "student"
-                                    } from ${g.label}`}
-                                  >
-                                    remove
-                                  </button>
-                                </form>
-                              )}
-                            </li>
-                          ))}
-                          {members.length === 0 && (
-                            <li className="muted">Empty</li>
-                          )}
-                        </ul>
-
-                        {/* One-tap add (D7): a per-card picker of unassigned-
-                            queue students who still need THIS kind, posting
-                            straight to assignStudent — no select-then-scroll.
-                            The select-then-"Assign here" flow below stays for
-                            desktop. Offering only students missing this kind
-                            avoids the one-room-one-bus conflict on submit. */}
-                        {canWrite &&
-                          (() => {
-                            const addable = queue.filter((s) =>
-                              neededOf(s.id).includes(kind),
-                            );
-                            return addable.length > 0 ? (
-                              <form
-                                action={assignStudent}
-                                className="row-inline"
-                                style={{ gap: "0.35rem", flexWrap: "wrap" }}
-                              >
-                                <input
-                                  type="hidden"
-                                  name="programId"
-                                  value={program.id}
-                                />
-                                <input type="hidden" name="slug" value={slug} />
-                                <input
-                                  type="hidden"
-                                  name="tripId"
-                                  value={tripId}
-                                />
-                                <input
-                                  type="hidden"
-                                  name="travelGroupId"
-                                  value={g.id}
-                                />
-                                <input type="hidden" name="kind" value={kind} />
-                                <select
-                                  name="studentId"
-                                  defaultValue=""
-                                  required
-                                  aria-label={`Add a student to ${g.label}`}
-                                >
-                                  <option value="">Add a student…</option>
-                                  {addable.map((s) => (
-                                    <option key={s.id} value={s.id}>
-                                      {studentName(s)}
-                                    </option>
-                                  ))}
-                                </select>
-                                <button type="submit" className="secondary">
-                                  Add
-                                </button>
-                              </form>
-                            ) : null;
-                          })()}
-
-                        {/* Assign selected student here */}
-                        {canWrite &&
-                          selStudent &&
-                          (canAssignHere ? (
-                            <form action={assignStudent}>
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="tripId"
-                                value={tripId}
-                              />
-                              <input
-                                type="hidden"
-                                name="travelGroupId"
-                                value={g.id}
-                              />
-                              <input
-                                type="hidden"
-                                name="studentId"
-                                value={selStudent.id}
-                              />
-                              <input type="hidden" name="kind" value={kind} />
-                              <button type="submit" className="secondary">
-                                Assign {selStudent.first_name} here
-                              </button>
-                            </form>
-                          ) : selAlreadyHere ? (
-                            <p className="muted">
-                              {selStudent.first_name} already has a{" "}
-                              {GROUP_KIND_LABEL[kind].toLowerCase()}.
-                            </p>
-                          ) : null)}
-
-                        {/* Chaperones */}
-                        <div className="stack" style={{ gap: "0.35rem" }}>
-                          <span className="muted">Chaperones</span>
-                          <ul
-                            style={{ listStyle: "none", padding: 0, margin: 0 }}
-                          >
-                            {groupChaps.map((c) => {
-                              const chapName = c.guardian_id
-                                ? (guardianName.get(c.guardian_id) ??
-                                  c.guardian?.name ??
-                                  "?")
-                                : (c.name_override ?? "?");
-                              return (
-                              <li
-                                key={c.id}
-                                className="row-inline"
-                                style={{
-                                  justifyContent: "space-between",
-                                  gap: "0.5rem",
-                                }}
-                              >
-                                <span>{chapName}</span>
-                                {canWrite && (
-                                  <form action={removeChaperone}>
-                                    <input
-                                      type="hidden"
-                                      name="programId"
-                                      value={program.id}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="slug"
-                                      value={slug}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="tripId"
-                                      value={tripId}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="chaperoneId"
-                                      value={c.id}
-                                    />
-                                    <button
-                                      type="submit"
-                                      className="linklike danger"
-                                      aria-label={`Remove ${chapName} from ${g.label}`}
-                                    >
-                                      remove
-                                    </button>
-                                  </form>
-                                )}
-                              </li>
-                              );
-                            })}
-                            {groupChaps.length === 0 && (
-                              <li className="muted">None yet</li>
-                            )}
-                          </ul>
-                          {/* Chaperone-ratio awareness (D6): purely informational,
-                              never a warning — programs' policies vary (common
-                              guidance is ~1:10 for day trips). Shown only when the
-                              group actually has riders. */}
-                          {count > 0 && (
-                            <p
-                              className="muted"
-                              style={{ margin: 0, fontSize: "0.85rem" }}
-                            >
-                              {groupChaps.length > 0
-                                ? `1 chaperone per ${Math.ceil(
-                                    count / groupChaps.length,
-                                  )} student${
-                                    Math.ceil(count / groupChaps.length) === 1
-                                      ? ""
-                                      : "s"
-                                  }`
-                                : "No chaperone assigned yet"}
-                            </p>
-                          )}
-                          {canWrite && (
-                            <form
-                              action={addChaperone}
-                              className="stack"
-                              style={{ gap: "0.35rem" }}
-                            >
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="tripId"
-                                value={tripId}
-                              />
-                              <input
-                                type="hidden"
-                                name="travelGroupId"
-                                value={g.id}
-                              />
-                              <select
-                                name="guardian_id"
-                                defaultValue=""
-                                aria-label="Chaperone — pick a guardian"
-                              >
-                                <option value="">— parent (guardian)…</option>
-                                {guardians.map((gd) => (
-                                  <option key={gd.id} value={gd.id}>
-                                    {gd.name}
-                                    {gd.student?.last_name
-                                      ? ` (${gd.student.last_name})`
-                                      : ""}
-                                  </option>
-                                ))}
-                              </select>
-                              <input
-                                type="text"
-                                name="name_override"
-                                placeholder="…or type a one-off helper's name"
-                                aria-label="Chaperone — or type a one-off helper's name"
-                              />
-                              <button type="submit" className="secondary">
-                                Add chaperone
-                              </button>
-                            </form>
-                          )}
-                        </div>
-
-                        {/* Edit / delete group */}
-                        {canWrite && (
-                          <details open={confirmDeleteGroup === g.id}>
-                            <summary className="muted">
-                              Edit {GROUP_KIND_LABEL[kind].toLowerCase()}
-                            </summary>
-                            <form
-                              action={updateGroup}
-                              className="stack"
-                              style={{ gap: "0.35rem", marginTop: "0.5rem" }}
-                            >
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="tripId"
-                                value={tripId}
-                              />
-                              <input
-                                type="hidden"
-                                name="groupId"
-                                value={g.id}
-                              />
-                              <label>
-                                Label
-                                <input
-                                  type="text"
-                                  name="label"
-                                  defaultValue={g.label}
-                                  required
-                                />
-                              </label>
-                              <label>
-                                Capacity
-                                <input
-                                  type="number"
-                                  name="capacity"
-                                  className="num"
-                                  defaultValue={g.capacity ?? ""}
-                                  min={0}
-                                />
-                              </label>
-                              <label>
-                                Sort
-                                <input
-                                  type="number"
-                                  name="sort_order"
-                                  className="num"
-                                  defaultValue={g.sort_order}
-                                />
-                              </label>
-                              <label>
-                                Notes
-                                <input
-                                  type="text"
-                                  name="notes"
-                                  defaultValue={g.notes ?? ""}
-                                />
-                              </label>
-                              <button type="submit" className="secondary">
-                                Save
-                              </button>
-                            </form>
-                            {confirmDeleteGroup === g.id ? (
-                              <div
-                                className="confirm-box stack"
-                                style={{ marginTop: "0.5rem" }}
-                              >
-                                <p>
-                                  Delete {g.label}? Its rider assignments and
-                                  chaperones are removed too.
-                                </p>
-                                <form
-                                  action={deleteGroup}
-                                  className="row-inline"
-                                >
-                                  <input
-                                    type="hidden"
-                                    name="programId"
-                                    value={program.id}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="slug"
-                                    value={slug}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="tripId"
-                                    value={tripId}
-                                  />
-                                  <input
-                                    type="hidden"
-                                    name="groupId"
-                                    value={g.id}
-                                  />
-                                  <button type="submit" className="danger">
-                                    Confirm delete
-                                  </button>
-                                  <Link href={`/${slug}/travel/${tripId}`}>
-                                    Cancel
-                                  </Link>
-                                </form>
-                              </div>
-                            ) : (
-                              <p style={{ marginTop: "0.5rem" }}>
-                                <Link
-                                  className="linklike danger"
-                                  href={`/${slug}/travel/${tripId}?confirm=deletegroup&groupId=${g.id}`}
-                                >
-                                  Delete this{" "}
-                                  {GROUP_KIND_LABEL[kind].toLowerCase()} (and
-                                  its assignments)
-                                </Link>
-                              </p>
-                            )}
-                          </details>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {kindGroups.length === 0 && (
-                    <p className="muted">
-                      No {GROUP_KIND_LABEL_PLURAL[kind].toLowerCase()} yet.
-                    </p>
-                  )}
-                </div>
-
-                {/* Add a group of this kind */}
-                {canWrite && (
-                  <form action={createGroup} className="row-inline">
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="tripId" value={tripId} />
-                    <input type="hidden" name="kind" value={kind} />
-                    <label>
-                      Add {GROUP_KIND_LABEL[kind].toLowerCase()}
-                      <input
-                        type="text"
-                        name="label"
-                        required
-                        placeholder={kind === "room" ? "Room 214" : "Bus 1"}
-                      />
-                    </label>
-                    <label>
-                      Capacity
-                      <input
-                        type="number"
-                        name="capacity"
-                        className="num"
-                        min={0}
-                      />
-                    </label>
-                    <button type="submit" className="secondary">
-                      Add
-                    </button>
-                  </form>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Danger zone — delete trip (two-tap confirm-box idiom) */}
-      {canWrite && (
-        <details open={confirmDeleteTrip}>
-          <summary className="muted">Delete trip</summary>
-          {confirmDeleteTrip ? (
-            <div className="confirm-box stack" style={{ marginTop: "0.5rem" }}>
-              <p>
-                Delete this trip? All its buses, rooms, and assignments go with
-                it.
-              </p>
-              <form action={deleteTrip} className="row-inline">
-                <input type="hidden" name="programId" value={program.id} />
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="tripId" value={tripId} />
-                <button type="submit" className="danger">
-                  Confirm delete trip
-                </button>
-                <Link href={`/${slug}/travel/${tripId}`}>Cancel</Link>
-              </form>
-            </div>
-          ) : (
-            <p style={{ marginTop: "0.5rem" }}>
-              <Link
-                className="linklike danger"
-                href={`/${slug}/travel/${tripId}?confirm=deletetrip`}
-              >
-                Delete this trip and all its groups, assignments, and chaperones
-              </Link>
-            </p>
-          )}
-        </details>
-      )}
-
-      {/* H1: sticky target bar — pinned to the viewport bottom while a group is
-          being filled. Styled like the mobile tab bar. Count/capacity re-derive
-          from server data every render; over-capacity warns (never blocks). The
-          "Done" control is a real link that drops ?fill= and returns to browse. */}
       {fillGroup && (
-        <div className="travel-fill-bar">
-          <span className="travel-fill-bar-label">
-            Filling <strong>{fillGroup.label}</strong>
-            <span className={fillOver ? "chip danger" : "chip"}>
-              {fillCount}
-              {fillGroup.capacity != null ? ` / ${fillGroup.capacity}` : ""}
-              {fillOver ? " over" : ""}
-            </span>
-          </span>
-          <Link
-            href={`/${slug}/travel/${tripId}`}
-            className="travel-fill-bar-done"
-          >
-            Done
-          </Link>
-        </div>
+        <FillBar
+          group={fillGroup}
+          count={fillMembers.length}
+          over={
+            fillGroup.capacity != null && fillMembers.length > fillGroup.capacity
+          }
+          tripHref={tripHref}
+        />
       )}
     </section>
   );
