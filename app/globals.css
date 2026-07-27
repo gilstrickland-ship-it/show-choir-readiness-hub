@@ -4181,6 +4181,133 @@
     text-decoration: none;
   }
 
+  /* ---------------- Trip page sections (Wave 2, spec 005 US6) ----------------
+     The page reads as titled sections in one constant order, each with a live
+     summary beside its heading, so nothing has to be opened to be understood.
+     Every variant below is a COMPOUND selector: a bare `.is-target`/`.is-over`/
+     `.is-absent` in this layer would outrank the base-layer element styles it
+     sits beside (the T061/T066 cascade trap). */
+
+  .travel-section {
+    width: 100%;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .travel-section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+
+  .travel-section-head > h2 {
+    margin: 0;
+  }
+
+  .travel-section-summary {
+    color: var(--muted-ink);
+    font-size: 0.9rem;
+  }
+
+  /* Every disclosure on this page names what it holds and shows its count. */
+  .travel-disclosure {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--accent-strong);
+    padding: 0.3rem 0;
+  }
+
+  .travel-group-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    width: 100%;
+  }
+
+  .travel-group-card {
+    flex: 1 1 15rem;
+    min-width: 13rem;
+    padding: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+  }
+
+  .travel-group-card.is-target {
+    border-color: var(--accent);
+  }
+
+  /* Over capacity warns, never blocks (§6). */
+  .travel-group-card.is-over {
+    border-color: var(--warn);
+    background: var(--warn-soft);
+  }
+
+  .travel-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .travel-member-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .travel-member-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  /* An absent rider reads quieter but still legible — the same 0.72 the season
+     spine dims past rows to (a lighter value failed the contrast check). */
+  .travel-member-row.is-absent {
+    opacity: 0.72;
+  }
+
+  .travel-unassigned {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .travel-unassigned > li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .travel-unassigned > li.is-absent {
+    opacity: 0.72;
+  }
+
+  .travel-unassigned-name {
+    font-weight: 600;
+    margin-right: 0.25rem;
+  }
+
+  .travel-chaperone-row {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .travel-day-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .travel-chip.is-absent {
+    opacity: 0.72;
+  }
+
   @media (max-width: 760px) {
     /* The bottom tab bar replaces the horizontal top nav on phones. */
     .shell-nav {

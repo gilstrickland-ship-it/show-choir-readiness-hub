@@ -5,7 +5,6 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import {
   TRAVEL_WRITE_ROLES,
-  TRAVEL_GROUP_KINDS,
   GROUP_KIND_LABEL,
   relevantKinds,
   type TravelGroupKind,
@@ -311,11 +310,14 @@ export default async function TripPage({
 
   const roomsExist = groups.some((g) => g.kind === "room");
 
-  // Which group sections render: buses always (writers can add one); rooms when
-  // the trip is overnight or a room already exists.
-  const kindsToShow: TravelGroupKind[] = TRAVEL_GROUP_KINDS.filter(
-    (k) => k !== "room" || trip.is_overnight || roomsExist,
-  );
+  // Which group sections render, in the page's constant order — Buses, then
+  // Rooms (US6). Buses always (a writer can add one); rooms when the trip is
+  // overnight or a room already exists. Spelled out rather than filtered from
+  // TRAVEL_GROUP_KINDS, which is storage order (room first) and read that way
+  // by the queries above.
+  const kindsToShow: TravelGroupKind[] = (
+    ["bus", "room"] as TravelGroupKind[]
+  ).filter((k) => k !== "room" || trip.is_overnight || roomsExist);
 
   // ---- Trip schedule (G2.5): read-only per-day merge, multi-day trips only ----
   // A nationals trip runs several days; staff want one place that shows what
@@ -401,9 +403,10 @@ export default async function TripPage({
       if (bucket)
         bucket.push({
           startsAt: e.starts_at,
-          title: e.title,
-          location: e.location,
-        } as never);
+          label: e.title,
+          sublabel: e.location,
+          source: "event",
+        });
     }
 
     scheduleByDay = dayKeys.map((k) => ({
