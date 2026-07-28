@@ -9,7 +9,9 @@ import { readFlash } from "@/lib/flash";
 import { supportAccessActive, recentSupportViews } from "@/lib/support";
 import { activeShareLinks, type ActiveShareLink } from "@/lib/tokens";
 import { emailHealth } from "@/lib/email";
+import { commitmentThresholds } from "@/lib/treasury";
 import { ProgramSection } from "./ProgramSection";
+import { SpendingRulesSection } from "./SpendingRulesSection";
 import { ShareLinksSection } from "./ShareLinksSection";
 import { EmailHealthSection, type EmailCheck } from "./EmailHealthSection";
 import { SupportAccessSection } from "./SupportAccessSection";
@@ -42,7 +44,7 @@ export default async function SettingsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role } = await getTenantContext(slug);
+  const { program, role, flags } = await getTenantContext(slug);
   if (!SETTINGS_ROLES.includes(role)) {
     return (
       <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
@@ -151,11 +153,24 @@ export default async function SettingsPage({
 
       <SubTabs strip={settingsTabs(slug, "program")} />
       <p className="muted">
-        Who this program is, what you have shared outside it, whether {brand.name}{" "}
-        can reach your families, and who from support can look.
+        Who this program is,{" "}
+        {flags.treasury ? "what your spending answers to, " : ""}what you have
+        shared outside it, whether {brand.name} can reach your families, and who
+        from support can look.
       </p>
 
       <ProgramSection slug={slug} flash={flash} program={program} />
+
+      {/* The spending rules only exist where there is money to govern — same
+          lean-by-construction gate every other flagged surface uses. */}
+      {flags.treasury && (
+        <SpendingRulesSection
+          slug={slug}
+          programId={program.id}
+          flash={flash}
+          thresholds={commitmentThresholds(program)}
+        />
+      )}
 
       <ShareLinksSection
         programId={program.id}

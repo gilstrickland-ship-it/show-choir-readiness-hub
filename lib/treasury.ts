@@ -579,6 +579,24 @@ export const COMMITMENT_CREATE_ROLES: readonly Role[] = [
   "treasurer",
 ];
 
+// THE SECOND STATED RELAXATION (spec 006 D6 / migration 0023), mirrored from
+// public.record_commitment_approval. Above a program's second-approver amount a
+// commitment needs two approvals, and the FIRST of them may come from a board
+// member — a seat that is read-only everywhere else in this app.
+//
+// It is deliberate and it is narrow. In a booster program the second signature
+// IS the board, and a default no real program can staff is a default every
+// program turns off. A board member can never approve a commitment on their own:
+// the COMPLETING approval is still the treasurer's, it is still refused when the
+// approver raised the request, and this seat set is reachable only through the
+// one database function that enforces both.
+export const COMMITMENT_APPROVE_ROLES: readonly Role[] = [
+  "director",
+  "admin",
+  "treasurer",
+  "board_member",
+];
+
 // The subtypes, in the words a director uses. Never a direction toggle: an
 // inbound purchase order is not a real accounting object (D4), so these name two
 // different promises rather than two signs of one number.
@@ -912,6 +930,114 @@ export function stillAvailable(
   committed: number,
 ): number {
   return planned - spent - committed;
+}
+
+// ---------------------------------------------------------------------------
+// The three numbers a program sets (spec 006 D6, migration 0023)
+// ---------------------------------------------------------------------------
+// Two of them BLOCK and one of them only NUDGES, and which is which is the whole
+// design:
+//
+//   secondApproverCents — above it, one approval is not enough. BLOCKS.
+//   boardApprovalCents  — above it, the board minutes must be written down
+//                         before the document may be issued. BLOCKS.
+//   threeQuotesCents    — above it, get three quotes. NUDGES, never blocks:
+//                         a block would simply mean the purchase is recorded
+//                         somewhere this app cannot see (the R5 lesson).
+//
+// Zero means OFF, spelled as a number the program chose rather than as a null
+// nobody ever set. The defaults mirror 0023's column defaults exactly; they are
+// restated here because a program row read without these columns (an older
+// select list, a failed read) must fall back to the PROTECTIVE value, not to
+// zero — a threshold that silently reads as "off" is the one failure this
+// feature must not have.
+
+export interface CommitmentThresholds {
+  secondApproverCents: number;
+  boardApprovalCents: number;
+  threeQuotesCents: number;
+}
+
+export const COMMITMENT_THRESHOLD_DEFAULTS: CommitmentThresholds = {
+  secondApproverCents: 25_000, // $250
+  boardApprovalCents: 100_000, // $1,000
+  threeQuotesCents: 50_000, // $500
+};
+
+export interface ThresholdColumns {
+  commitment_second_approver_cents?: number | string | null;
+  commitment_board_approval_cents?: number | string | null;
+  commitment_three_quotes_cents?: number | string | null;
+}
+
+export function commitmentThresholds(
+  program: ThresholdColumns | null | undefined,
+): CommitmentThresholds {
+  const read = (raw: number | string | null | undefined, fallback: number): number => {
+    const n = typeof raw === "string" ? Number(raw) : raw;
+    return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  return {
+    secondApproverCents: read(
+      program?.commitment_second_approver_cents,
+      COMMITMENT_THRESHOLD_DEFAULTS.secondApproverCents,
+    ),
+    boardApprovalCents: read(
+      program?.commitment_board_approval_cents,
+      COMMITMENT_THRESHOLD_DEFAULTS.boardApprovalCents,
+    ),
+    threeQuotesCents: read(
+      program?.commitment_three_quotes_cents,
+      COMMITMENT_THRESHOLD_DEFAULTS.threeQuotesCents,
+    ),
+  };
+}
+
+// A threshold is crossed by going ABOVE it, never by meeting it: a program that
+// writes "$250" means a $250 order is fine and $250.01 is not. Mirrors 0023's
+// `v_total > v_second` exactly.
+export function overThreshold(totalCents: number, thresholdCents: number): boolean {
+  return thresholdCents > 0 && totalCents > thresholdCents;
+}
+
+// What this particular commitment's total triggers. One call, so a page, a
+// server action and a test all ask the question the same way.
+export interface CommitmentRules {
+  needsSecondApproval: boolean;
+  needsBoardMinutes: boolean;
+  nudgeThreeQuotes: boolean;
+}
+
+export function commitmentRules(
+  totalCents: number,
+  t: CommitmentThresholds,
+): CommitmentRules {
+  return {
+    needsSecondApproval: overThreshold(totalCents, t.secondApproverCents),
+    needsBoardMinutes: overThreshold(totalCents, t.boardApprovalCents),
+    nudgeThreeQuotes: overThreshold(totalCents, t.threeQuotesCents),
+  };
+}
+
+// Who has already approved each commitment, from `commitment_audit` rows filtered
+// to `action = 'approve'`. THIS IS THE APPROVAL CHAIN (0023): a first approval
+// changes no column on the commitment, so the audit trail is where it lives, and
+// the completing approval's own audit row lands here too. A null actor (a
+// service-role write) is not a person and never counts toward a signature.
+export function approvalActorsFromRows(
+  rows: unknown,
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!Array.isArray(rows)) return out;
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.commitment_id !== "string" || typeof r.actor !== "string") continue;
+    const list = out.get(r.commitment_id) ?? [];
+    if (!list.includes(r.actor)) list.push(r.actor);
+    out.set(r.commitment_id, list);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

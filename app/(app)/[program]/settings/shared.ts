@@ -18,18 +18,25 @@ import { flashSection, type FlashMap } from "@/lib/flash";
 // a read-only diagnostic (nothing there is a write), so it names no section.
 // ---------------------------------------------------------------------------
 
-export type SettingsSection = "program" | "share" | "support";
+export type SettingsSection = "program" | "spending" | "share" | "support";
 
-export type SettingsOkKey = "saved" | "revoked" | "granted" | "ended";
+export type SettingsOkKey = "saved" | "rules" | "revoked" | "granted" | "ended";
 export type SettingsErrorKey =
   | "missing"
   | "timezone"
   | "save"
+  | "rules_amount"
+  | "rules_save"
   | "revoke"
   | "support";
 
 const SETTINGS_OK: FlashMap<SettingsOkKey, SettingsSection> = {
   saved: { section: "program", message: "Program details saved." },
+  rules: {
+    section: "spending",
+    message:
+      "Spending rules saved. They apply to commitments approved from now on — nothing already approved changes.",
+  },
   revoked: {
     section: "share",
     message: "Link revoked. That URL stops working immediately.",
@@ -52,6 +59,18 @@ const SETTINGS_ERROR: FlashMap<SettingsErrorKey, SettingsSection> = {
       "That isn't a time zone we recognize. Pick one from the list and save again.",
   },
   save: { section: "program", message: "Couldn't save. Try again." },
+  // A threshold is a money amount, and a money amount that will not parse must
+  // never be silently read as zero: zero means OFF, so "2,50" typed for $250
+  // would quietly remove the very rule the director came here to set.
+  rules_amount: {
+    section: "spending",
+    message:
+      "Each amount has to be a number of dollars, like 250 or 1,000 — or 0 to turn that rule off. Nothing was saved.",
+  },
+  rules_save: {
+    section: "spending",
+    message: "Couldn't save the spending rules. Try again.",
+  },
   revoke: { section: "share", message: "Couldn't revoke that link. Try again." },
   support: {
     section: "support",
@@ -71,6 +90,7 @@ export const SETTINGS_FLASH_MAPS = {
 // key, so a redirect can scroll to the block it is about.
 export const SETTINGS_ANCHOR: Record<SettingsSection, string> = {
   program: "program",
+  spending: "spending-rules",
   share: "share-links",
   support: "support-access",
 };

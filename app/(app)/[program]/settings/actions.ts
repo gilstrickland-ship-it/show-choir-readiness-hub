@@ -9,6 +9,7 @@ import { requireRole, type Role } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { supportAccessUntilFromNow } from "@/lib/support";
 import { isValidTimeZone } from "@/lib/datetime";
+import { parseDollarsToCents } from "@/lib/treasury";
 import { revokeShareLink } from "@/lib/tokens";
 import { programPath } from "@/lib/return-path";
 import {
@@ -176,6 +177,46 @@ export async function updateProgram(formData: FormData): Promise<void> {
   }
   revalidatePath(settingsPath(slug));
   redirect(settingsDone(slug, "saved"));
+}
+
+// The three spending rules (spec 006 D6 / T177). director/admin — deliberately
+// NOT the treasurer, and that is the point: a treasurer who could raise her own
+// second-approver amount would not be held to one. programs_write (0002) draws
+// the same line in the database.
+//
+// Every amount is parsed to integer cents by the ONE parser the money layer uses
+// (parseDollarsToCents), and a value that will not parse is refused rather than
+// coerced: zero means "this rule is off", so a typo that silently became zero
+// would remove the control the director came here to set.
+export async function updateCommitmentThresholds(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  await requireRole(programId, SETTINGS_ROLES);
+
+  const cents = (field: string): number | null =>
+    parseDollarsToCents(String(formData.get(field) ?? ""));
+  const second = cents("second_approver");
+  const board = cents("board_approval");
+  const quotes = cents("three_quotes");
+  if (second === null || board === null || quotes === null) {
+    redirect(settingsFail(slug, "rules_amount"));
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("programs")
+    .update({
+      commitment_second_approver_cents: second,
+      commitment_board_approval_cents: board,
+      commitment_three_quotes_cents: quotes,
+    })
+    .eq("id", programId);
+
+  if (error) {
+    redirect(settingsFail(slug, "rules_save"));
+  }
+  revalidatePath(settingsPath(slug));
+  redirect(settingsDone(slug, "rules"));
 }
 
 // Invite a member: create an `invited` program_members row, then best-effort

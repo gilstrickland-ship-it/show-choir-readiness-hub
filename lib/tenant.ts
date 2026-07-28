@@ -24,6 +24,14 @@ export interface TenantProgram extends FlaggableProgram {
   weekly_note: string | null;
   size_fields: string[];
   support_access_until: string | null;
+  // The three spending rules a program sets (spec 006 D6, migration 0023).
+  // Integer cents; 0 means off. Read on the tenant context rather than per
+  // surface because three different surfaces are held to them — the commitments
+  // list, its server actions, and Settings — and a second read is a second
+  // answer waiting to disagree.
+  commitment_second_approver_cents: number;
+  commitment_board_approval_cents: number;
+  commitment_three_quotes_cents: number;
 }
 
 export interface TenantSeason {
@@ -65,7 +73,7 @@ export const getTenantContext = cache(
     const { data: program } = await supabase
       .from("programs")
       .select(
-        "id, name, slug, school_name, city, state, timezone, tier, feature_overrides, weekly_note, size_fields, support_access_until",
+        "id, name, slug, school_name, city, state, timezone, tier, feature_overrides, weekly_note, size_fields, support_access_until, commitment_second_approver_cents, commitment_board_approval_cents, commitment_three_quotes_cents",
       )
       .eq("slug", programSlug)
       .maybeSingle();
