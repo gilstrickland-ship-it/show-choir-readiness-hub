@@ -4,6 +4,7 @@ import {
   USERS,
   DEMO,
   readState,
+  adminClient,
   ensureMembershipActive,
   resetDemoParentState,
 } from "./helpers";
@@ -83,5 +84,81 @@ test.describe("parent token journeys (F13/F15/F16)", () => {
     await expect(
       page.locator(".token-report-card", { hasText: "Confirmed" }),
     ).toBeVisible();
+  });
+});
+
+// Invariant §9.3 — publish gates parent visibility. The staff editor keeps a
+// published itinerary editable in place (the living-itinerary contract), so
+// "unpublished" has to be re-proved from the PARENT side, server-side, on every
+// surface that can reach a schedule: not merely unlinked, but unreachable by
+// typing the URL. Every one of the five is checked with the itinerary flipped to
+// draft, then it is restored — later spec files in this single-worker suite read
+// the same seeded competition.
+test.describe("unpublished itinerary is invisible through the token surface (§9.3)", () => {
+  const setStatus = async (status: "draft" | "published") => {
+    const admin = adminClient();
+    const { error } = await admin
+      .from("itineraries")
+      .update({
+        status,
+        published_at: status === "published" ? new Date().toISOString() : null,
+      })
+      .eq("program_id", DEMO.programId)
+      .eq("competition_id", DEMO.competitionId);
+    if (error) throw new Error(`itinerary ${status} failed: ${error.message}`);
+  };
+
+  test.beforeAll(async () => {
+    await setStatus("draft");
+  });
+
+  test.afterAll(async () => {
+    await setStatus("published");
+  });
+
+  test("draft itinerary: no times, no packet, no calendar file", async ({
+    page,
+  }) => {
+    const token = readState().guardianRawToken;
+    const base = `/t/${token}`;
+
+    // --- Poster: the hero says so, and offers neither document --------------
+    await page.goto(base);
+    await expect(page.getByText("Itinerary not published yet.")).toBeVisible();
+    // exact: true — "View the itinerary" would otherwise also be matched by the
+    // footer's "Itinerary →" under getByRole's substring semantics, and a
+    // count assertion that matches the wrong node proves nothing.
+    await expect(
+      page.getByRole("link", { name: "View the itinerary", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Download packet (PDF)", exact: true }),
+    ).toHaveCount(0);
+    // No call time leaks into the hero meta line either.
+    await expect(page.locator(".token-hero-meta")).not.toContainText("call");
+
+    // --- Itinerary page: empty state, no schedule rows ----------------------
+    await page.goto(`${base}/itinerary`);
+    await expect(page.getByText("No published itineraries yet")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /Central Illinois Invitational/ }),
+    ).toHaveCount(0);
+    // "Bus departs" is the seeded 6:30am depart item — the single fact that
+    // proves no draft row reached the page.
+    await expect(page.getByText("Bus departs")).toHaveCount(0);
+    await expect(page.locator(".itinerary-links")).toHaveCount(0);
+
+    // --- The routes refuse directly, not just when unlinked -----------------
+    const packet = await page.request.get(
+      `${base}/packet?competition=${DEMO.competitionId}`,
+    );
+    expect(packet.status()).toBe(409);
+    expect(packet.headers()["content-type"]).not.toContain("application/pdf");
+
+    const ics = await page.request.get(
+      `${base}/itinerary/ics/${DEMO.competitionId}`,
+    );
+    expect(ics.status()).toBe(404);
+    expect(await ics.text()).not.toContain("BEGIN:VCALENDAR");
   });
 });
