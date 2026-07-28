@@ -19,8 +19,8 @@
 ## Phase 2b — Wave S: Tenant-isolation remediation (SECURITY, user-authorized schema exception)
 
 - [X] T148 Action hardening app-wide (S-3/S-4/S-5): travel (resolveTrip/resolveGroup resolvers, eligibility re-derived, chaperone name cap, scoped+checked deletes), roster/comms/tokens (share_links verified in-program at mint AND resolve, shift_signups, guardian_tokens, ensemble_members), competitions/events/hosting/costumes/treasury (packet+documents read scoping, ledger tag FKs, budget hierarchy, attendance/results/junctions, hosted_slots, costume assignments); `lib/pdf/queries.ts` + `lib/export-run.ts` program-scoped; friendly errors for DB FK rejections.
-- [ ] T149 Migration `0017_tenant_fk_integrity.sql` (S-1/S-2): composite `(id, program_id)` FKs across all vulnerable children with ON DELETE semantics preserved, `enforce_one_group_per_kind_per_trip` → SECURITY DEFINER + cross-program assertion, other triggers swept; fail-loud-never-delete guard + read-only pre-flight script.
-- [ ] T150 RLS poisoning suite (S-6): per-table cross-tenant insert attempts asserted rejected; same-program one-room-one-bus regression; harness enumeration extended so new tables are swept automatically.
+- [X] T149 Migration `0017_tenant_fk_integrity.sql` (S-1/S-2): composite `(id, program_id)` FKs across all vulnerable children with ON DELETE semantics preserved, `enforce_one_group_per_kind_per_trip` → SECURITY DEFINER + cross-program assertion, other triggers swept; fail-loud-never-delete guard + read-only pre-flight script.
+- [X] T150 RLS poisoning suite (S-6): per-table cross-tenant insert attempts asserted rejected; same-program one-room-one-bus regression; harness enumeration extended so new tables are swept automatically.
 - [ ] T151 Production deploy (S-7): apply `0016_multi_ensemble` (merged, required by deployed code, never applied — competitions render with no ensembles today) then `0017`; operator-run `supabase db push` (Claude is blocked from DDL here). Pre-flight already clean.
 
 ## Phase 3 — Wave 3: Comp week

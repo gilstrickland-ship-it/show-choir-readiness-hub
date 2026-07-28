@@ -250,24 +250,6 @@ declare
   del_sql  text;
 begin
   for e in select * from private.cross_program_ref_edges() loop
-    -- Already repointed? Skip. Keeps the migration re-runnable (a retried
-    -- `supabase db push`, or a test harness applying the schema onto a cluster
-    -- that already carries it) instead of failing as though the edge list were
-    -- wrong.
-    if exists (
-      select 1
-      from pg_constraint c
-      where c.conrelid = e.child::regclass
-        and c.contype = 'f'
-        and array_length(c.conkey, 1) = 2
-        and (select array_agg(a.attname::text order by a.attname::text)
-             from pg_attribute a
-             where a.attrelid = c.conrelid and a.attnum = any(c.conkey))
-            @> array[e.child_column, 'program_id']::text[]
-    ) then
-      continue;
-    end if;
-
     select c.conname, c.confdeltype into old_name, del_type
     from pg_constraint c
     join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
@@ -403,8 +385,6 @@ begin
 end;
 $$;
 
--- Dropped first so the whole migration stays re-runnable (see §4).
-drop trigger if exists trg_share_links_resource_program on share_links;
 create trigger trg_share_links_resource_program
   before insert or update of resource, resource_id, program_id on share_links
   for each row execute function public.enforce_share_link_resource_program();
