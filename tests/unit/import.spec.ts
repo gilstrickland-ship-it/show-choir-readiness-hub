@@ -13,6 +13,7 @@ import {
   isValidEmail,
   gradYearFromGrade,
   DEFAULT_SIZE_KEYS,
+  importIssues,
 } from '@/lib/roster/import';
 
 // Local-time constructors so getMonth()/getFullYear() are tz-stable in CI.
@@ -398,5 +399,64 @@ describe('per-row validation errors', () => {
     const { rows, errors } = parseRosterCsv(csv);
     expect(rows.map((r) => r.firstName)).toEqual(['Ava', 'Leo']);
     expect(errors).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// One reviewable issue list (spec 005 T137a)
+// ----------------------------------------------------------------------------
+// The preview used to report in three unrelated shapes — a red box of skipped
+// columns, a chip inside a table cell, a bullet list of excluded rows. These
+// pin the flattening: what each entry says, and the order a director meets them
+// in (data that did not make it first).
+// ============================================================================
+
+describe('importIssues', () => {
+  test('a clean file has nothing to review', () => {
+    const parsed = parseRosterCsv('First,Last,Grad\nAva,Nguyen,2027');
+    expect(importIssues(parsed)).toEqual([]);
+  });
+
+  test('a health column becomes one blocking entry naming the header', () => {
+    const parsed = parseRosterCsv('First,Last,Allergies\nAva,Nguyen,peanuts');
+    const issues = importIssues(parsed);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].kind).toBe('column');
+    expect(issues[0].where).toBe('Allergies');
+    expect(issues[0].blocking).toBe(true);
+  });
+
+  test('an excluded row names its row number and says what to do', () => {
+    const parsed = parseRosterCsv('First,Last,Grad\nAva,Nguyen,2027\n,,2026');
+    const issues = importIssues(parsed);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].kind).toBe('excluded');
+    expect(issues[0].where).toBe('Row 2');
+    expect(issues[0].blocking).toBe(true);
+    expect(issues[0].fix).toMatch(/spreadsheet/i);
+  });
+
+  test('merged rows report as non-blocking and list every source row', () => {
+    const csv =
+      'First,Last,Grad,Guardian Name\n' +
+      'Ava,Nguyen,2027,Mai Nguyen\n' +
+      'Ava,Nguyen,2027,Bao Nguyen';
+    const parsed = parseRosterCsv(csv);
+    const issues = importIssues(parsed);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].kind).toBe('combined');
+    expect(issues[0].where).toBe('Rows 1, 2');
+    expect(issues[0].blocking).toBe(false);
+  });
+
+  test('what kept data out sorts above what only needs reading', () => {
+    const csv =
+      'First,Last,Grad,Medical,Guardian Name\n' +
+      'Ava,Nguyen,2027,none,Mai Nguyen\n' +
+      'Ava,Nguyen,2027,none,Bao Nguyen\n' +
+      ',,2026,none,';
+    const issues = importIssues(parseRosterCsv(csv));
+    expect(issues.map((i) => i.kind)).toEqual(['excluded', 'column', 'combined']);
+    expect(issues.filter((i) => i.blocking)).toHaveLength(2);
   });
 });
