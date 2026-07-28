@@ -11,6 +11,7 @@ import { describe, test, expect } from "vitest";
 import {
   parseDollarsToCents,
   formatCents,
+  ledgerSearchTerm,
   lineVariance,
   actualForLine,
   sumActuals,
@@ -205,5 +206,43 @@ describe("monthly reconciliation helpers (Wave L)", () => {
     expect(reconciledThroughMonth(active, ["2026-06", "2026-07"])).toBeNull();
     // none reconciled → null
     expect(reconciledThroughMonth(active, [])).toBeNull();
+  });
+});
+
+// The ledger search box (spec 005 US8-3) types straight into a PostgREST
+// `or()` filter STRING, so the sanitizer is the boundary: a comma would start a
+// second filter, a paren would close the group, and `%`/`*` are ilike wildcards
+// the query adds itself. Nothing a treasurer types may become filter grammar.
+describe("ledgerSearchTerm", () => {
+  test("keeps an ordinary payee search intact", () => {
+    expect(ledgerSearchTerm("Big Red Bus Co")).toBe("Big Red Bus Co");
+  });
+
+  test("trims and collapses whitespace", () => {
+    expect(ledgerSearchTerm("  bus   deposit  ")).toBe("bus deposit");
+  });
+
+  test("blank, whitespace-only, and non-strings are no filter at all", () => {
+    expect(ledgerSearchTerm("")).toBeNull();
+    expect(ledgerSearchTerm("   ")).toBeNull();
+    expect(ledgerSearchTerm(null)).toBeNull();
+    expect(ledgerSearchTerm(undefined)).toBeNull();
+    // Next hands back an array for a duplicated ?q= — not a string, no filter.
+    expect(ledgerSearchTerm(["a", "b"] as unknown as string)).toBeNull();
+  });
+
+  test("strips the punctuation that would break out of the or() filter", () => {
+    expect(ledgerSearchTerm("bus,memo.ilike.*")).toBe("bus memo.ilike.");
+    expect(ledgerSearchTerm("a)or(b")).toBe("a or b");
+    expect(ledgerSearchTerm("100%")).toBe("100");
+    expect(ledgerSearchTerm(`he said "hi"`)).toBe("he said hi");
+  });
+
+  test("punctuation-only input leaves nothing to search on", () => {
+    expect(ledgerSearchTerm("%*(),")).toBeNull();
+  });
+
+  test("caps the length — a search is a payee, not an expression", () => {
+    expect(ledgerSearchTerm("x".repeat(200))).toBe("x".repeat(60));
   });
 });

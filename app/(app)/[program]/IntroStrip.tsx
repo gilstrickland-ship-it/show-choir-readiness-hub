@@ -33,7 +33,7 @@ interface StripCopy {
 // The eight strips (spec §3). Copy held here beside the component that renders it.
 const STRIP_COPY: Record<StripSurfaceKey, StripCopy> = {
   treasury: {
-    lead: "Every dollar in or out is one line here — nothing is ever deleted; a mistake is voided and re-entered, and the whole board can see the books.",
+    lead: "Every dollar in or out is one line here — nothing is ever deleted; a mistake is voided and redone, and the whole board can see the books.",
     first: "add today's most recent transaction.",
   },
   budget: {

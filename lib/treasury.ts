@@ -38,9 +38,12 @@ export const CATEGORY_DIRECTION_LABELS: Record<CategoryDirection, string> = {
 export const LEDGER_DIRECTIONS = ["in", "out"] as const;
 export type LedgerDirection = (typeof LEDGER_DIRECTIONS)[number];
 
+// The first of the four decisions an entry asks for (spec 005 US8-1), so the
+// label says what the direction MEANS rather than naming the enum. Stored value
+// unchanged; the ledger filter offers the same two words.
 export const LEDGER_DIRECTION_LABELS: Record<LedgerDirection, string> = {
-  in: "In",
-  out: "Out",
+  in: "In (money received)",
+  out: "Out (money paid)",
 };
 
 export function parseCategoryDirection(raw: string): CategoryDirection | null {
@@ -133,13 +136,22 @@ export function formatDateOnly(dateStr: string | null | undefined): string {
   }).format(dt);
 }
 
-// Today as a "YYYY-MM-DD" string for a date input default (local wall clock).
-export function todayDateKey(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const mo = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${mo}-${d}`;
+// Free-text ledger search (spec 005 US8-3). PostgREST's `or()` takes a
+// comma-separated FILTER STRING, so whatever a treasurer types has to be
+// neutralized before it becomes part of that grammar: a comma would start a new
+// filter, a paren would close the group, and `%`/`*` are ilike wildcards we add
+// ourselves. Strip that punctuation, collapse whitespace, and cap the length —
+// a ledger search is a payee or a word from a memo, never an expression.
+// Returns null for anything that leaves nothing to search on.
+export function ledgerSearchTerm(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw
+    .replace(/[,()*%\\"']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60)
+    .trim();
+  return cleaned || null;
 }
 
 // ---------------------------------------------------------------------------

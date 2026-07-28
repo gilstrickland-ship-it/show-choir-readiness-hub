@@ -2548,16 +2548,6 @@
     flex-wrap: wrap;
   }
 
-  /* Edit popover trigger — the same 44px-tall named summary the trip page uses,
-     so nothing mutating hides behind a bare triangle. */
-  .comp-disclosure {
-    cursor: pointer;
-    font-weight: 600;
-    color: var(--accent-strong);
-    min-height: 44px;
-    padding: 0.65rem 0;
-  }
-
   .comp-section-summary {
     font-size: 0.82rem;
     color: var(--muted-ink);
@@ -3046,9 +3036,72 @@
 
   /* ===================== Money ===================== */
 
+  /* The four decisions an entry asks for, two by two (spec 005 US8-1). The
+     shape is the claim: in or out, how much, who, what — and nothing else. */
+  .money-decisions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+    width: 100%;
+  }
+
+  /* The panel inside a money disclosure ("Connect it", "Add a line to…",
+     "Category settings", "More filters"). Its gaps come from .stack or
+     .row-inline; all it needs is the full width of the disclosure, since a
+     .stack lays its children out at their content width. */
+  .money-connect,
+  .money-more-panel {
+    width: 100%;
+  }
+
   .money-filters {
     width: 100%;
     font-size: 0.85rem;
+  }
+
+  /* "More filters" is a flex child of the filter row and owns a whole line of
+     it, so the five folded controls open under search + direction rather than
+     beside them. */
+  .money-more {
+    flex-basis: 100%;
+  }
+
+  /* Money's row panels (a ledger row's "Fix this entry", a budget line's
+     "Edit") EXPAND their row instead of floating over it, which is the one
+     thing the Season spine's popover idiom can't do here: `table.members` is
+     `display:block; overflow-x:auto` so it can scroll on a phone, and a scroll
+     container clips any absolutely-positioned descendant — a floating panel
+     came out sliced off at the cell edge. Same paper-over-rule treatment as
+     .drawer-panel so it still reads as a panel. */
+  .money-fix-panel {
+    width: min(17rem, 70vw);
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* The fix panel stacks two independent forms (put it on a line, void it) —
+     a hairline says those are two decisions, not one long form. */
+  .money-fix-form + .money-fix-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  /* "Void it" and "Void & redo" sit side by side and one of them is the
+     irreversible one, so they get a thumb-sized hit area and real space
+     between them rather than the default text-link gap. */
+  .money-fix-form .row-inline {
+    gap: 1.25rem;
+    align-items: center;
+  }
+
+  .money-fix-form button.linklike {
+    min-height: 44px;
   }
 
   .money-ledger td.right,
@@ -3082,12 +3135,6 @@
   .money-uncat {
     color: var(--warn-text);
     font-weight: 600;
-  }
-
-  .money-fix {
-    color: var(--warn-text);
-    font-weight: 600;
-    font-size: 0.82rem;
   }
 
   /* ===================== Wardrobe ===================== */
@@ -4034,12 +4081,16 @@
     font-size: 0.9rem;
   }
 
-  /* Every disclosure on this page names what it holds and shows its count. The
-     summary IS the control — edit, delete, and add-a-chaperone live behind it
-     and nowhere else — so it carries a thumb-sized hit area instead of the
-     ~26px a bare line of text gives. Kept as the default `list-item` display so
-     the browser's own disclosure marker survives. */
-  .travel-disclosure {
+  /* The app's disclosure trigger (trip page, competition hub, money). Every one
+     of them names what it holds and shows its current state. The summary IS the
+     control — edit, delete, add-a-line and add-a-chaperone live behind it and
+     nowhere else — so it carries a thumb-sized hit area instead of the ~26px a
+     bare line of text gives. Kept as the default `list-item` display so the
+     browser's own disclosure marker survives. One rule for all three surfaces:
+     three copies of the same five declarations is how they drift apart. */
+  .travel-disclosure,
+  .comp-disclosure,
+  .money-disclosure {
     cursor: pointer;
     font-weight: 600;
     color: var(--accent-strong);
@@ -4510,6 +4561,12 @@
     .people-filters,
     .money-filters {
       width: 100%;
+    }
+
+    /* Four decisions become one column — a 2-col grid at 375px leaves an
+       amount field too narrow to read "1,234.56" in. */
+    .money-decisions {
+      grid-template-columns: 1fr;
     }
 
     .drawer-panel {

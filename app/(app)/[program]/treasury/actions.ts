@@ -13,18 +13,30 @@ import {
   type LedgerDirection,
 } from "@/lib/treasury";
 
-// Ledger writes (T019). Entries void, never delete — corrections are void +
-// re-enter (Constitution V). Only the treasurer writes; every action re-checks
-// TREASURY_WRITE_ROLES via requireRole (defense in depth). ledger_audit rows are
-// written on create and void (action, actor, diff jsonb).
+// Ledger writes (T019). Entries void, never delete — a correction is a void
+// plus a fresh entry ("Void & redo" in the UI, Constitution V). Only the
+// treasurer writes; every action re-checks TREASURY_WRITE_ROLES via requireRole
+// (defense in depth). ledger_audit rows are written on create and void (action,
+// actor, diff jsonb).
 //
 // The 0002 void-only trigger makes every financial/content column immutable on
-// UPDATE (including budget_line_id) and forbids un-voiding, so "categorize an
-// uncategorized entry" cannot be a plain UPDATE — it is implemented as guided
-// void + re-enter (see categorizeEntry).
+// UPDATE (including budget_line_id) and forbids un-voiding, so "put an
+// uncategorized entry on a budget line" cannot be a plain UPDATE — it is
+// implemented as a guided void + re-entry (see categorizeEntry).
 
 function ledgerPath(slug: string): string {
   return `/${slug}/treasury`;
+}
+
+// A failure that belongs to ONE entry goes back to that entry: `?edit=` reopens
+// its "Fix this entry" popover and the page renders the message inside it,
+// rather than at the top of a ledger the treasurer may have to scroll to find
+// the row again (the Wave-2 section-local error contract). Without an entry id
+// there is no row to return to, so it falls back to the page-level message.
+function rowErrorPath(slug: string, entryId: string, code: string): string {
+  if (!entryId) return `${ledgerPath(slug)}?error=${code}`;
+  const id = encodeURIComponent(entryId);
+  return `${ledgerPath(slug)}?edit=${id}&error=${code}#fix-${id}`;
 }
 
 function textOrNull(raw: FormDataEntryValue | null): string | null {
@@ -237,8 +249,8 @@ export async function addEntry(formData: FormData): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Void (reason required). Optionally bounce to the re-enter form prefilled from
-// the just-voided entry ("void & re-enter").
+// Void (reason required). Optionally bounce to the add-entry drawer prefilled
+// from the just-voided entry ("Void & redo").
 // ---------------------------------------------------------------------------
 
 export async function voidEntry(formData: FormData): Promise<void> {
@@ -250,19 +262,21 @@ export async function voidEntry(formData: FormData): Promise<void> {
 
   const reason = String(formData.get("reason") ?? "").trim();
   if (!reason) {
-    redirect(`${ledgerPath(slug)}?error=void_reason`);
+    redirect(rowErrorPath(slug, entryId, "void_reason"));
   }
 
   const supabase = await createClient();
   const ok = await voidEntryRow(supabase, actor, programId, entryId, reason);
   if (!ok) {
-    redirect(`${ledgerPath(slug)}?error=void`);
+    redirect(rowErrorPath(slug, entryId, "void"));
   }
 
   revalidatePath(ledgerPath(slug));
   if (reenter) {
-    // Prefill a fresh entry from the voided one (§7 "void & re-enter").
-    redirect(`${ledgerPath(slug)}?reenter=${entryId}#add-entry`);
+    // Prefill a fresh entry from the voided one (§7 "void & redo").
+    redirect(
+      `${ledgerPath(slug)}?reenter=${encodeURIComponent(entryId)}#add-entry`,
+    );
   }
   redirect(`${ledgerPath(slug)}?saved=1`);
 }
@@ -330,9 +344,9 @@ export async function unmarkReconciled(formData: FormData): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Categorize an uncategorized entry = guided void + re-enter with the budget
-// line set. The void-only trigger blocks a plain budget_line_id UPDATE, so this
-// is the correct path (see module header). Both halves are audited.
+// Putting an uncategorized entry on a budget line = a guided void + re-entry
+// with the line set. The void-only trigger blocks a plain budget_line_id UPDATE,
+// so this is the correct path (see module header). Both halves are audited.
 // ---------------------------------------------------------------------------
 
 export async function categorizeEntry(formData: FormData): Promise<void> {
@@ -343,7 +357,7 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
   const actor = await requireRole(programId, TREASURY_WRITE_ROLES);
 
   if (!budgetLineId) {
-    redirect(`${ledgerPath(slug)}?error=categorize`);
+    redirect(rowErrorPath(slug, entryId, "categorize"));
   }
 
   const supabase = await createClient();
@@ -351,7 +365,7 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
   // The budget line is posted; the original entry is re-read program-scoped
   // below, but the line it is being re-entered against never was.
   if (!(await resolveOwnedId(supabase, "budget_lines", programId, budgetLineId))) {
-    redirect(`${ledgerPath(slug)}?error=categorize`);
+    redirect(rowErrorPath(slug, entryId, "categorize"));
   }
 
   // Read the original (must be live and uncategorized).
@@ -365,7 +379,7 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
     .maybeSingle();
 
   if (!orig || orig.voided_at || orig.budget_line_id) {
-    redirect(`${ledgerPath(slug)}?error=categorize`);
+    redirect(rowErrorPath(slug, entryId, "categorize"));
   }
 
   // Void the original, then re-enter it verbatim with the line attached.
@@ -374,10 +388,10 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
     actor,
     programId,
     entryId,
-    "Recategorized to a budget line (void + re-enter)",
+    "Put on a budget line (void + re-entry)",
   );
   if (!ok) {
-    redirect(`${ledgerPath(slug)}?error=categorize`);
+    redirect(rowErrorPath(slug, entryId, "categorize"));
   }
 
   const id = await insertEntry(supabase, actor, {
@@ -394,7 +408,7 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
     receipt_path: orig.receipt_path,
   });
   if (!id) {
-    redirect(`${ledgerPath(slug)}?error=categorize`);
+    redirect(rowErrorPath(slug, entryId, "categorize"));
   }
 
   revalidatePath(ledgerPath(slug));
