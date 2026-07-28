@@ -31,9 +31,9 @@
 
 ## Phase 4 — Wave 4: Money
 
-- [ ] T131 Four-decision add-entry + plain-language corrections (US8-1/2): drawer → direction/amount/who/memo + one "Connect it" disclosure (3 tags + receipt); correction vocabulary ("Fix this entry" / "Void it" / "Void & redo"); ledger semantics untouched.
-- [ ] T132 Filter + budget forms (US8-3/4): filter row → search + 2 selects + "More filters" disclosure; budget "Add line" and "Category settings" separated; standard edit idiom on lines.
-- [ ] T133 Wave-4 verification: full gate + e2e + visual QA.
+- [X] T131 Four-decision add-entry + plain-language corrections (US8-1/2): drawer → direction/amount/who/memo + one "Connect it" disclosure (3 tags + receipt); correction vocabulary ("Fix this entry" / "Void it" / "Void & redo"); ledger semantics untouched.
+- [X] T132 Filter + budget forms (US8-3/4): filter row → search + 2 selects + "More filters" disclosure; budget "Add line" and "Category settings" separated; standard edit idiom on lines.
+- [X] T133 Wave-4 verification: full gate + e2e + visual QA.
 
 ## Phase 5 — Wave 5: Comms
 
