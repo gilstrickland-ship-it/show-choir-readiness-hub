@@ -83,8 +83,8 @@
 ## Phase 12 — Wave 12: Money reporting
 
 - [ ] T143c Row Edit triggers measure 38px, not 44px (Wave-10 residual): the shared `.comp-disclosure` min-height cannot apply to an inline `<a>`, so eight call sites across five surfaces (itinerary, ledger, budget, ensembles, inventory/assignments) sit under the touch target the rest of the app holds. One-selector fix + re-measure all five.
-- [ ] T162 `budget-vs-actual` + `reports` adopt Wave-4 vocabulary and the collapsed-filter idiom; board-snapshot PDF and "reconciled through" line unchanged (fiduciary controls stay as designed).
-- [ ] T163 Wave-12 verification: full gate + e2e + visual pass.
+- [X] T162 `budget-vs-actual` + `reports` adopt Wave-4 vocabulary and the collapsed-filter idiom; board-snapshot PDF and "reconciled through" line unchanged (fiduciary controls stay as designed).
+- [X] T163 Wave-12 verification: full gate + e2e + visual pass.
 
 ## Phase 13 — Wave 13: Settings & entry
 
@@ -94,6 +94,7 @@
 
 ## Phase 14 — Wave 14: Parent surface (verification and polish, NOT a rebuild)
 
+- [ ] T143d CSS handoff from Wave 12 (globals.css, currently owned by a separate 44px task): `td.num`/`th.num` are unstyled so every money column outside `.money-ledger` left-aligns — add `table.members td.num { text-align: right }` and let `.money-ledger` go back to being ledger-specific; `.money-filters a` (the Clear link, 33×21) and `.subtabs` links (36px) are under the 44px target across all six surfaces; add a comment on `.stack`'s `align-items:flex-start` shrink-wrap trap, which silently rendered two money tables 81px and 94px wide at 1280px.
 - [ ] T167 Re-verify every parent route after the staff-side changes: published-only gates, token capability allow-list unchanged, directory-tier PII only, program-tz dates, ≥44px tap targets, absence/signup outcome emails still send; `link-help` enumeration-safe + rate-limited behavior verbatim.
 - [ ] T168 Wave-14 verification: full gate + e2e + visual pass (parent surface at 375px is the primary case).
 
