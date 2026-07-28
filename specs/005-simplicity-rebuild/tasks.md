@@ -88,9 +88,9 @@
 
 ## Phase 13 — Wave 13: Settings & entry
 
-- [ ] T164 `settings` → titled sections in constant order (Program · Share links · Email health · Support access) with mutations in labeled disclosures; `members` + `export` adopt the row-edit idiom.
-- [ ] T165 `settings/rollover` full plain-language pass + real step indicator (it is rollover-only since Wave 1); `launch` + `invite` share one `TIMEZONES` source (absorbs part of T143), multi-state flows and role assignment preserved.
-- [ ] T166 Wave-13 verification: full gate + e2e + visual pass.
+- [X] T164 `settings` → titled sections in constant order (Program · Share links · Email health · Support access) with mutations in labeled disclosures; `members` + `export` adopt the row-edit idiom.
+- [X] T165 `settings/rollover` full plain-language pass + real step indicator (it is rollover-only since Wave 1); `launch` + `invite` share one `TIMEZONES` source (absorbs part of T143), multi-state flows and role assignment preserved.
+- [X] T166 Wave-13 verification: full gate + e2e + visual pass.
 
 ## Phase 14 — Wave 14: Parent surface (verification and polish, NOT a rebuild)
 
@@ -100,6 +100,7 @@
 
 ## Phase 9 — Wave 9: Tutorials & first-use refresh (runs LAST, after ALL waves above)
 
+- [ ] T143e Destructive one-click share-link revoke has no confirm (Wave-13 finding): revoking kills the URL irrecoverably — the family must be re-issued and re-told — and it is the only irreversible action in the app without a confirm step. Decide: add the app-wide confirm idiom, or document why this one stays one click.
 - [ ] T145 Journey re-derivation (US12): all role journeys in `lib/guide.ts` re-pointed at rebuilt flows (steps, links, labels, verifiers); non-director journeys reflect rebuilt surfaces + Wave-8 mobile nav; e2e guide contracts updated coherently.
 - [ ] T146 Strip re-justification (US12-2): each of the eight IntroStrips rewritten for the new UI, shortened, or removed where the rebuilt surface self-explains; `?help=1` + Got-it semantics preserved for survivors; parent welcome card reviewed.
 - [ ] T147 Wave-9 verification: full gate + e2e + visual QA (fresh-program walkthrough per role, journey panel states, surviving strips).
