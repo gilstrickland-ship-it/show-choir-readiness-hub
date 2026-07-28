@@ -41,8 +41,16 @@
 - [ ] T135 Shifts standard edit + announcements flag wired (US9-3/4): `?edit=` mode → per-row edit popovers; `/comms/announcements` requires `announcements` flag (default stays on).
 - [ ] T136 Wave-5 verification: full gate + e2e + visual QA.
 
+## Phase 5b — Wave W: Wardrobe (costume manager) — runs after Wave 5
+
+- [ ] T152 Four tabs, not six (US13): tab strip → Inventory · Assignments · Alterations · Checkout; sets CRUD absorbed into Assignments (set picker + settings disclosure); quick-change becomes a printable view linked from Checkout and the comp hub; old URLs still resolve; dead `/costumes/alterations` stub deleted with `backTarget` default corrected (absorbs part of T143).
+- [ ] T153 Wardrobe adopts the idioms (US14): `+ Add` drawers for create; row-local `<details>` edit panels that EXPAND the row (never floating — `table.members` clips); inventory filter row → search + kind + "More filters"; section-local `Object.hasOwn` error maps; searchParam guards; every costumes action resolves posted piece/set/student/competition/assignment ids in-program (costume_assignments carries a cross-tenant unique index).
+- [ ] T154 Quick change teaches its model (US15): one-line explainer, human transition names ("Opener → Ballad"), print-friendly, per-ensemble titled grids (supersedes T143's explainer line).
+- [ ] T155 Wave-W verification: full gate + e2e + static visual pass (1280/375, both themes, contrast, no clipped panels).
+
 ## Phase 6 — Wave 6: People
 
+- [ ] T137a Roster depth (coverage): `roster/ensembles` + `[ensembleId]` adopt drawer-create / row-edit idioms; `roster/import` 3-phase flow gets a real step indicator ("Step 2 of 3") and its three error taxonomies become one reviewable list; `roster/settings` (size fields) plain-language pass.
 - [ ] T137 Guardian row (US10): two affordances (Send family links · Edit popover with update/reset/remove); merge near-synonym send actions into one canonical action; email-issues rows link to the in-place fix; student page grouped Profile · Sizes · Guardians · Status.
 - [ ] T138 Wave-6 verification: full gate + e2e + visual QA.
 
@@ -59,7 +67,35 @@
 - [ ] T143a Slug-redirect hardening (Wave-1 review follow-up): every module-page `fail()`/redirect that interpolates the form's `slug` goes through the fail-closed `returnPath`/`programPath` guard (protocol-relative open-redirect class fixed app-wide, F6 pattern); rollover page `ERR[sp.error]` gets the Object.hasOwn + array-typed-param guards like the season page.
 - [ ] T144 Wave-8 verification: full gate + e2e + visual QA (per-role mobile nav screenshots).
 
-## Phase 9 — Wave 9: Tutorials & first-use refresh (runs LAST, after Waves 1–8)
+## Phase 10 — Wave 10: Comp-week children (runs after Wave 8)
+
+- [ ] T156 Itinerary editor to the standard idioms: per-item row-local `<details>` edit (expanding), one "Add an item" drawer, section-local errors; publish→confirm gate and living-itinerary semantics untouched (parents never see unpublished times).
+- [ ] T157 Absences + list + thin children: `competitions/absences` renders `<Restricted>` instead of bare `notFound()` for disallowed roles (app-wide convention); outcome emails unchanged; `competitions` list keeps packet-attach + absence nudge while deferring create to the Season drawer; attendance/meals plain-language headers + shared flash convention.
+- [ ] T158 Wave-10 verification: full gate + e2e + visual pass.
+
+## Phase 11 — Wave 11: Calendar & records
+
+- [ ] T159 Events calendar + detail: both views kept, create defers to the Season drawer as primary path, detail adopts row/edit idioms; `history` plain-language + flash convention.
+- [ ] T160 Today re-verified end-to-end after every wave: every inbox row, readiness row, comp-week shortcut and aside card points at a surface that still owns that job (Wave 3 moved several); dead links are a release blocker.
+- [ ] T161 Wave-11 verification: full gate + e2e + visual pass.
+
+## Phase 12 — Wave 12: Money reporting
+
+- [ ] T162 `budget-vs-actual` + `reports` adopt Wave-4 vocabulary and the collapsed-filter idiom; board-snapshot PDF and "reconciled through" line unchanged (fiduciary controls stay as designed).
+- [ ] T163 Wave-12 verification: full gate + e2e + visual pass.
+
+## Phase 13 — Wave 13: Settings & entry
+
+- [ ] T164 `settings` → titled sections in constant order (Program · Share links · Email health · Support access) with mutations in labeled disclosures; `members` + `export` adopt the row-edit idiom.
+- [ ] T165 `settings/rollover` full plain-language pass + real step indicator (it is rollover-only since Wave 1); `launch` + `invite` share one `TIMEZONES` source (absorbs part of T143), multi-state flows and role assignment preserved.
+- [ ] T166 Wave-13 verification: full gate + e2e + visual pass.
+
+## Phase 14 — Wave 14: Parent surface (verification and polish, NOT a rebuild)
+
+- [ ] T167 Re-verify every parent route after the staff-side changes: published-only gates, token capability allow-list unchanged, directory-tier PII only, program-tz dates, ≥44px tap targets, absence/signup outcome emails still send; `link-help` enumeration-safe + rate-limited behavior verbatim.
+- [ ] T168 Wave-14 verification: full gate + e2e + visual pass (parent surface at 375px is the primary case).
+
+## Phase 9 — Wave 9: Tutorials & first-use refresh (runs LAST, after ALL waves above)
 
 - [ ] T145 Journey re-derivation (US12): all role journeys in `lib/guide.ts` re-pointed at rebuilt flows (steps, links, labels, verifiers); non-director journeys reflect rebuilt surfaces + Wave-8 mobile nav; e2e guide contracts updated coherently.
 - [ ] T146 Strip re-justification (US12-2): each of the eight IntroStrips rewritten for the new UI, shortened, or removed where the rebuilt surface self-explains; `?help=1` + Got-it semantics preserved for survivors; parent welcome card reviewed.

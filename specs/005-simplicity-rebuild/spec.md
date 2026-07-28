@@ -167,6 +167,43 @@ Add entry asks: In or out? · Amount · Who ("Paid to / received from") · What 
 
 ---
 
+## Wave W — Wardrobe (the costume manager's whole job) (Priority: P1 — runs after Wave 5)
+
+**Why this wave exists**: it was missing from the original plan and the user caught it. Wardrobe deserved a wave from the start — the architecture spec (§4) calls the costume system *the wedge*, `costume_manager` is a first-class seat whose entire product this is, and §4 explicitly says "Props and set pieces are just kinds here — **one inventory, no extra screens**." Today the surface is **six sub-tabs across 2,909 LOC** (Alterations 369 · Inventory 286 · Sets 234+156 · Assignments 370 · Quick change 305 · Checkout 322, plus a 22-line dead `alterations` redirect stub), and it is the one domain that never adopted a single Wave-1–4 idiom: **zero `<details>` disclosures anywhere**, so every mutation is a permanently-expanded form.
+
+**Diagnosis**
+- **Six tabs, four real jobs.** The costume manager's actual jobs are: *keep the inventory*, *decide who wears what*, *get it altered*, and *hand it out on comp day*. "Sets" and "Assignments" are two halves of one job (a set is just the grouping assignments hang off); "Quick change" is a derived read-only sheet, not a place you go to do something.
+- **Quick change is the highest jargon density in the product** — a matrix of costume-set *transitions* as columns × students as rows, one grid per ensemble, horizontally scrolling, with nothing on the page teaching the model.
+- **Inventory's filter row is six selects** (kind / set / condition / …), the same pattern Wave 4 collapsed on the ledger.
+- **Checkout is genuinely good** (phone-first tap-to-toggle, idempotent seeding) and is the model the rest should follow.
+- `costume_manager` also has attendance-edit rights (needed for checkout) but no roster access — the nav must make their two-surface world obvious rather than hiding Money/Comms they can't use.
+
+### User Story 13 — Four tabs, not six (P1)
+
+Wardrobe presents the costume manager's four real jobs: **Inventory** (pieces — props and set pieces included, per §4) · **Assignments** (sets and who wears what, one surface) · **Alterations** (the queue, still the landing) · **Checkout** (comp-day hand-out). Quick change stops being a tab and becomes a *printable view* reachable from Checkout and from the comp hub's Wardrobe glance, where it is actually needed.
+
+**Acceptance scenarios**:
+1. **Given** any `COSTUMES_ROLES` viewer, **Then** the tab strip shows exactly four tabs, and every capability of the old six is reachable: sets CRUD lives inside Assignments (set picker + set settings disclosure), `sets/[setId]` and `pieces/[pieceId]` remain as detail routes, quick-change is linked from Checkout.
+2. **Given** the old `/costumes/sets`, `/costumes/quick-change` URLs, **Then** they still resolve (redirect or render) — no bookmark 404s — and the dead `/costumes/alterations` stub is deleted with its `backTarget` default corrected (this absorbs T143's stub cleanup).
+3. **Given** the assignments grid, **Then** size-mismatch warnings, inline alteration status, and the "Props & set pieces" section all behave exactly as today.
+
+### User Story 14 — Wardrobe adopts the app's idioms (P1)
+
+Every Wardrobe mutation moves to the established pattern: create via a `+ Add` drawer, edit via a row-local `<details>` panel that **expands the row** (never a floating popover — `table.members` is a scroll container and clips them, the Wave-4 lesson), section-local errors with `Object.hasOwn` maps, `typeof === "string"` searchParam guards, and every client-posted id resolved in-program before write.
+
+**Acceptance scenarios**:
+1. **Given** the inventory filter row, **Then** it collapses to search + kind + one "More filters" disclosure holding the rest, with the unfiltered default view unchanged.
+2. **Given** any piece/set/assignment edit, **Then** it happens in a row-local panel with a live-summary `<summary>`, not a permanently-expanded form.
+3. **Given** every costumes server action, **Then** it re-checks its write role and resolves posted `piece_id` / `set_id` / `student_id` / `competition_id` / `assignment_id` in-program (the cross-tenant hardening class — `costume_assignments` carries a cross-tenant unique index, so this is not theoretical).
+
+### User Story 15 — Quick change teaches its own model (P2)
+
+The transitions sheet opens with one plain sentence explaining what a column is, prints cleanly, and names each transition in human terms ("Opener → Ballad"), replacing bare set-number jargon.
+
+**Acceptance scenarios**:
+1. **Given** the quick-change view, **Then** a one-line explainer precedes the grid ("Each column is a costume change between numbers — what comes off, what goes on."), it is print-friendly, and horizontal scrolling is preserved for wide ensembles. (This supersedes the one-sentence fix parked in Wave 8's T143.)
+2. **Given** a program with several ensembles, **Then** each ensemble's grid is separately titled and independently scrollable.
+
 ## Wave 6 — People (`roster/[studentId]`) (Priority: P2)
 
 **Diagnosis** (inventory §c-9): 9 forms; five verbs per guardian row (update / email links / resend links / reset email status / remove); three near-synonym send actions in `roster/actions.ts`.
@@ -252,6 +289,65 @@ A brand-new director's journey panel walks the *new* happy path: start the seaso
 - **S-5 (share_links)**: polymorphic `resource_id` verified in-program at BOTH mint and resolve; capability allow-list stays tiny.
 - **S-6 (tests)**: an RLS suite that, for each vulnerable table, attempts the exact cross-tenant poisoning insert and asserts DB rejection; plus a same-program regression test that the one-room-one-bus trigger still fires.
 - **S-7 (deploy)**: production is at `0015`; `0016_multi_ensemble` is merged on main and REQUIRED by deployed code but was never applied (spec 004's T114 left unchecked) — competitions currently render with no ensembles and creates half-fail. Both `0016` and `0017` must be applied, in order. Claude cannot apply DDL here (blocked by the environment's safety classifier); the operator runs `supabase db push`.
+
+## Coverage — every route is owned by a wave (user directive: nothing skipped)
+
+The original plan targeted the complexity hotspots and left 13 of the app's 53 page routes unassigned. That was a gap, not a judgement: a review that skips surfaces cannot claim the product is simple. Every route below now has an owning wave.
+
+| Wave | Routes owned |
+|---|---|
+| 1 Season | `season`, create paths on `events`/`travel`, first-season start |
+| 2 Trip planning | `travel`, `travel/[tripId]` |
+| 3 Comp week | `competitions/[competitionId]`, `…/packet`, `…/packet/[parseId]/review` |
+| 4 Money | `treasury`, `treasury/budget` |
+| 5 Comms | `comms`, `…/digest`, `…/announcements`, `…/shifts`, `…/shifts/suggest` |
+| W Wardrobe | all 9 `costumes/*` routes |
+| 6 People | `roster`, `roster/[studentId]`, `roster/email-issues`, **+ `roster/ensembles`, `roster/ensembles/[ensembleId]`, `roster/import`, `roster/settings`** |
+| 7 Hosting | `hosting`, `hosting/[eventId]` |
+| 8 System pass | cross-cutting (nav, shared components, dead weight) |
+| **10 Comp-week children** | `competitions` (list), `…/attendance`, `…/meals`, `…/itinerary`, `competitions/absences` |
+| **11 Calendar & records** | `events`, `events/[eventId]`, `history`, `dashboard` (Today) |
+| **12 Money reporting** | `treasury/budget-vs-actual`, `treasury/reports` |
+| **13 Settings & entry** | `settings`, `settings/members`, `settings/export`, `settings/rollover`, `launch`, `invite/[inviteId]` |
+| **14 Parent surface** | `t/[token]` + `absence`/`itinerary`/`signup`/`unsubscribe`, `link-help` |
+| 9 Tutorials | runs LAST, after every wave above |
+
+Waves 10–14 run after Wave 8 and before Wave 9. Each carries the same cross-wave requirements (RQ-1..RQ-6) and the same idioms.
+
+## Wave 10 — Comp-week children (Priority: P2)
+
+The hub (Wave 3) now delegates to these; they must be worth arriving at. `competitions/absences` currently bare-`notFound()`s for the wrong role instead of rendering `<Restricted>` (the app-wide convention). The itinerary editor is 593 lines with 6 forms and a two-step publish; attendance and meals are thin and mostly fine.
+
+- **AC-1**: The itinerary editor adopts the standard idioms — per-item row-local `<details>` edit (expanding, not floating), one drawer for "Add an item", section-local errors — and keeps the publish→confirm gate and living-itinerary semantics exactly (parents must never see unpublished times).
+- **AC-2**: `competitions/absences` renders `<Restricted>` for disallowed roles; Confirm/Dismiss keep their outcome emails (Constitution IV path unchanged).
+- **AC-3**: The `competitions` list keeps its distinct jobs (unattached-packet attach, absence-queue nudge) but its create form defers to the Season drawer as the primary path.
+- **AC-4**: Attendance and meals get plain-language headers and the shared flash convention; no behavior change.
+
+## Wave 11 — Calendar & records (Priority: P2)
+
+- **AC-1**: `events` month/week calendar keeps both views; its create form becomes the "More options" target of the Season drawer (one create path, per P6), and event detail adopts the row/edit idioms.
+- **AC-2**: `history` (trophy case) is a read surface — verify it needs nothing beyond plain language and the shared flash convention.
+- **AC-3**: `dashboard` (Today) is re-verified end-to-end after every wave changed what it links to: every inbox row, readiness row, comp-week shortcut and aside card must point at a surface that still owns that job (Wave 3 moved several).
+
+## Wave 12 — Money reporting (Priority: P3)
+
+- **AC-1**: `budget-vs-actual` and `reports` adopt the Wave-4 vocabulary and the collapsed-filter idiom; the board-snapshot PDF and reconciliation "reconciled through" line are unchanged (fiduciary controls stay exactly as designed).
+
+## Wave 13 — Settings & entry (Priority: P2)
+
+`settings` stacks three unrelated admin concerns under one form (program details · email health · support access · share links). `launch` duplicates the `TIMEZONES` array.
+
+- **AC-1**: `settings` becomes titled sections in constant order (Program · Share links · Email health · Support access) with mutations in labeled disclosures; `members` and `export` adopt the row-edit idiom.
+- **AC-2**: `settings/rollover` gets the full plain-language pass Wave 1 started (it is now rollover-only) and a real step indicator.
+- **AC-3**: `launch` and `invite` share one `TIMEZONES` source (absorbs part of T143) and keep their multi-state flows; the program-creation path keeps its role assignment.
+
+## Wave 14 — Parent surface (Priority: P2)
+
+The inventory rated this the healthiest part of the product (2/5) — this wave is verification-and-polish, not a rebuild, and it must not add complexity to the one surface that got it right.
+
+- **AC-1**: Every parent route is re-verified after the staff-side changes (published-only gates, token capability allow-list unchanged, no PII beyond directory tier).
+- **AC-2**: Copy and dates re-checked in program timezone; tap targets ≥44px; the absence/signup outcomes still email.
+- **AC-3**: `link-help` keeps its enumeration-safe, rate-limited behavior verbatim.
 
 ## Cross-wave requirements
 
