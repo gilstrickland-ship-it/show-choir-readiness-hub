@@ -1,12 +1,11 @@
-import Link from "next/link";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { TREASURY_ROLES } from "@/lib/nav";
+import { oneParam } from "@/lib/flash";
 import {
-  formatCents,
   lineActualsFromRows,
   seasonTotalsFromRow,
   totalForLine,
@@ -14,18 +13,19 @@ import {
   reconciledThroughMonth,
   formatMonthKey,
   UNCATEGORIZED_KEY,
-  CATEGORY_DIRECTION_LABELS,
-  type CategoryDirection,
   type LineActual,
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
 import { SubTabs } from "../../SubTabs";
 import { treasuryTabs } from "@/lib/subnav";
+import { EventReport, type NamedRow } from "./EventReport";
+import { BoardSnapshot, type SnapshotCatRow } from "./BoardSnapshot";
 
-// Reports (T020): per-event cost report (competition or trip → income/expense/
-// net + line breakdown) and a read-only board-snapshot data page (totals,
-// category rollups, uncategorized note, as-of stamp) that links to the P5 PDF
-// at /api/pdf/board-snapshot?season=... . Read-only; no writes.
+// Reports (T020, replanned in spec 005 Wave 12): what one competition or trip
+// cost, and the board snapshot the monthly meeting is read from. Read-only; no
+// writes, for any seat. A load-and-compose page — the two reports are their own
+// files (EventReport, BoardSnapshot), which is also where their vocabulary and
+// their "we could not read this" behaviour live.
 //
 // Every number here is a SQL aggregate (0019), not a sum over a fetched entry
 // list. This is the page a treasurer reads to a board from, so it is the last
@@ -33,18 +33,9 @@ import { treasuryTabs } from "@/lib/subnav";
 // asks for one event's aggregate instead of pulling the season and filtering it
 // in memory.
 
-interface CatRow {
-  id: string;
-  name: string;
-  direction: CategoryDirection;
-}
 interface LineRow {
   id: string;
   category_id: string;
-  name: string;
-}
-interface NamedRow {
-  id: string;
   name: string;
 }
 
@@ -54,7 +45,7 @@ export default async function ReportsPage({
 }: {
   params: Promise<{ program: string }>;
   // Next hands back an ARRAY for a duplicated param (?event=a&event=b), so the
-  // read goes through `one()` — a hand-typed URL must not 500 the page.
+  // read goes through `oneParam` — a hand-typed URL must not 500 the page.
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
@@ -66,15 +57,11 @@ export default async function ReportsPage({
     );
   }
   const sp = await searchParams;
-  const one = (key: string): string | null => {
-    const v = sp[key];
-    return typeof v === "string" ? v : null;
-  };
-  const event = one("event");
+  const event = oneParam(sp, "event");
 
   const supabase = await createClient();
 
-  let cats: CatRow[] = [];
+  let cats: SnapshotCatRow[] = [];
   let lines: LineRow[] = [];
   let comps: NamedRow[] = [];
   let trips: NamedRow[] = [];
@@ -86,6 +73,10 @@ export default async function ReportsPage({
   // beside real budgeted figures — the exact shape of number a board acts on.
   let actualsUnavailable = false;
   let eventActualsUnavailable = false;
+  // The budget's own shape fails separately again, and an empty category list
+  // renders as "No budget categories yet." — a statement about the budget that
+  // is false when the read is what failed.
+  let structureUnavailable = false;
 
   if (season) {
     const [{ data: budget }, { data: compData }, { data: tripData }, lineRes, totalsRes] =
@@ -132,16 +123,17 @@ export default async function ReportsPage({
     totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
 
     if (b) {
-      const { data: catData } = await supabase
+      const { data: catData, error: catError } = await supabase
         .from("budget_categories")
         .select("id, name, direction")
         .eq("program_id", program.id)
         .eq("budget_id", b.id)
         .order("direction", { ascending: true })
         .order("sort_order", { ascending: true });
-      cats = (catData as CatRow[] | null) ?? [];
+      cats = (catData as SnapshotCatRow[] | null) ?? [];
+      structureUnavailable = !!catError;
       if (cats.length > 0) {
-        const { data: lineData } = await supabase
+        const { data: lineData, error: lineError } = await supabase
           .from("budget_lines")
           .select("id, category_id, name")
           .eq("program_id", program.id)
@@ -150,6 +142,7 @@ export default async function ReportsPage({
             cats.map((c) => c.id),
           );
         lines = (lineData as LineRow[] | null) ?? [];
+        if (lineError) structureUnavailable = true;
       }
     }
   }
@@ -168,8 +161,6 @@ export default async function ReportsPage({
     if (!catId) continue;
     catActual.set(catId, (catActual.get(catId) ?? 0) + totalForLine(actual));
   }
-  const uncategorizedCount = totals?.uncategorizedCount ?? 0;
-  const uncategorizedTotal = totals?.uncategorizedCents ?? 0;
   const asOf = formatDateTimeInTz(new Date(), program.timezone);
 
   // "Reconciled through" (Wave L): the latest contiguous month whose books were
@@ -189,24 +180,29 @@ export default async function ReportsPage({
     reconciledThroughLabel = through ? formatMonthKey(through) : null;
   }
 
-  // ---- Per-event cost report ------------------------------------------------
+  // ---- The chosen event -----------------------------------------------------
+  // `?event=` is a client-supplied id and is resolved IN-PROGRAM before it is
+  // used for anything: the name comes from this season's own competition and
+  // trip lists, and an id that isn't on one of them never reaches the aggregate
+  // (it used to be handed straight to the rpc, which then answered for an event
+  // this page had already decided it would not name).
   const kind = event?.startsWith("comp:")
     ? "comp"
     : event?.startsWith("trip:")
       ? "trip"
       : null;
   const eventId = kind ? event!.slice(5) : null;
-  const eventName = kind
-    ? kind === "comp"
+  const eventName = !eventId
+    ? null
+    : kind === "comp"
       ? (comps.find((c) => c.id === eventId)?.name ?? null)
-      : (trips.find((t) => t.id === eventId)?.name ?? null)
-    : null;
+      : (trips.find((t) => t.id === eventId)?.name ?? null);
 
   // One aggregate scoped to the chosen event — asked for only when an event is
   // chosen, and grouped by budget line so the breakdown and the totals are the
   // same numbers by construction.
   let eventByLine = new Map<string, LineActual>();
-  if (season && eventId && kind) {
+  if (season && eventId && kind && eventName) {
     const { data, error } = await supabase.rpc("ledger_line_actuals", {
       p_program_id: program.id,
       p_season_id: season.id,
@@ -216,210 +212,43 @@ export default async function ReportsPage({
     eventActualsUnavailable = !!error;
     if (!error) eventByLine = lineActualsFromRows(data);
   }
-  const eventTotals = { inCents: 0, outCents: 0, netCents: 0 };
-  for (const actual of eventByLine.values()) {
-    eventTotals.inCents += actual.inCents;
-    eventTotals.outCents += actual.outCents;
-  }
-  eventTotals.netCents = eventTotals.inCents - eventTotals.outCents;
 
   return (
     <section className="stack">
       <SubTabs strip={treasuryTabs(slug, "reports")} />
       <h1>Reports</h1>
+      <p className="muted">
+        Two ways to read the season&apos;s money: what one event cost, and the
+        summary the board meets over. Both count the ledger as it stands —
+        voided entries never count.
+      </p>
 
       {!season && <p className="alert-error">No active season.</p>}
 
       {season && (
         <>
-          {/* Per-event cost report */}
-          <div className="stack">
-            <h2>Per-event cost report</h2>
-            <p className="muted">
-              What a competition or trip actually cost — income, expense, and net
-              for every entry tagged to it.
-            </p>
-            <form method="get" className="row-inline">
-              <label>
-                Event
-                <select name="event" defaultValue={event ?? ""}>
-                  <option value="">Choose a competition or trip…</option>
-                  {comps.length > 0 && (
-                    <optgroup label="Competitions">
-                      {comps.map((c) => (
-                        <option key={c.id} value={`comp:${c.id}`}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {trips.length > 0 && (
-                    <optgroup label="Trips">
-                      {trips.map((t) => (
-                        <option key={t.id} value={`trip:${t.id}`}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </label>
-              <button type="submit" className="secondary">
-                Run
-              </button>
-            </form>
+          <EventReport
+            slug={slug}
+            comps={comps}
+            trips={trips}
+            selected={event ?? ""}
+            eventName={eventName}
+            byLine={eventByLine}
+            lineName={lineName}
+            unavailable={eventActualsUnavailable}
+          />
 
-            {eventId && eventName && eventActualsUnavailable && (
-              <p className="alert-error">
-                What this event cost could not be read just now. Nothing is shown
-                rather than zeros — reload to try again.
-              </p>
-            )}
-
-            {eventId && eventName && !eventActualsUnavailable && (
-              <div className="stack">
-                <dl className="detail-list">
-                  <dt>Event</dt>
-                  <dd>{eventName}</dd>
-                  <dt>Income</dt>
-                  <dd className="num">{formatCents(eventTotals.inCents)}</dd>
-                  <dt>Expense</dt>
-                  <dd className="num">{formatCents(eventTotals.outCents)}</dd>
-                  <dt>Net</dt>
-                  <dd className="num">
-                    <strong>{formatCents(eventTotals.netCents)}</strong>
-                  </dd>
-                </dl>
-                <table className="members">
-                  <thead>
-                    <tr>
-                      <th>Budget line</th>
-                      <th className="num">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...eventByLine.entries()].map(([lid, actual]) => (
-                      <tr key={lid || "uncat"}>
-                        <td>
-                          {lid ? (
-                            (lineName.get(lid) ?? "—")
-                          ) : (
-                            <span className="muted">uncategorized</span>
-                          )}
-                        </td>
-                        <td className="num">{formatCents(totalForLine(actual))}</td>
-                      </tr>
-                    ))}
-                    {eventByLine.size === 0 && (
-                      <tr>
-                        <td colSpan={2} className="muted">
-                          No entries tagged to this event.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Board snapshot data */}
-          <div className="stack">
-            <h2>Board snapshot</h2>
-            <p className="muted">
-              The monthly-meeting summary. Full financial transparency to the
-              board is a fiduciary norm — and the treasurer&apos;s protection.
-              As of {asOf}.
-            </p>
-            <p className="muted">
-              {reconciledThroughLabel
-                ? `Reconciled through ${reconciledThroughLabel}.`
-                : "No months reconciled yet."}
-            </p>
-
-            {/* Two aggregates feed this section and either can fail alone. The
-                banner used to key on the totals rpc only, so a failed per-line
-                read printed $0.00 in every category rollup with nothing saying
-                so. It names whichever one is missing now. */}
-            {(!totals || actualsUnavailable) && (
-              <p className="alert-error">
-                {!totals && actualsUnavailable
-                  ? "The season totals and the category rollups could not be read just now, so the figures below are blank rather than wrong."
-                  : !totals
-                    ? "The season totals could not be read just now, so the header figures below are blank rather than wrong."
-                    : "The category rollups could not be read just now, so the Actual column below is blank rather than wrong."}{" "}
-                Reload to try again — do not present this page to the board until
-                it shows numbers.
-              </p>
-            )}
-
-            <dl className="detail-list">
-              <dt>Income (actual)</dt>
-              <dd className="num">
-                {totals ? formatCents(totals.inCents) : "—"}
-              </dd>
-              <dt>Expense (actual)</dt>
-              <dd className="num">
-                {totals ? formatCents(totals.outCents) : "—"}
-              </dd>
-              <dt>Net</dt>
-              <dd className="num">
-                <strong>{totals ? formatCents(totals.netCents) : "—"}</strong>
-              </dd>
-            </dl>
-
-            <h3>Category rollups</h3>
-            <table className="members">
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th>Direction</th>
-                  <th className="num">Actual</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cats.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td>{CATEGORY_DIRECTION_LABELS[c.direction]}</td>
-                    <td className="num">
-                      {actualsUnavailable
-                        ? "—"
-                        : formatCents(catActual.get(c.id) ?? 0)}
-                    </td>
-                  </tr>
-                ))}
-                {cats.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="muted">
-                      No budget categories yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-
-            {uncategorizedCount > 0 ? (
-              <p className="alert-error">
-                {uncategorizedCount} uncategorized{" "}
-                {uncategorizedCount === 1 ? "entry" : "entries"} totaling{" "}
-                {formatCents(uncategorizedTotal)} are not reflected in the
-                category rollups above.{" "}
-                <Link href={`/${slug}/treasury?uncategorized=1`}>Clear them</Link>.
-              </p>
-            ) : (
-              <p className="muted">All entries are categorized.</p>
-            )}
-
-            <p>
-              <a
-                href={`/api/pdf/board-snapshot?season=${season.id}`}
-                className="secondary"
-              >
-                Download board snapshot (PDF)
-              </a>
-            </p>
-          </div>
+          <BoardSnapshot
+            slug={slug}
+            seasonId={season.id}
+            asOf={asOf}
+            reconciledThroughLabel={reconciledThroughLabel}
+            cats={cats}
+            catActual={catActual}
+            totals={totals}
+            actualsUnavailable={actualsUnavailable}
+            structureUnavailable={structureUnavailable}
+          />
         </>
       )}
     </section>
