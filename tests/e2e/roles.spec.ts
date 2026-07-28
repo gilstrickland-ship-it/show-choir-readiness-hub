@@ -57,3 +57,55 @@ test.describe("board member role gating", () => {
     ).toHaveCount(0);
   });
 });
+
+// The phone's tab bar backfills by role (spec 005 T141). It used to name four
+// slots outright — Today/Season/People/Wardrobe — and simply drop any the seat
+// couldn't see, so a treasurer got "Today · Season · More" and had to open the
+// sheet to reach Money, the one surface her seat exists for. These journeys
+// assert the bar per seat, at a phone width, because that is where it renders.
+
+test.describe("mobile tab bar backfills by role", () => {
+  test.beforeAll(async () => {
+    await ensureMembershipActive(DEMO.treasurerMembershipId, USERS.treasurer.email);
+    await ensureMembershipActive(DEMO.boardMembershipId, USERS.board.email);
+  });
+
+  test("a treasurer gets Money as a tab, not a sheet entry", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await signIn(page, USERS.treasurer.email, USERS.treasurer.password);
+    await page.waitForURL("**/demo/dashboard");
+
+    const bar = page.getByRole("navigation", { name: "Mobile navigation" });
+    await expect(bar).toBeVisible();
+    // People and Wardrobe are not this seat's surfaces; the two slots they used
+    // to hold empty go to the two surfaces she does have.
+    await expect(bar.getByRole("link", { name: "Money" })).toBeVisible();
+    await expect(bar.getByRole("link", { name: "Comms" })).toBeVisible();
+    await expect(bar.getByRole("link", { name: "People" })).toHaveCount(0);
+    await expect(bar.getByRole("link", { name: "Wardrobe" })).toHaveCount(0);
+
+    // ...and it is a real tab: it navigates straight to the ledger.
+    await bar.getByRole("link", { name: "Money" }).click();
+    await page.waitForURL("**/demo/treasury");
+    await expect(
+      page.getByRole("heading", { name: "Money", exact: true }),
+    ).toBeVisible();
+  });
+
+  test("a director's bar is unchanged by the backfill", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await signIn(page, USERS.director.email, USERS.director.password);
+    await page.waitForURL("**/demo/dashboard");
+
+    const bar = page.getByRole("navigation", { name: "Mobile navigation" });
+    for (const label of ["Today", "Season", "People", "Wardrobe"]) {
+      await expect(bar.getByRole("link", { name: label })).toBeVisible();
+    }
+    // Money stays in the sheet for a director — she sees every surface, so the
+    // four slots are full and nothing is owed a promotion.
+    await expect(bar.getByRole("link", { name: "Money" })).toHaveCount(0);
+    await bar.getByRole("button", { name: "More" }).click();
+    const sheet = page.locator(".mobile-nav-sheet");
+    await expect(sheet.getByRole("menuitem", { name: "Money" })).toBeVisible();
+  });
+});

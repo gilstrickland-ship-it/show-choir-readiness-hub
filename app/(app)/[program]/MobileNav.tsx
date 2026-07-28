@@ -3,25 +3,24 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { splitMobileNav } from "@/lib/nav";
 
 // Mobile bottom tab bar ("Today Mobile" design ref, §9 of the redesign
 // handoff). Client component for the same reason as ShellNav: the active state
 // needs the current pathname. Receives the layout's already role/flag-filtered
 // nav items (with their new task-oriented labels) and regroups them into the
-// five-slot mobile IA — Today · Season · People · Wardrobe · More — so a role
-// that can't see a surface never gets its tab. Wardrobe is promoted over Money
-// because costume checkout / quick-change are phone-first hallway jobs; Money
-// (treasury) is a desk task and drops into the More sheet. Everything not
-// promoted to a tab lives in that sheet, plus a Settings entry when the role
-// allows it (it left the desktop nav for the header). The sheet is the only
-// client state here and closes itself on navigation.
-
-const TAB_SLOTS: readonly string[] = [
-  "dashboard",
-  "season",
-  "roster",
-  "costumes",
-];
+// five-slot mobile IA — four tabs plus More — so a role that can't see a surface
+// never gets its tab.
+//
+// WHICH four is `splitMobileNav` in lib/nav: the first four items this viewer can
+// see, in the phone's order preference. The four slots used to be hardcoded and
+// unbackfilled, so a seat that couldn't see one of them just lost a tab —
+// a treasurer got "Today · Season · More" with Money, her whole job, inside the
+// sheet. A director's bar is unchanged (she sees everything, and the first four
+// in that order are the four that were named here). Everything not promoted
+// lives in the sheet, plus a Settings entry when the role allows it (it left the
+// desktop nav for the header). The sheet is the only client state here and
+// closes itself on navigation.
 
 export function MobileNav({
   slug,
@@ -53,12 +52,10 @@ export function MobileNav({
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
-  const tabs = TAB_SLOTS.flatMap((slot) => {
-    const item = items.find((i) => i.slot === slot);
-    return item ? [item] : [];
-  });
-  // Everything not promoted to a tab, plus Settings when the role allows it.
-  const more = items.filter((i) => !TAB_SLOTS.includes(i.slot));
+  const { tabs, more } = splitMobileNav(items);
+  // Settings joins the sheet when the role allows it (it left the desktop nav
+  // for the header cluster) — it is never a tab, so it plays no part in the
+  // ranking above.
   if (showSettings) more.push({ slot: "settings", label: "Settings" });
   const moreActive = more.some((i) => isActive(i.slot));
 

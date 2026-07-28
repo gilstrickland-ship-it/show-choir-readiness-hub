@@ -23,6 +23,7 @@ export const DEMO = {
   slug: "demo",
   seasonId: "d0000000-0000-4000-8000-000000000002",
   directorMembershipId: "d0000000-0000-4000-8000-000000006001",
+  treasurerMembershipId: "d0000000-0000-4000-8000-000000006002",
   costumeMembershipId: "d0000000-0000-4000-8000-000000006003",
   boardMembershipId: "d0000000-0000-4000-8000-000000006004",
   varsityEnsembleId: "d0000000-0000-4000-8000-000000000010", // Varsity Mixed
