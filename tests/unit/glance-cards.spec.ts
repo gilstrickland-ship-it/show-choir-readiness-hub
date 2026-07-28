@@ -11,6 +11,9 @@
 
 import { describe, test, expect } from "vitest";
 import { buildGlanceCards } from "@/app/(app)/[program]/competitions/[competitionId]/GlanceCards";
+import { loadCompReadiness } from "@/lib/readiness";
+import { flagRegistry, type FlagKey } from "@/lib/flags";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompReadiness, ReadinessCheck } from "@/lib/readiness";
 
 const BASE = "/demo";
@@ -140,5 +143,105 @@ describe("cards gated on a readiness check", () => {
 
   test("no shift check, no shift card", () => {
     expect(cards(readiness()).some((c) => c.key === "shifts")).toBe(false);
+  });
+});
+
+// ============================================================================
+// Where the fold actually happened: loadCompReadiness
+// ----------------------------------------------------------------------------
+// Everything above pins the SENTENCE. The defect was upstream of it — `expected`
+// was counted as expected+partial, so by the time a card was built the partial
+// number was already gone and no presentation-layer test could have noticed.
+// Reverting the count and leaving the card code alone would keep every test
+// above green. These drive the loader against a client that answers each count
+// query with the status it filtered on, and assert the three numbers are three
+// independent reads.
+// ============================================================================
+
+const allFlags = (over: Partial<Record<FlagKey, boolean>> = {}): Record<FlagKey, boolean> => ({
+  ...(Object.fromEntries(
+    (Object.keys(flagRegistry) as FlagKey[]).map((k) => [k, true]),
+  ) as Record<FlagKey, boolean>),
+  ...over,
+});
+
+// A chainable stub that REMEMBERS its filters, so an attendance count answers
+// from the status it was actually asked about. `attendanceFilters` records every
+// status queried, which is how "three counts, not two" is asserted.
+function readinessClient(
+  byStatus: Record<string, number>,
+  attendanceFilters: string[] = [],
+): SupabaseClient {
+  const build = (table: string) => {
+    const filters: Record<string, unknown> = {};
+    const builder: Record<string, unknown> = {};
+    const chain = () => builder;
+    builder.select = chain;
+    builder.eq = (col: string, val: unknown) => {
+      filters[col] = val;
+      return builder;
+    };
+    for (const m of ["is", "not", "in", "order", "limit"]) builder[m] = chain;
+    builder.maybeSingle = () => Promise.resolve({ data: null });
+    builder.then = (resolve: (v: { count: number; data: null }) => unknown) => {
+      let count = 0;
+      if (table === "attendance") {
+        const status = String(filters.status ?? "");
+        attendanceFilters.push(status);
+        count = byStatus[status] ?? 0;
+      }
+      return Promise.resolve({ count, data: null }).then(resolve);
+    };
+    return builder;
+  };
+  return { from: (table: string) => build(table) } as unknown as SupabaseClient;
+}
+
+const loadFor = (byStatus: Record<string, number>, seen: string[] = []) =>
+  loadCompReadiness(readinessClient(byStatus, seen), {
+    programId: "p1",
+    comp: { id: "c1", name: "Regionals", date: "2026-03-07", host_school: null },
+    // Shifts off so the shift branch does not need its own stub rows; the
+    // attendance derivation is what is under test.
+    flags: allFlags({ shifts: false, packet_parse: false }),
+    role: "director",
+    base: BASE,
+  });
+
+describe("loadCompReadiness — the attendance counts themselves", () => {
+  test("expected is the expected count, NOT expected + partial", async () => {
+    const r = await loadFor({ expected: 41, partial: 2, absent: 1 });
+    expect(r.expected).toBe(41);
+    expect(r.partial).toBe(2);
+    expect(r.absent).toBe(1);
+  });
+
+  test("attending is the derived expected + partial, and stays derived", async () => {
+    const r = await loadFor({ expected: 41, partial: 2, absent: 1 });
+    expect(r.attending).toBe(43);
+    // The meals rule reads `attending`; the attendance line reads the three
+    // parts. Both from one load, so they cannot drift apart.
+    expect(r.expected + r.partial).toBe(r.attending);
+  });
+
+  test("all three statuses are counted, each by its own query", async () => {
+    const seen: string[] = [];
+    await loadFor({ expected: 41, partial: 2, absent: 1 }, seen);
+    expect([...seen].sort()).toEqual(["absent", "expected", "partial"]);
+  });
+
+  test("the checklist line reports the three counts it loaded", async () => {
+    const r = await loadFor({ expected: 41, partial: 2, absent: 1 });
+    const line = r.checks.find((c) => c.key === "attendance")?.label;
+    expect(line).toBe("Attendance · 41 expected, 2 partial, 1 absent");
+    expect(line).not.toContain("43 expected");
+  });
+
+  test("a comp with no partial students carries no partial clause", async () => {
+    const r = await loadFor({ expected: 12, partial: 0, absent: 0 });
+    expect(r.partial).toBe(0);
+    expect(r.checks.find((c) => c.key === "attendance")?.label).toBe(
+      "Attendance · 12 expected, 0 absent",
+    );
   });
 });
