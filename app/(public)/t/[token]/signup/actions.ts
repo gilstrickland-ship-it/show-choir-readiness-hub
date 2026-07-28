@@ -7,6 +7,7 @@ import {
   resolveToken,
   logTokenEvent,
   assertGuardianCapability,
+  parentSurfaceAvailable,
 } from "@/lib/tokens";
 import { checkTokenSurfaceLimit } from "@/lib/rate-limit";
 import { hashToken } from "@/lib/tokens";
@@ -17,8 +18,10 @@ import { notifyShiftSignup } from "@/lib/comms-send";
 //   1. rate-limits (per-IP + per-token, §10);
 //   2. resolves the token and requires kind='guardian';
 //   3. asserts the capability (shift:claim / shift:cancel);
-//   4. scopes the shift to the token's program;
-//   5. logs a token_event.
+//   4. re-checks the program's feature flags (Constitution VIII — a page that
+//      hides a form is not a gate; a posted form must be refused on its own);
+//   5. scopes the shift to the token's program;
+//   6. logs a token_event.
 // Capacity: a claim is BLOCKED when confirmed signups already meet needed_count
 // (friendly message) — no over-filling shifts through the parent surface.
 
@@ -37,6 +40,14 @@ function signupPath(token: string, status: string): string {
   return `/t/${token}/signup?s=${status}`;
 }
 
+// Where a flag-refused write lands: the signup page itself, with no status code
+// — that page is now the calm "not available" screen, which says the true thing
+// in the words the whole surface uses. A `?s=` message would be a second
+// explanation nobody ever sees.
+function unavailablePath(token: string): string {
+  return `/t/${token}/signup`;
+}
+
 export async function claimShift(formData: FormData): Promise<void> {
   const token = str(formData, "token");
   const shiftId = str(formData, "shiftId");
@@ -49,6 +60,9 @@ export async function claimShift(formData: FormData): Promise<void> {
   const resolved = await resolveToken(token);
   if (!resolved || resolved.kind !== "guardian") redirect(signupPath(token, "invalid"));
   assertGuardianCapability("shift:claim");
+  if (!parentSurfaceAvailable(resolved.program, "signup")) {
+    redirect(unavailablePath(token));
+  }
 
   const supabase = createAdminClient();
 
@@ -140,6 +154,14 @@ export async function cancelShift(formData: FormData): Promise<void> {
   const resolved = await resolveToken(token);
   if (!resolved || resolved.kind !== "guardian") redirect(signupPath(token, "invalid"));
   assertGuardianCapability("shift:cancel");
+  // Cancelling is gated too, symmetrically. A half-working surface is the thing
+  // the finding is about: with the feature off nobody is staffing, watching or
+  // counting these shifts, so leaving one write open would keep a dead feature
+  // half-alive. (Unsubscribe is the one write that stays open regardless, and
+  // only because CAN-SPAM says so — see PARENT_SURFACE_FLAGS.)
+  if (!parentSurfaceAvailable(resolved.program, "signup")) {
+    redirect(unavailablePath(token));
+  }
 
   const supabase = createAdminClient();
 

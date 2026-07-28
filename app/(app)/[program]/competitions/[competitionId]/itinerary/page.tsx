@@ -176,11 +176,16 @@ export default async function ItineraryPage({
   // Broadcast share link (FR-002 / §8a). Active links are metadata-only (the raw
   // URL is knowable only at mint time), so the copyable URL is shown once when it
   // rides in via ?share=; otherwise we show that a link is active + a rotate button.
-  const activeItinShareLinks = isPublished
-    ? (await activeShareLinks(supabase, program.id)).links.filter(
-        (l) => l.resource === "itinerary" && l.resource_id === competitionId,
-      )
-    : [];
+  //
+  // Read on a DRAFT too, not just a published one: unpublishing does not revoke
+  // the link, so a draft itinerary can still have a live public address — and
+  // the publish confirm box has to say whether it is about to create one or
+  // simply keep the one that is already out there.
+  const activeItinShareLinks = (
+    await activeShareLinks(supabase, program.id)
+  ).links.filter(
+    (l) => l.resource === "itinerary" && l.resource_id === competitionId,
+  );
   const shareParam = one("share");
   const freshShareUrl = shareParam ? shareLinkUrl(shareParam) : null;
 
@@ -399,6 +404,7 @@ export default async function ItineraryPage({
               status={itinerary.status}
               confirmPublish={confirmPublish}
               canAnnounce={canAnnounce}
+              hasLiveShareLink={activeItinShareLinks.length > 0}
               selfHref={selfHref}
             />
           )}

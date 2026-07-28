@@ -1,6 +1,16 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { resolveToken, logTokenEvent } from "@/lib/tokens";
-import { getClientIp, rateLimitRawToken } from "@/lib/public-token";
+import {
+  resolveToken,
+  logTokenEvent,
+  seasonCalendarAvailable,
+  documentAllowsToken,
+} from "@/lib/tokens";
+import { flag } from "@/lib/flags";
+import {
+  getClientIp,
+  rateLimitRawToken,
+  UNAVAILABLE_MESSAGE,
+} from "@/lib/public-token";
 import { brand } from "@/lib/brand";
 import { buildIcs, type IcsItem } from "@/lib/ics";
 
@@ -12,6 +22,8 @@ import { buildIcs, type IcsItem } from "@/lib/ics";
 // packet/ics routes exactly: same rate-limit + audit guards, service-role client
 // (RLS does not apply to anonymous visitors), revocable like every share link.
 // SHARE TOKENS ONLY — a guardian (per-family) token never addresses a season.
+// Feature-flagged like the rest of the parent surface (Constitution VIII); this
+// is the one ANY-OF gate, and each section inside is filtered on its own flag.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,11 +48,30 @@ export async function GET(
   const resolved = await resolveToken(token);
   if (!resolved) return text("Not found", 404);
 
-  // 3. Eligibility: a season_calendar SHARE link only. Anything else 404s (a
-  //    guardian token, or a share link for a different resource, reveals nothing).
+  // 3. Eligibility: a season_calendar SHARE link only — the token kind from the
+  //    one table that decides it (DOCUMENT_TOKEN_KINDS), the resource here.
+  //    Anything else 404s (a guardian token, or a share link for a different
+  //    resource, reveals nothing).
+  if (!documentAllowsToken("season_feed", resolved.kind)) {
+    return text("Not found", 404);
+  }
   if (resolved.kind !== "share" || resolved.resource !== "season_calendar") {
     return text("Not found", 404);
   }
+
+  // 3b. Feature flags (Constitution VIII — rule in lib/tokens). This is the one
+  //     ANY-OF surface, mirroring the Season page that mints the link: it 404s
+  //     only when competitions, events AND travel are all off. Each SECTION
+  //     below is then filtered by its own flag, so a program with events turned
+  //     off never has an event appear in a calendar someone already subscribed
+  //     to — turning a feature off has to empty the feed too, not just the page.
+  if (!seasonCalendarAvailable(resolved.program)) {
+    return text(UNAVAILABLE_MESSAGE, 404);
+  }
+  const showCompetitions = flag(resolved.program, "competitions");
+  const showEvents = flag(resolved.program, "events");
+  const showTrips = flag(resolved.program, "travel");
+
   const programId = resolved.program.id;
   const seasonId = resolved.resource_id;
 
@@ -63,12 +94,14 @@ export async function GET(
   // Dated comps only. Timed from the published itinerary's FIRST timed item when
   // one exists (a real call time), else an all-day event on the comp date. Draft
   // itineraries contribute nothing beyond the comp's own date (invariant §9.3).
-  const { data: compRows } = await supabase
-    .from("competitions")
-    .select("id, name, date, host_school")
-    .eq("program_id", programId)
-    .eq("season_id", seasonId)
-    .not("date", "is", null);
+  const { data: compRows } = showCompetitions
+    ? await supabase
+        .from("competitions")
+        .select("id, name, date, host_school")
+        .eq("program_id", programId)
+        .eq("season_id", seasonId)
+        .not("date", "is", null)
+    : { data: null };
   const comps =
     (compRows as
       | { id: string; name: string; date: string | null; host_school: string | null }[]
@@ -142,12 +175,14 @@ export async function GET(
   }
 
   // ---- Events (timed) -----------------------------------------------------
-  const { data: eventRows } = await supabase
-    .from("events")
-    .select("id, title, starts_at, ends_at, location")
-    .eq("program_id", programId)
-    .eq("season_id", seasonId)
-    .not("starts_at", "is", null);
+  const { data: eventRows } = showEvents
+    ? await supabase
+        .from("events")
+        .select("id, title, starts_at, ends_at, location")
+        .eq("program_id", programId)
+        .eq("season_id", seasonId)
+        .not("starts_at", "is", null)
+    : { data: null };
   for (const e of (eventRows as
     | {
         id: string;
@@ -173,12 +208,14 @@ export async function GET(
   // auto-created for a day competition would land on the exact same date as the
   // comp. A MULTI-DAY trip (starts_on != ends_on) always emits — its span carries
   // real information (nationals runs Thu–Sun) the comp's single date does not.
-  const { data: tripRows } = await supabase
-    .from("trips")
-    .select("id, name, starts_on, ends_on, competition_id")
-    .eq("program_id", programId)
-    .eq("season_id", seasonId)
-    .not("starts_on", "is", null);
+  const { data: tripRows } = showTrips
+    ? await supabase
+        .from("trips")
+        .select("id, name, starts_on, ends_on, competition_id")
+        .eq("program_id", programId)
+        .eq("season_id", seasonId)
+        .not("starts_on", "is", null)
+    : { data: null };
   for (const t of (tripRows as
     | {
         id: string;

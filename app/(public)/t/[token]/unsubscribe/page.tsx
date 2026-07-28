@@ -8,6 +8,12 @@ import { unsubscribe } from "./actions";
 // confirms with one button, and shows a resubscribe note. Share links get the
 // standard "ask your director" treatment (they carry no email to stop). The
 // mailbox-provider one-click path is the separate POST route at ./one-click.
+//
+// DELIBERATELY UNGATED BY FEATURE FLAGS — the only parent surface that is, and
+// the reason is recorded in lib/tokens PARENT_SURFACE_FLAGS: CAN-SPAM and RFC
+// 8058 make "stop emailing me" unconditional. A program that turns `comms` off
+// after it has already sent mail must still honour the footer link in the mail
+// it sent, so this page and ./one-click check nothing but the token.
 
 export default async function UnsubscribePage({
   params,
@@ -33,7 +39,7 @@ export default async function UnsubscribePage({
           use the Unsubscribe link at the bottom of one of those emails, or ask
           your director.
         </p>
-        <TokenFooter token={token} kind="share" />
+        <TokenFooter token={token} resolved={resolved} />
       </section>
     );
   }
@@ -59,7 +65,7 @@ export default async function UnsubscribePage({
           contact your director and ask them to mark your address deliverable
           again.
         </p>
-        <TokenFooter token={token} kind="guardian" />
+        <TokenFooter token={token} resolved={resolved} />
       </section>
     );
   }
@@ -81,15 +87,15 @@ export default async function UnsubscribePage({
         address is unsubscribed.
       </p>
       <p className="muted">
-        Your personal links keep working — you can still view the itinerary, sign
-        up to volunteer, and report an absence. This only stops the program&apos;s
-        outgoing emails to you.
+        Your personal links keep working — everything your program shares with
+        families is still there. This only stops the program&apos;s outgoing
+        emails to you.
       </p>
       <form action={unsubscribe} className="stack" style={{ width: "100%" }}>
         <input type="hidden" name="token" value={token} />
         <button type="submit">Unsubscribe this address</button>
       </form>
-      <TokenFooter token={token} kind="guardian" />
+      <TokenFooter token={token} resolved={resolved} />
     </section>
   );
 }

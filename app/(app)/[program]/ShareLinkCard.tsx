@@ -82,29 +82,41 @@ const COPY: Record<MintableShareResource, ShareLinkCopy> = {
     rotateLabel: "Regenerate calendar link",
   },
 
+  // WHAT THIS LINK OPENS is the whole point of this copy. It opens the SCHEDULE
+  // — the times on this page, and an add-to-calendar file of the same times. It
+  // does not open the parent packet: that PDF lists students by name against bus
+  // and hotel-room assignments, and this link is made to be posted publicly, so
+  // the /t/<token>/packet route refuses a share token outright (lib/tokens
+  // SHARE_CAPABILITIES). Every state below says the same thing, because a
+  // director deciding where to paste a URL is deciding what they publish.
   itinerary: {
     title: "Broadcast link",
     fresh: (_subject, urls) => (
       <>
         <p className="muted">
-          A read-only link to this itinerary — copy it now (for privacy the URL
-          is shown only this once):
+          A read-only link to this schedule — the times on this page and an
+          add-to-calendar file of them. It does <strong>not</strong> open the
+          parent packet, so no bus, room or volunteer names travel with it: safe
+          to post publicly. Copy it now (for privacy the URL is shown only this
+          once):
         </p>
         <ShareUrl url={urls[0]} />
       </>
     ),
     live: (_subject, settingsHref) => (
       <p className="muted">
-        A broadcast link is active for this itinerary. For your privacy the URL
-        is only shown once at creation — regenerate to get a fresh copyable link
-        (the old one stops working). Active links are listed in{" "}
-        <Link href={settingsHref}>Settings → Share links</Link>.
+        A broadcast link is active for this itinerary. It opens the times only —
+        never the parent packet with its bus, room and volunteer names. For your
+        privacy the URL is only shown once at creation — regenerate to get a
+        fresh copyable link (the old one stops working). Active links are listed
+        in <Link href={settingsHref}>Settings → Share links</Link>.
       </p>
     ),
     none: (
       <p className="muted">
-        No broadcast link yet. Generate a read-only link to share this itinerary
-        with anyone.
+        No broadcast link yet. Generate a read-only link to share these times
+        with anyone — a booster post, a class group. It opens the schedule only,
+        never the parent packet.
       </p>
     ),
     makeLabel: "Create broadcast link",

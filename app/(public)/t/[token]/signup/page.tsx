@@ -3,12 +3,18 @@ import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { oneParam, type SearchParams } from "@/lib/flash";
-import { TokenFooter } from "../parts";
+import { parentSurfaceAvailable } from "@/lib/tokens";
+import { TokenFooter, TokenUnavailable } from "../parts";
 import { claimShift, cancelShift } from "./actions";
 
 // Tokenized volunteer signup (§8a). Guardian token: claim / cancel own signups,
 // capacity-aware. Share link (or any browse view): read-only list of open shifts
 // with an "ask for your family link" note — no claim controls.
+//
+// Flag-gated on comms AND shifts, which is exactly what the staff half
+// (/comms/shifts) requires (Constitution VIII; the rule is in lib/tokens). With
+// either off this page used to keep taking signups that no staff surface could
+// show or manage — the flag was "off" and families were still volunteering.
 
 // `?s=` codes the actions redirect back with. The code rides in the URL, so the
 // lookup below goes through Object.hasOwn: `?s=constructor` must resolve to
@@ -45,6 +51,9 @@ export default async function PublicSignupPage({
   const s = oneParam(await searchParams, "s");
   const resolved = await getResolvedToken(token);
   if (!resolved) notFound();
+  if (!parentSurfaceAvailable(resolved.program, "signup")) {
+    return <TokenUnavailable token={token} resolved={resolved} />;
+  }
 
   const { program } = resolved;
   const tz = program.timezone;
@@ -161,7 +170,7 @@ export default async function PublicSignupPage({
         );
       })}
 
-      <TokenFooter token={token} kind={resolved.kind} />
+      <TokenFooter token={token} resolved={resolved} />
     </section>
   );
 }

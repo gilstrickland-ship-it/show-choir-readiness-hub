@@ -3,13 +3,19 @@ import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatDateInTz, zonedDateKey } from "@/lib/datetime";
 import { oneParam, type SearchParams } from "@/lib/flash";
-import { TokenFooter } from "../parts";
+import { parentSurfaceAvailable } from "@/lib/tokens";
+import { TokenFooter, TokenUnavailable } from "../parts";
 import { submitAbsence } from "./actions";
 
 // Tokenized absence report (§8a) — guardian tokens ONLY. Pick own student +
 // upcoming competition + optional note; submits a PENDING request to the staff
 // review queue. Confirmation screen on submit. No-health label per Constitution
 // III.
+//
+// Flag-gated on `competitions`, which is what the staff review queue
+// (/competitions/absences) requires (Constitution VIII; rule in lib/tokens): a
+// request submitted into a queue nobody can open is a parent believing they
+// told the school their child would be away.
 
 const NO_HEALTH_LABEL = "Do not enter health or medical information.";
 
@@ -55,6 +61,9 @@ export default async function PublicAbsencePage({
   const s = oneParam(await searchParams, "s");
   const resolved = await getResolvedToken(token);
   if (!resolved) notFound();
+  if (!parentSurfaceAvailable(resolved.program, "absence")) {
+    return <TokenUnavailable token={token} resolved={resolved} />;
+  }
 
   // Guardian tokens only — share links have no absence capability.
   if (resolved.kind !== "guardian") {
@@ -65,7 +74,7 @@ export default async function PublicAbsencePage({
           Absence reports need your family&apos;s personal link. Ask your director
           for it.
         </p>
-        <TokenFooter token={token} kind="share" />
+        <TokenFooter token={token} resolved={resolved} />
       </section>
     );
   }
@@ -245,7 +254,7 @@ export default async function PublicAbsencePage({
         </form>
       )}
 
-      <TokenFooter token={token} kind="guardian" />
+      <TokenFooter token={token} resolved={resolved} />
     </section>
   );
 }

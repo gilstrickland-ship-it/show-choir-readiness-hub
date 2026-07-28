@@ -61,11 +61,18 @@ export function ShareLinksSection({
       </div>
       <Flash flash={flash} section="share" />
       <p className="muted">
-        Read-only links you have handed out — an itinerary, a season&apos;s open
-        shifts, a calendar feed. For privacy a link&apos;s URL is shown only once,
-        when it is made, so it can&apos;t be listed here; make a new one from the
-        itinerary, shifts or season page to get a copyable URL again. Revoking a
-        link here makes its URL stop working immediately.
+        Read-only links you have handed out — a competition&apos;s times, a
+        season&apos;s open shifts, a calendar feed. Anyone with one can open it
+        with no login. Each opens only the thing it is named after: an itinerary
+        link shows the schedule and nothing else — never the parent packet, which
+        lists students against bus and room assignments and is only ever reachable
+        from a family&apos;s own personal link.
+      </p>
+      <p className="muted">
+        For privacy a link&apos;s URL is shown only once, when it is made, so it
+        can&apos;t be listed here; make a new one from the itinerary, shifts or
+        season page to get a copyable URL again. Revoking a link here makes its
+        URL stop working immediately.
       </p>
 
       {unavailable ? (

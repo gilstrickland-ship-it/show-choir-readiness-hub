@@ -30,3 +30,13 @@ export async function getClientIp(): Promise<string | null> {
 export function rateLimitRawToken(ip: string | null, raw: string) {
   return checkTokenSurfaceLimit({ ip, tokenHash: hashToken(raw) });
 }
+
+// What a VALID family link says when it points at a feature this program does
+// not use (Constitution VIII; the per-route rule lives in lib/tokens
+// PARENT_SURFACE_FLAGS). ONE sentence, in one place, so the pages render it and
+// the file routes — the packet PDF, the .ics, the season feed, which have no
+// page to render — serve it as their plain-text 404 body. It names no feature,
+// so it says nothing about what this or any other program has switched on.
+export const UNAVAILABLE_TITLE = "Not available";
+export const UNAVAILABLE_MESSAGE =
+  "This isn't something your program uses, so there's nothing to show here.";
