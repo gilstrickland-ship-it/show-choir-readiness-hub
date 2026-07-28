@@ -43,10 +43,10 @@
 
 ## Phase 5b — Wave W: Wardrobe (costume manager) — runs after Wave 5
 
-- [ ] T152 Four tabs, not six (US13): tab strip → Inventory · Assignments · Alterations · Checkout; sets CRUD absorbed into Assignments (set picker + settings disclosure); quick-change becomes a printable view linked from Checkout and the comp hub; old URLs still resolve; dead `/costumes/alterations` stub deleted with `backTarget` default corrected (absorbs part of T143).
-- [ ] T153 Wardrobe adopts the idioms (US14): `+ Add` drawers for create; row-local `<details>` edit panels that EXPAND the row (never floating — `table.members` clips); inventory filter row → search + kind + "More filters"; section-local `Object.hasOwn` error maps; searchParam guards; every costumes action resolves posted piece/set/student/competition/assignment ids in-program (costume_assignments carries a cross-tenant unique index).
-- [ ] T154 Quick change teaches its model (US15): one-line explainer, human transition names ("Opener → Ballad"), print-friendly, per-ensemble titled grids (supersedes T143's explainer line).
-- [ ] T155 Wave-W verification: full gate + e2e + static visual pass (1280/375, both themes, contrast, no clipped panels).
+- [X] T152 Four tabs, not six (US13): tab strip → Inventory · Assignments · Alterations · Checkout; sets CRUD absorbed into Assignments (set picker + settings disclosure); quick-change becomes a printable view linked from Checkout and the comp hub; old URLs still resolve; dead `/costumes/alterations` stub deleted with `backTarget` default corrected (absorbs part of T143).
+- [X] T153 Wardrobe adopts the idioms (US14): `+ Add` drawers for create; row-local `<details>` edit panels that EXPAND the row (never floating — `table.members` clips); inventory filter row → search + kind + "More filters"; section-local `Object.hasOwn` error maps; searchParam guards; every costumes action resolves posted piece/set/student/competition/assignment ids in-program (costume_assignments carries a cross-tenant unique index).
+- [X] T154 Quick change teaches its model (US15): one-line explainer, human transition names ("Opener → Ballad"), print-friendly, per-ensemble titled grids (supersedes T143's explainer line).
+- [X] T155 Wave-W verification: full gate + e2e + static visual pass (1280/375, both themes, contrast, no clipped panels).
 
 ## Phase 6 — Wave 6: People
 
