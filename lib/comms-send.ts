@@ -6,6 +6,7 @@ import {
   listUnsubscribeHeaders,
   type GuardianLinks,
 } from "@/lib/tokens";
+import type { FlaggableProgram } from "@/lib/flags";
 import { sendEmail, type SendResult } from "@/lib/email";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatDateTimeInTz, formatDateInTz } from "@/lib/datetime";
@@ -22,6 +23,28 @@ export interface SendCounts {
   sent: number;
   skipped: number;
   failed: number;
+}
+
+// The sending program's flag inputs, read once per send so the footer lists only
+// the family pages this program actually has (lib/tokens guardianLinks). Same
+// shape and same fallback as every other flag re-check in the app: a row we
+// cannot read is treated as the baseline tier with no overrides, so a transient
+// read failure degrades to the default surface rather than to a footer that is
+// unsubscribe alone. It cannot open anything a flag closes — the /t routes
+// re-evaluate the real program on every request, so a link that should not be
+// there still refuses.
+async function programFlags(
+  supabase: SupabaseClient,
+  programId: string,
+): Promise<FlaggableProgram> {
+  const { data } = await supabase
+    .from("programs")
+    .select("tier, feature_overrides")
+    .eq("id", programId)
+    .maybeSingle();
+  return (
+    (data as FlaggableProgram | null) ?? { tier: "prep", feature_overrides: null }
+  );
 }
 
 // One recipient loop, shared by both cores: mint a fresh per-email token (footer
@@ -43,6 +66,10 @@ async function sendToRecipients(
     ensembleId: args.ensembleId,
   });
 
+  // One read for the whole fan-out: every recipient is in the same program, so
+  // every footer lists the same links.
+  const program = await programFlags(supabase, args.programId);
+
   let sent = 0;
   let skipped = 0;
   let failed = 0;
@@ -53,7 +80,7 @@ async function sendToRecipients(
       guardianId: r.guardianId,
     });
     const raw = "raw" in minted ? minted.raw : null;
-    const links = raw ? guardianLinks(raw) : null;
+    const links = raw ? guardianLinks(raw, program) : null;
 
     let status: string;
     let resendId: string | null = null;
@@ -88,27 +115,50 @@ async function sendToRecipients(
 }
 
 // ---- Guardian family-links email (§8a, F13) --------------------------------
-// A links-only email: the three canonical parent links and nothing else. No
+// A links-only email: the family's canonical parent links and nothing else. No
 // sensitive info (Constitution III), no account (Constitution II) — just the
 // family's live entry points, so "Generate/Resend links" can actually REACH the
 // family instead of only showing URLs to staff.
 
 // Branded HTML for the family-links email. Deliberately tiny: a one-line intro
-// plus the three footer links assembled by announcementHtml (one link style
-// across every parent email).
+// plus the footer links assembled by announcementHtml (one link style across
+// every parent email).
+//
+// The intro names what the footer ACTUALLY carries. It used to promise "view the
+// itinerary, sign up to volunteer, and report an absence" to every family, which
+// is wrong for any program that has one of those turned off — and the parent has
+// no way to know it was never on offer.
 export function guardianLinksEmailHtml(args: {
   programName: string;
   links: GuardianLinks;
 }): string {
+  const actions = args.links.links.map((l) => l.action);
+  // A program can have every family page off. Then there is genuinely nothing to
+  // link to (the footer is Unsubscribe alone), and "here are your links" would be
+  // a promise the email does not keep.
   const intro =
-    `Here are your personal links for ${args.programName}. ` +
-    "Use them to view the itinerary, sign up to volunteer, and report an absence. " +
-    "Keep this email — the newest links are always the ones that work.";
+    actions.length === 0
+      ? `${args.programName} doesn't have any family pages turned on right now, ` +
+        "so there's nothing for you to open yet. If that changes, your personal " +
+        "links will be in the next email."
+      : `Here are your personal links for ${args.programName}. ` +
+        `Use them to ${listSentence(actions)}. ` +
+        "Keep this email — the newest links are always the ones that work.";
   return announcementHtml({ bodyMd: intro, links: args.links });
 }
 
+// "a", "a and b", "a, b, and c" — plain written English, because a parent reads
+// this sentence. Intl.ListFormat rather than a hand-rolled join so the commas and
+// the "and" land where a reader expects them.
+function listSentence(parts: string[]): string {
+  return new Intl.ListFormat("en", {
+    style: "long",
+    type: "conjunction",
+  }).format(parts);
+}
+
 // Mint a FRESH per-email token (append-only — earlier links keep working) and
-// send the three family links to one guardian. Returns the send status AND the
+// send this program's family links to one guardian. Returns the send status AND the
 // minted raw token so a caller can surface the copyable links when email is
 // unconfigured (skipped_no_key). `raw` is null only when the mint itself failed.
 // Never throws.
@@ -128,7 +178,7 @@ export async function sendGuardianLinksEmail(
   if (!("raw" in minted)) {
     return { send: { status: "failed", error: minted.error }, raw: null };
   }
-  const links = guardianLinks(minted.raw);
+  const links = guardianLinks(minted.raw, await programFlags(supabase, args.programId));
   const send = await sendEmail({
     to: args.email,
     subject: `Your ${args.programName} family links`,
@@ -217,8 +267,8 @@ export async function sendDigestCore(
 // ---- Per-recipient transactional notifications (§8a, C1) -------------------
 // Absence outcomes, shift-signup confirmations, and day-before shift reminders
 // are plain transactional emails to ONE guardian (no AI, Constitution IV). They
-// reuse the announcement footer (three family links + Unsubscribe) and carry the
-// RFC 8058 one-click List-Unsubscribe headers, exactly like broadcast sends. All
+// reuse the announcement footer (this program's family links + Unsubscribe) and
+// carry the RFC 8058 one-click List-Unsubscribe headers, like broadcast sends. All
 // are BEST-EFFORT: they never throw and never block the staff action or claim
 // that triggered them.
 
@@ -240,7 +290,7 @@ export async function sendGuardianNotification(
     guardianId: args.guardianId,
   });
   if (!("raw" in minted)) return { status: "failed", error: minted.error };
-  const links = guardianLinks(minted.raw);
+  const links = guardianLinks(minted.raw, await programFlags(supabase, args.programId));
   return sendEmail({
     to: args.email,
     subject: args.subject,

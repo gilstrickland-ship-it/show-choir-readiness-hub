@@ -4,7 +4,9 @@
 // Pure-ish: computeRecipients is exercised against a tiny chainable Supabase mock
 // so we can prove (a) it filters to email_status='ok' at the query layer — the
 // mechanism that HONORS bounce/unsubscribe (T026) — and (b) it dedupes families
-// by lowercased email. bodyToHtml/announcementHtml are pure.
+// by lowercased email. bodyToHtml/announcementHtml/guardianLinksEmailHtml are
+// pure, and the last two are asserted against real guardianLinks output so the
+// footer under test is the one a program's flags actually produce.
 // ============================================================================
 
 import { describe, test, expect } from "vitest";
@@ -14,7 +16,19 @@ import {
   announcementHtml,
   sendStatusLabel,
 } from "@/lib/comms";
+import { guardianLinks } from "@/lib/tokens";
+import { guardianLinksEmailHtml } from "@/lib/comms-send";
+import type { FlaggableProgram } from "@/lib/flags";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+// A program with every flag the footer consults set explicitly, so a test says
+// what it means rather than leaning on a tier baseline.
+function allFlags(on: boolean): FlaggableProgram {
+  return {
+    tier: "program",
+    feature_overrides: { competitions: on, comms: on, shifts: on },
+  };
+}
 
 type Call = [string, ...unknown[]];
 
@@ -106,21 +120,84 @@ describe("bodyToHtml + announcementHtml", () => {
     expect(html.match(/<p>/g)).toHaveLength(2);
   });
 
-  test("footer carries the three family links + unsubscribe, body has no injected raw HTML", () => {
+  test("footer carries the family links + unsubscribe, body has no injected raw HTML", () => {
     const html = announcementHtml({
       bodyMd: "Weekly note",
-      links: {
-        itinerary: "https://x/t/tok/itinerary",
-        signup: "https://x/t/tok/signup",
-        absence: "https://x/t/tok/absence",
-        unsubscribe: "https://x/t/tok/unsubscribe",
-      },
+      links: guardianLinks("tok", allFlags(true)),
     });
-    expect(html).toContain('href="https://x/t/tok/itinerary"');
-    expect(html).toContain('href="https://x/t/tok/signup"');
-    expect(html).toContain('href="https://x/t/tok/absence"');
-    expect(html).toContain('href="https://x/t/tok/unsubscribe"');
+    expect(html).toContain("/t/tok/itinerary");
+    expect(html).toContain("/t/tok/signup");
+    expect(html).toContain("/t/tok/absence");
+    expect(html).toContain("/t/tok/unsubscribe");
     expect(html).toContain("<p>Weekly note</p>");
+  });
+
+  // The footer is a rendering of what the program HAS. It used to print all
+  // three links unconditionally, so a program with shifts off mailed every
+  // family a "Volunteer signup" link to a page that could only refuse.
+  test("a link whose feature is off is not in the footer at all", () => {
+    const html = announcementHtml({
+      bodyMd: "Weekly note",
+      links: guardianLinks("tok", { tier: "program", feature_overrides: { shifts: false } }),
+    });
+    expect(html).toContain("/t/tok/itinerary");
+    expect(html).not.toContain("/t/tok/signup");
+    expect(html).not.toContain("Volunteer signup");
+    expect(html).toContain("/t/tok/absence");
+  });
+
+  test("with every feature off the footer is Unsubscribe alone, with no empty link row", () => {
+    const html = announcementHtml({
+      bodyMd: "Weekly note",
+      links: guardianLinks("tok", allFlags(false)),
+    });
+    expect(html).toContain("/t/tok/unsubscribe");
+    expect(html).toContain("Unsubscribe");
+    // No orphaned separator left behind by the dropped links.
+    expect(html).not.toContain("·");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The family-links email (lib/comms-send). Its intro used to promise every
+// family "view the itinerary, sign up to volunteer, and report an absence"
+// whatever the program had turned on — copy that named surfaces the footer below
+// it no longer carried.
+// ---------------------------------------------------------------------------
+describe("guardianLinksEmailHtml intro", () => {
+  test("names all three when the program has all three", () => {
+    const html = guardianLinksEmailHtml({
+      programName: "Northside Show Choir",
+      links: guardianLinks("tok", allFlags(true)),
+    });
+    expect(html).toContain(
+      "Use them to view the itinerary, sign up to volunteer, and report an absence.",
+    );
+  });
+
+  test("names only what is on, in plain English", () => {
+    const html = guardianLinksEmailHtml({
+      programName: "Northside Show Choir",
+      links: guardianLinks("tok", {
+        tier: "program",
+        feature_overrides: { shifts: false },
+      }),
+    });
+    expect(html).toContain(
+      "Use them to view the itinerary and report an absence.",
+    );
+    expect(html).not.toContain("sign up to volunteer");
+  });
+
+  test("promises no links at all when the program has no family pages on", () => {
+    const html = guardianLinksEmailHtml({
+      programName: "Northside Show Choir",
+      links: guardianLinks("tok", allFlags(false)),
+    });
+    expect(html).not.toContain("Here are your personal links");
+    expect(html).toContain("doesn't have any family pages turned on");
+    // Unsubscribe still reaches them (CAN-SPAM / RFC 8058).
+    expect(html).toContain("/t/tok/unsubscribe");
   });
 });
 

@@ -4,34 +4,49 @@ import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import {
-  COMPETITION_WRITE_ROLES,
-  ITINERARY_ITEM_KINDS,
-  ITINERARY_ITEM_KIND_LABELS,
-  type ItineraryItemKind,
-} from "@/lib/competitions";
-import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
+import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
+import { formatDateTimeInTz } from "@/lib/datetime";
 import {
   groupItemsByDay,
   changedItemsSincePublish,
 } from "@/lib/itinerary-days";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
-import { CompetitionTabs } from "../CompetitionTabs";
-import { IntroStrip, HelpDot } from "../../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
-import {
-  addItineraryItem,
-  updateItineraryItem,
-  deleteItineraryItem,
-  publishItinerary,
-  unpublishItinerary,
-  regenerateItineraryShareLink,
-} from "./actions";
+import { SubTabs } from "../../../SubTabs";
+import { ShareLinkCard } from "../../../ShareLinkCard";
+import { Flash } from "../../../Flash";
+import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
+import { competitionTabs } from "@/lib/subnav";
+import { PacketPipeline } from "../PacketPipeline";
+import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
+import { regenerateItineraryShareLink } from "./actions";
+import { AddItem } from "./AddItem";
+import { PublishGate } from "./PublishGate";
+import { ItineraryRow, type ItineraryItem } from "./ItineraryRow";
+import { ITIN_FLASH_MAPS, itemAnchor, type ItinSection } from "./shared";
 
-// Manual itinerary editor (§5, T014). One itinerary per competition, created as a
-// draft on first open. Items edit inline; publish gates parent visibility
-// (invariant §9.3). If a host packet document exists it renders alongside via a
-// signed Storage URL so the director can transcribe/verify against the source.
+// Manual itinerary editor (§5, T014). One itinerary per competition, created as
+// a draft on first open. Publishing gates parent visibility (invariant §9.3),
+// and a published itinerary stays editable in place (T055) — comp-day schedules
+// drift, so publish is a visibility switch, not a freeze. If a host packet
+// document exists it renders alongside via a signed Storage URL so the director
+// can transcribe against the source.
+//
+// Spec 005 T156 gave the page the idioms every other list already had. It was
+// 600 lines and six forms: every row WAS a form of seven permanently-open
+// inputs (so the schedule could only be read out of text boxes), a seventh
+// nine-input block sat permanently under the table, and four search params
+// printed four messages in a pile at the top. Now the rows state the facts and
+// their inputs live behind one row-local Edit panel (ItineraryRow), adding is a
+// drawer off the page head (AddItem), the publish gate is its own component
+// (PublishGate, unchanged in behaviour), and one `?ok=`/`?error=` contract puts
+// each message inside the control that produced it (./shared).
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It said "this
+// schedule is the one families see. Publish it once, then keep it current — any
+// change reaches their phones the moment you save" — which is now the status
+// line under the heading ("Only staff can see this" / "Families can see this"),
+// the changed-since-publish notice, and every branch of the PublishGate, which
+// says it before you publish, after you publish, and inside the confirm box.
 
 interface ItinRow {
   id: string;
@@ -40,47 +55,30 @@ interface ItinRow {
   source: "manual" | "parsed";
 }
 
-interface ItemRow {
-  id: string;
-  starts_at: string | null;
-  ends_at: string | null;
-  kind: string;
-  title: string | null;
-  location: string | null;
-  details: string | null;
-  sort_order: number;
-  updated_at: string | null;
-}
-
 export default async function ItineraryPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string }>;
-  searchParams: Promise<{
-    published?: string;
-    confirm?: string;
-    share?: string;
-    accepted?: string;
-    help?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?edit=a&edit=b), so every
+  // read goes through `one()` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, competitionId } = await params;
-  const { program, role, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role, flags } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
+  // Is /comms/announcements actually reachable for this program? Both flags gate
+  // it (spec 005 US9-4); the roles line up already — COMPETITION_WRITE_ROLES and
+  // ANNOUNCEMENT_WRITE_ROLES are both director/admin.
+  const canAnnounce = flags.comms && flags.announcements;
   const tz = program.timezone;
   const sp = await searchParams;
+  const one = (key: string): string | null => oneParam(sp, key);
+  const selfHref = `/${slug}/competitions/${competitionId}/itinerary`;
 
   const supabase = await createClient();
 
-  // First-use intro strip (spec 003 §3) — this schedule is the one families see.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
   const { data: compData } = await supabase
     .from("competitions")
     .select("id, name")
@@ -123,16 +121,16 @@ export default async function ItineraryPage({
         .order("sort_order", { ascending: true })
         .order("starts_at", { ascending: true, nullsFirst: false })
     : { data: null };
-  const items = (itemData as ItemRow[] | null) ?? [];
+  const items = (itemData as ItineraryItem[] | null) ?? [];
 
   // C2-2: when times have changed since publishing, families already see the
   // update (the parent page is live) — but nobody is notified automatically.
   // Calm nudge, not an alarm. Reachable now that published itineraries stay
   // editable in place (T055) — no unpublish/republish round-trip resets it.
-  const changedSincePublish =
-    itinerary?.status === "published"
-      ? changedItemsSincePublish(items, itinerary.published_at).count
-      : 0;
+  const isPublished = itinerary?.status === "published";
+  const changedSincePublish = isPublished
+    ? changedItemsSincePublish(items, itinerary!.published_at).count
+    : 0;
 
   // Uploaded host packet alongside the editor (§5 step 6 / T014).
   const { data: docData } = await supabase
@@ -154,19 +152,40 @@ export default async function ItineraryPage({
     signedUrl = signed?.signedUrl ?? null;
   }
 
-  const showPublishConfirm =
-    sp.confirm === "publish" && canWrite && itinerary?.status === "draft";
+  // Packet pipeline strip (US7-4) — the last two steps of it happen on this page.
+  // Only when a packet was actually uploaded and parsing is on: a hand-entered
+  // itinerary has no packet half, and the strip would be four grey steps of
+  // nothing. The itinerary state it needs is already loaded above.
+  const pipeline =
+    flags.packet_parse && storagePath
+      ? packetPipelineSteps(
+          await loadPacketPipeline(supabase, {
+            programId: program.id,
+            competitionId,
+            itinerary: {
+              published: isPublished,
+              itemCount: items.length,
+            },
+          }),
+          `/${slug}/competitions/${competitionId}`,
+        )
+      : null;
 
   // Broadcast share link (FR-002 / §8a). Active links are metadata-only (the raw
   // URL is knowable only at mint time), so the copyable URL is shown once when it
   // rides in via ?share=; otherwise we show that a link is active + a rotate button.
-  const isPublished = itinerary?.status === "published";
-  const activeItinShareLinks = isPublished
-    ? (await activeShareLinks(supabase, program.id)).filter(
-        (l) => l.resource === "itinerary" && l.resource_id === competitionId,
-      )
-    : [];
-  const freshShareUrl = sp.share ? shareLinkUrl(sp.share) : null;
+  //
+  // Read on a DRAFT too, not just a published one: unpublishing does not revoke
+  // the link, so a draft itinerary can still have a live public address — and
+  // the publish confirm box has to say whether it is about to create one or
+  // simply keep the one that is already out there.
+  const activeItinShareLinks = (
+    await activeShareLinks(supabase, program.id)
+  ).links.filter(
+    (l) => l.resource === "itinerary" && l.resource_id === competitionId,
+  );
+  const shareParam = one("share");
+  const freshShareUrl = shareParam ? shareLinkUrl(shareParam) : null;
 
   // Day grouping (Wave G / G2): headers only when items span >1 calendar day.
   const { multiDay, groups: dayGroups } = groupItemsByDay(
@@ -174,148 +193,105 @@ export default async function ItineraryPage({
     tz,
     (i) => i.starts_at,
   );
-  const bodyColSpan = canWrite ? 5 : 4;
+  const columns = canWrite ? 5 : 4;
 
-  // One item → one <tr> (inline edit form for writers, else read-only row).
-  // Writers edit in both draft AND published states (T055): schedules drift on
-  // competition day, and publish is the parent-visibility gate — not a freeze.
-  const renderItem = (item: ItemRow) =>
-    canWrite ? (
-      <tr key={item.id}>
-        <td colSpan={5}>
-          <form action={updateItineraryItem} className="row-inline">
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="competitionId" value={competitionId} />
-            <input type="hidden" name="itemId" value={item.id} />
-            <input type="hidden" name="tz" value={tz} />
-            <input
-              type="number"
-              name="sort_order"
-              className="num"
-              defaultValue={item.sort_order}
-              aria-label="Sort order"
-              style={{ width: "3.5rem" }}
-            />
-            <input
-              type="datetime-local"
-              name="starts_at"
-              defaultValue={toZonedInputValue(item.starts_at, tz)}
-              aria-label="Starts at"
-            />
-            <input
-              type="datetime-local"
-              name="ends_at"
-              defaultValue={toZonedInputValue(item.ends_at, tz)}
-              aria-label="Ends at"
-            />
-            <select name="kind" defaultValue={item.kind} aria-label="Kind">
-              {ITINERARY_ITEM_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {ITINERARY_ITEM_KIND_LABELS[k]}
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              name="title"
-              defaultValue={item.title ?? ""}
-              aria-label="Title"
-            />
-            <input
-              type="text"
-              name="location"
-              defaultValue={item.location ?? ""}
-              placeholder="Location"
-              aria-label="Location"
-            />
-            <input
-              type="text"
-              name="details"
-              defaultValue={item.details ?? ""}
-              placeholder="Details"
-              aria-label="Details"
-            />
-            <button type="submit" className="secondary">
-              Save
-            </button>
-          </form>
-        </td>
-        <td>
-          <form action={deleteItineraryItem}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="competitionId" value={competitionId} />
-            <input type="hidden" name="itemId" value={item.id} />
-            <button type="submit" className="linklike danger">
-              Delete
-            </button>
-          </form>
-        </td>
-      </tr>
-    ) : (
-      <tr key={item.id}>
-        <td>{item.sort_order}</td>
-        <td>{formatDateTimeInTz(item.starts_at, tz)}</td>
-        <td>
-          {ITINERARY_ITEM_KIND_LABELS[item.kind as ItineraryItemKind] ??
-            item.kind}
-        </td>
-        <td>
-          {item.title}
-          {item.location ? (
-            <span className="muted"> · {item.location}</span>
-          ) : null}
-        </td>
-        {canWrite && <td></td>}
-      </tr>
-    );
+  // ---- One `?ok=` and one `?error=`, each naming its own section ------------
+  // `?edit=<itemId>` says WHICH row a row-owned message belongs to; a row-owned
+  // code whose row is not on this page (an item someone else deleted) would
+  // render nowhere at all, so it falls back to the page banner instead.
+  const flash = readFlash<ItinSection>(sp, ITIN_FLASH_MAPS);
+  const openId = canWrite ? one("edit") : null;
+  const rowOnPage = !!openId && items.some((i) => i.id === openId);
+  const errSection = flash.error?.section ?? null;
+  const stranded = errSection === "row" && !rowOnPage;
+  const pageFlash: PageFlash<ItinSection> = stranded
+    ? { ok: flash.ok, error: { section: "page", message: flash.error!.message } }
+    : flash;
+  const rowError =
+    !stranded && errSection === "row" ? (flash.error?.message ?? null) : null;
+  const drawerError =
+    errSection === "drawer" ? (flash.error?.message ?? null) : null;
+  const confirmDeleteId = one("confirm") === "remove" ? openId : null;
+  const confirmPublish =
+    one("confirm") === "publish" && canWrite && itinerary?.status === "draft";
+
+  // This page's URL with one row's panel open, closed, or asking to remove.
+  // Built here, not in the row, so the row never has to know which params the
+  // page keeps — and every one of the three lands back on the row itself.
+  const rowHref = (
+    itemId: string,
+    mode: "open" | "close" | "confirm",
+  ): string => {
+    const anchor = `#${itemAnchor(itemId)}`;
+    if (mode === "close") return `${selfHref}${anchor}`;
+    const confirm = mode === "confirm" ? "&confirm=remove" : "";
+    return `${selfHref}?edit=${itemId}${confirm}${anchor}`;
+  };
+
+  const renderRow = (item: ItineraryItem) => (
+    <ItineraryRow
+      key={item.id}
+      programId={program.id}
+      slug={slug}
+      competitionId={competitionId}
+      tz={tz}
+      item={item}
+      canWrite={canWrite}
+      open={openId === item.id}
+      confirmDelete={confirmDeleteId === item.id}
+      error={openId === item.id ? rowError : null}
+      columns={columns}
+      rowHref={rowHref}
+    />
+  );
 
   return (
     <section className="stack">
-      <CompetitionTabs
-        slug={slug}
-        competitionId={competitionId}
-        active="itinerary"
-      />
-      <div className="page-title-row">
-        <h1>Itinerary</h1>
-        {showGuide && canWrite && (
-          <HelpDot
-            href={`/${slug}/competitions/${competitionId}/itinerary?help=1`}
-          />
+      <SubTabs strip={competitionTabs(slug, competitionId, "itinerary")} />
+
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">{comp.name}</p>
+          <h1 className="page-h1">Itinerary</h1>
+        </div>
+        {canWrite && itinerary && (
+          <div className="page-head-actions">
+            <AddItem
+              programId={program.id}
+              slug={slug}
+              competitionId={competitionId}
+              itineraryId={itinerary.id}
+              tz={tz}
+              nextOrder={items.length + 1}
+              open={!!drawerError}
+              error={drawerError}
+            />
+          </div>
         )}
       </div>
 
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="itinerary_editor"
-          programId={program.id}
-          selfPath={`/${slug}/competitions/${competitionId}/itinerary`}
-          guideState={guideState}
-          help={sp.help === "1"}
-          canWrite={canWrite}
-        />
-      )}
+      {pipeline && <PacketPipeline steps={pipeline} />}
 
-      {sp.published && (
-        <p className="alert-ok">Itinerary published — visible to parents.</p>
-      )}
-      {sp.accepted && (
-        <p className="alert-ok">
-          Parsed itinerary applied — review the items below, then publish.
-        </p>
-      )}
+      <Flash flash={pageFlash} section="page" />
 
       {changedSincePublish > 0 &&
         (canWrite ? (
           <p className="alert-info">
             You&apos;ve changed times since publishing. Families who open their
             link see the update immediately — but nobody is notified
-            automatically. Send a quick announcement if the change matters.{" "}
-            <Link href={`/${slug}/comms/announcements`}>
-              Go to announcements →
-            </Link>
+            automatically.
+            {/* Only offer the announcement route when this program actually has
+                it: both flags gate that page (spec 005 US9-4), and a nudge that
+                sends a director to a 404 is worse than no nudge. */}
+            {canAnnounce && (
+              <>
+                {" "}
+                Send a quick announcement if the change matters.{" "}
+                <Link href={`/${slug}/comms/announcements`}>
+                  Go to announcements →
+                </Link>
+              </>
+            )}
           </p>
         ) : (
           <p className="alert-info">
@@ -323,44 +299,6 @@ export default async function ItineraryPage({
             open their link see the update immediately.
           </p>
         ))}
-
-      {/* Broadcast share link (FR-002 / §8a) — read-only URL anyone can open. */}
-      {canWrite && isPublished && (
-        <div className="confirm-box stack" style={{ width: "100%" }}>
-          <h2>Broadcast link</h2>
-          {freshShareUrl ? (
-            <>
-              <p className="muted">
-                A read-only link to this itinerary — copy it now (for privacy
-                the URL is shown only this once):
-              </p>
-              <code style={{ wordBreak: "break-all" }}>{freshShareUrl}</code>
-            </>
-          ) : activeItinShareLinks.length > 0 ? (
-            <p className="muted">
-              A broadcast link is active for this itinerary. For your privacy
-              the URL is only shown once at creation — regenerate to get a fresh
-              copyable link (the old one stops working). Active links are listed
-              in <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
-            </p>
-          ) : (
-            <p className="muted">
-              No broadcast link yet. Generate a read-only link to share this
-              itinerary with anyone.
-            </p>
-          )}
-          <form action={regenerateItineraryShareLink}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="competitionId" value={competitionId} />
-            <button type="submit" className="secondary">
-              {activeItinShareLinks.length > 0
-                ? "Regenerate broadcast link"
-                : "Create broadcast link"}
-            </button>
-          </form>
-        </div>
-      )}
 
       {!itinerary && (
         <p className="muted">
@@ -370,14 +308,14 @@ export default async function ItineraryPage({
 
       {itinerary && (
         <p className="muted">
-          Status: <span className="badge">{itinerary.status}</span> ·{" "}
+          {isPublished ? "Families can see this" : "Only staff can see this"} ·{" "}
           {itinerary.source === "parsed"
-            ? "from host packet"
+            ? "from the host packet"
             : "entered by hand"}
-          {itinerary.status === "published" && itinerary.published_at
+          {isPublished && itinerary.published_at
             ? ` · published ${formatDateTimeInTz(itinerary.published_at, tz)}`
             : ""}
-          {itinerary.status === "published" && (
+          {isPublished && (
             <>
               {" · "}
               <a href={`/api/pdf/packet?competition=${competitionId}`}>
@@ -388,24 +326,32 @@ export default async function ItineraryPage({
         </p>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "1.5rem",
-          width: "100%",
-        }}
-      >
+      {/* Broadcast share link (FR-002 / §8a) — read-only URL anyone can open. */}
+      {canWrite && isPublished && (
+        <ShareLinkCard
+          resource="itinerary"
+          programId={program.id}
+          slug={slug}
+          subject=""
+          resourceIdField={{ name: "competitionId", value: competitionId }}
+          action={regenerateItineraryShareLink}
+          liveCount={activeItinShareLinks.length}
+          freshUrls={freshShareUrl ? [freshShareUrl] : null}
+          message={<Flash flash={pageFlash} section="share" />}
+        />
+      )}
+
+      <div className="itinerary-layout">
         {/* ---- Editor column ---- */}
-        <div className="stack" style={{ flex: "1 1 22rem", minWidth: "18rem" }}>
+        <div className="stack itinerary-editor">
           <table className="members">
             <thead>
               <tr>
                 <th>Order</th>
                 <th>Time</th>
                 <th>Kind</th>
-                <th>Title / location</th>
-                {canWrite && <th></th>}
+                <th>What happens</th>
+                {canWrite && <th className="table-action"></th>}
               </tr>
             </thead>
             <tbody>
@@ -413,173 +359,49 @@ export default async function ItineraryPage({
                 ? dayGroups.map((g) => (
                     <Fragment key={g.key || "untimed"}>
                       <tr className="itinerary-day-head">
-                        <td colSpan={bodyColSpan}>
+                        <td colSpan={columns}>
                           <strong>{g.label}</strong>
                         </td>
                       </tr>
-                      {g.items.map(renderItem)}
+                      {g.items.map(renderRow)}
                     </Fragment>
                   ))
-                : items.map(renderItem)}
+                : items.map(renderRow)}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={bodyColSpan} className="muted">
-                    No items yet.
+                  <td colSpan={columns} className="muted">
+                    Nothing on this schedule yet.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
 
-          {/* Live-edit caution (T055): when published, edits reach families at
-              once. Muted, not alarmist. The changed-since-publish nudge above
-              carries the announcements link, so this line doesn't repeat it. */}
-          {canWrite && isPublished && (
-            <p className="muted">
-              This itinerary is live to families — changes show on their page
-              immediately. Send an announcement if a time moves.
-            </p>
-          )}
-
           {canWrite && itinerary && (
-            <>
-              <h2>Add an item</h2>
-              <form action={addItineraryItem} className="stack">
-                <input type="hidden" name="programId" value={program.id} />
-                <input type="hidden" name="slug" value={slug} />
-                <input
-                  type="hidden"
-                  name="competitionId"
-                  value={competitionId}
-                />
-                <input type="hidden" name="itineraryId" value={itinerary.id} />
-                <input type="hidden" name="tz" value={tz} />
-                <div className="row-inline">
-                  <label>
-                    Order
-                    <input
-                      type="number"
-                      name="sort_order"
-                      className="num"
-                      defaultValue={items.length + 1}
-                    />
-                  </label>
-                  <label>
-                    Kind
-                    <select name="kind" defaultValue="other">
-                      {ITINERARY_ITEM_KINDS.map((k) => (
-                        <option key={k} value={k}>
-                          {ITINERARY_ITEM_KIND_LABELS[k]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Starts at
-                    <input type="datetime-local" name="starts_at" />
-                  </label>
-                  <label>
-                    Ends at
-                    <input type="datetime-local" name="ends_at" />
-                  </label>
-                </div>
-                <div className="row-inline">
-                  <label>
-                    Title
-                    <input type="text" name="title" required />
-                  </label>
-                  <label>
-                    Location
-                    <input type="text" name="location" />
-                  </label>
-                  <label>
-                    Details
-                    <input type="text" name="details" />
-                  </label>
-                </div>
-                <button type="submit">Add item</button>
-              </form>
-            </>
-          )}
-
-          {/* ---- Publish / unpublish ---- */}
-          {canWrite && itinerary && (
-            <div className="stack">
-              {itinerary.status === "draft" ? (
-                showPublishConfirm ? (
-                  <div className="stack confirm-box">
-                    <p>
-                      Publish this itinerary? Families see it immediately, and
-                      it stays live — any edit you save later reaches them right
-                      away. Publishing also unlocks packet generation.
-                    </p>
-                    <form action={publishItinerary} className="row-inline">
-                      <input
-                        type="hidden"
-                        name="programId"
-                        value={program.id}
-                      />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input
-                        type="hidden"
-                        name="competitionId"
-                        value={competitionId}
-                      />
-                      <input
-                        type="hidden"
-                        name="itineraryId"
-                        value={itinerary.id}
-                      />
-                      <button type="submit">Confirm publish</button>
-                      <Link
-                        href={`/${slug}/competitions/${competitionId}/itinerary`}
-                      >
-                        Cancel
-                      </Link>
-                    </form>
-                  </div>
-                ) : (
-                  <p>
-                    <Link
-                      href={`/${slug}/competitions/${competitionId}/itinerary?confirm=publish`}
-                    >
-                      Publish itinerary…
-                    </Link>
-                  </p>
-                )
-              ) : (
-                <form action={unpublishItinerary}>
-                  <input type="hidden" name="programId" value={program.id} />
-                  <input type="hidden" name="slug" value={slug} />
-                  <input
-                    type="hidden"
-                    name="competitionId"
-                    value={competitionId}
-                  />
-                  <input
-                    type="hidden"
-                    name="itineraryId"
-                    value={itinerary.id}
-                  />
-                  <button type="submit" className="secondary">
-                    Unpublish (back to draft)
-                  </button>
-                </form>
-              )}
-            </div>
+            <PublishGate
+              programId={program.id}
+              slug={slug}
+              competitionId={competitionId}
+              itineraryId={itinerary.id}
+              status={itinerary.status}
+              confirmPublish={confirmPublish}
+              canAnnounce={canAnnounce}
+              hasLiveShareLink={activeItinShareLinks.length > 0}
+              selfHref={selfHref}
+            />
           )}
         </div>
 
         {/* ---- Packet-alongside column ---- */}
         {signedUrl && (
-          <div style={{ flex: "1 1 22rem", minWidth: "18rem" }}>
+          <div className="itinerary-packet">
             <h2>Host packet</h2>
             <object
               data={signedUrl}
               type="application/pdf"
               width="100%"
               height="600"
-              style={{ border: "1px solid var(--border)", borderRadius: 8 }}
+              className="itinerary-packet-view"
             >
               <p className="muted">
                 <a href={signedUrl}>Open the uploaded packet</a>

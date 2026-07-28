@@ -7,6 +7,7 @@ import {
   resolveToken,
   logTokenEvent,
   assertGuardianCapability,
+  parentSurfaceAvailable,
   hashToken,
 } from "@/lib/tokens";
 import { checkTokenSurfaceLimit } from "@/lib/rate-limit";
@@ -15,6 +16,9 @@ import { checkTokenSurfaceLimit } from "@/lib/rate-limit";
 // the staff review queue (status='pending') — no parent-written state reaches
 // attendance without staff eyes (Constitution II). Note field carries a standing
 // no-health label (Constitution III); staff confirm/dismiss.
+//
+// The write re-checks the program's `competitions` flag itself (Constitution
+// VIII): the page hiding the form is courtesy, not a gate.
 
 function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
@@ -45,6 +49,11 @@ export async function submitAbsence(formData: FormData): Promise<void> {
   const resolved = await resolveToken(token);
   if (!resolved || resolved.kind !== "guardian") redirect(absencePath(token, "invalid"));
   assertGuardianCapability("absence:submit");
+  // Flag-refused writes land on the absence page with no status code — that page
+  // is the calm "not available" screen, which already says the true thing.
+  if (!parentSurfaceAvailable(resolved.program, "absence")) {
+    redirect(`/t/${token}/absence`);
+  }
 
   // The student must belong to THIS family (allow-listed to own student(s)).
   const ownStudent = resolved.students.some((st) => st.id === studentId);

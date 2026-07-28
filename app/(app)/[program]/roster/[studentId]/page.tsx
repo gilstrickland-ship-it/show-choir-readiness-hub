@@ -4,60 +4,78 @@ import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
+import { updateStudent, deactivateStudent, reactivateStudent } from "../actions";
 import {
-  updateStudent,
-  deactivateStudent,
-  reactivateStudent,
-  addGuardian,
-  updateGuardian,
-  removeGuardian,
-  resendGuardianLinks,
-  emailGuardianLinks,
-  resetGuardianEmailStatus,
-} from "../actions";
-import { guardianLinks } from "@/lib/tokens";
-import { STUDENT_STATUS_LABELS } from "@/lib/roster/students";
+  STUDENT_STATUS_LABELS,
+  type StudentStatus,
+} from "@/lib/roster/students";
+import { GuardianCard, type GuardianListRow } from "./GuardianCard";
+import { AddGuardian } from "./AddGuardian";
+import { FreshLinks } from "./FreshLinks";
 
-// Student detail — edit name/grad-year/status/sizes, manage guardians, and
-// soft-delete (deactivate) with the §9 invariant-1 cascade. board_member reads;
-// director/admin write. Free-text fields carry the standing no-health label
-// (Constitution III).
+// One person, read in four groups (spec 005 US10-4): Profile · Sizes ·
+// Guardians · Status. The page used to be nine forms in two undifferentiated
+// runs — the name, the grad year, the status and every size in one always-open
+// block, then a guardian table where each row carried five verbs. Same writes,
+// same cascade, same role gate; what changed is that each group now says what it
+// is, and each group saves on its own so a size fix cannot clobber a name.
+//
+// Directory-tier PII only (Constitution III): name, grad year, program-defined
+// sizes, guardian contact. No health, medical, emergency-contact, date-of-birth,
+// address or photo field exists here, and the free-text fields carry the
+// standing caution. board_member reads; director/admin write; costume_manager
+// and treasurer have no roster seat at all and never reach this page.
 
 interface StudentDetail {
   id: string;
   first_name: string;
   last_name: string;
   grad_year: number | null;
-  status: "active" | "inactive" | "graduated";
+  status: StudentStatus;
   sizes: Record<string, string> | null;
 }
 
-interface GuardianRow {
-  id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  relationship: string | null;
-  email_status: "ok" | "bounced" | "unsubscribed";
-}
-
 const NO_HEALTH_LABEL = "Do not enter health or medical information.";
+
+// Messages that belong to the page as a whole (a student-level save).
+const ERR: Record<string, string> = {
+  missing_name: "A student needs a first and last name.",
+  save: "Couldn't save. Try again.",
+  deactivate: "Couldn't deactivate the student. Try again.",
+};
+
+// Messages that belong to the Guardians group but not to one row.
+const GUARDIANS_ERR: Record<string, string> = {
+  guardian: "A guardian needs a name. Check the details and try again.",
+  guardian_gone:
+    "That guardian is no longer on this student. Reload the page and try again.",
+};
+
+// Messages that belong to ONE guardian row. They arrive with
+// `?edit=<guardianId>`, which is also what reopens that row's panel.
+const ROW_ERR: Record<string, string> = {
+  guardian: "A guardian needs a name. Check the details and try again.",
+  links: "Couldn't reset the links. Try again.",
+  email: "Couldn't send the email. Try again.",
+  email_missing:
+    "That guardian has no email on file. Add one in Edit, or reset this family's links and copy them into a message instead.",
+};
+
+// The code rides in the URL, so the lookup must be a lookup and not a walk up
+// Object.prototype — `?error=constructor` would otherwise hand React a function.
+function message(map: Record<string, string>, code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(map, code) ? map[code] : null;
+}
 
 export default async function StudentDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string; studentId: string }>;
-  searchParams: Promise<{
-    saved?: string;
-    error?: string;
-    deactivated?: string;
-    confirm?: string;
-    guardian?: string;
-    linked?: string;
-    token?: string;
-    emailed?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?edit=a&edit=b), so every
+  // read goes through `one()` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, studentId } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -67,9 +85,12 @@ export default async function StudentDetailPage({
     );
   }
   const canWrite = ROSTER_WRITE_ROLES.includes(role);
-  const { saved, error, deactivated, confirm, guardian, token, emailed } =
-    await searchParams;
-  const freshLinks = token ? guardianLinks(token) : null;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
 
   const supabase = await createClient();
   const { data: studentData } = await supabase
@@ -87,7 +108,7 @@ export default async function StudentDetailPage({
     .eq("program_id", program.id)
     .eq("student_id", studentId)
     .order("created_at", { ascending: true });
-  const guardians = (guardianData as GuardianRow[] | null) ?? [];
+  const guardians = (guardianData as GuardianListRow[] | null) ?? [];
 
   // Current-season ensemble membership (read-only here; managed under Ensembles).
   const ensembleNames: string[] = [];
@@ -105,24 +126,49 @@ export default async function StudentDetailPage({
 
   const sizeKeys = program.size_fields ?? [];
   const sizes = student.sizes ?? {};
-  const showConfirm = confirm === "deactivate" && canWrite && student.status === "active";
-  // Per-guardian confirm gates (querystring round-trip, mirroring the deactivate
-  // flow). Both destructive guardian actions — resetting the family's links and
-  // removing a guardian — first show an inline confirm box explaining the
-  // consequence, so a phone tap never fires them immediately (no hover title).
-  const resetConfirmGuardianId = confirm === "reset" ? guardian ?? null : null;
-  const removeConfirmGuardianId =
-    confirm === "remove_guardian" ? guardian ?? null : null;
+  const detail = `/${slug}/roster/${student.id}`;
+
+  const saved = one("saved");
+  const deactivated = one("deactivated");
+  const emailed = one("emailed");
+  const errorCode = one("error");
+  const confirmCode = one("confirm");
+  const token = one("token");
+
+  // A guardian row's panel reopens on `?edit=<guardianId>` carrying its own
+  // message; without an `edit` a guardian code belongs to the group.
+  const openGuardianId = canWrite ? one("edit") : null;
+  const rowError = openGuardianId ? message(ROW_ERR, errorCode) : null;
+  const guardiansError = openGuardianId ? null : message(GUARDIANS_ERR, errorCode);
+  const pageError = message(ERR, errorCode);
+  const rowConfirm =
+    confirmCode === "reset" || confirmCode === "remove" ? confirmCode : null;
+
+  // The add drawer reopens on a rejected create (no `edit`, a guardian code).
+  const addOpen = canWrite && !openGuardianId && errorCode === "guardian";
+  const showDeactivateConfirm =
+    confirmCode === "deactivate" && canWrite && student.status === "active";
+
+  const bouncing = guardians.filter((g) => g.email_status !== "ok").length;
+  const eyebrow = [
+    student.grad_year ? `Class of ${student.grad_year}` : "No grad year",
+    STUDENT_STATUS_LABELS[student.status],
+    `${guardians.length} guardian${guardians.length === 1 ? "" : "s"}`,
+  ].join(" · ");
 
   return (
-    <section className="stack">
+    <section className="stack people">
       <p>
         <Link href={`/${slug}/roster`}>← Roster</Link>
       </p>
-      <h1>
-        {student.first_name} {student.last_name}{" "}
-        {student.status === "inactive" && <span className="muted">(inactive)</span>}
-      </h1>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">{eyebrow}</p>
+          <h1 className="page-h1">
+            {student.first_name} {student.last_name}
+          </h1>
+        </div>
+      </div>
 
       {saved && <p className="alert-ok">Saved.</p>}
       {deactivated && (
@@ -131,25 +177,7 @@ export default async function StudentDetailPage({
           upcoming attendance marked absent.
         </p>
       )}
-      {error === "missing_name" && (
-        <p className="alert-error">A student needs a first and last name.</p>
-      )}
-      {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
-      {error === "guardian" && (
-        <p className="alert-error">A guardian needs a name. Check the details and retry.</p>
-      )}
-      {error === "links" && (
-        <p className="alert-error">Couldn&apos;t generate links. Try again.</p>
-      )}
-      {error === "email" && (
-        <p className="alert-error">Couldn&apos;t send the email. Try again.</p>
-      )}
-      {error === "email_missing" && (
-        <p className="alert-error">
-          That guardian has no email on file. Add an email, or reset this
-          family&apos;s links and copy them into a message instead.
-        </p>
-      )}
+      {pageError && <p className="alert-error">{pageError}</p>}
       {emailed === "ok" && (
         <p className="alert-ok">Family links emailed. Earlier links still work.</p>
       )}
@@ -158,9 +186,6 @@ export default async function StudentDetailPage({
           Email isn&apos;t configured, so nothing was sent. Copy the links below
           into a message instead.
         </p>
-      )}
-      {error === "deactivate" && (
-        <p className="alert-error">Couldn&apos;t deactivate the student. Try again.</p>
       )}
 
       {ensembleNames.length > 0 && (
@@ -174,21 +199,33 @@ export default async function StudentDetailPage({
         </p>
       )}
 
-      {/* ---- Details + sizes ---- */}
-      <h2>Details</h2>
+      {/* ---------------- Profile ---------------- */}
+      <h2 id="profile">Profile</h2>
       {canWrite ? (
-        <form action={updateStudent} className="stack">
+        <form action={updateStudent} className="stack person-form">
           <input type="hidden" name="programId" value={program.id} />
           <input type="hidden" name="slug" value={slug} />
           <input type="hidden" name="studentId" value={student.id} />
+          <input type="hidden" name="sparse" value="1" />
+          <input type="hidden" name="section" value="profile" />
           <div className="row-inline">
             <label>
               First name
-              <input type="text" name="first_name" defaultValue={student.first_name} required />
+              <input
+                type="text"
+                name="first_name"
+                defaultValue={student.first_name}
+                required
+              />
             </label>
             <label>
               Last name
-              <input type="text" name="last_name" defaultValue={student.last_name} required />
+              <input
+                type="text"
+                name="last_name"
+                defaultValue={student.last_name}
+                required
+              />
             </label>
             <label>
               Grad year
@@ -201,43 +238,50 @@ export default async function StudentDetailPage({
                 defaultValue={student.grad_year ?? ""}
               />
             </label>
-            <label>
-              Status
-              <select name="status" defaultValue={student.status}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="graduated">Graduated</option>
-              </select>
-            </label>
           </div>
-
-          <fieldset className="stack">
-            <legend>Sizes</legend>
-            <p className="muted">{NO_HEALTH_LABEL}</p>
-            {sizeKeys.length === 0 && (
-              <p className="muted">
-                No size fields configured. Set them under{" "}
-                <Link href={`/${slug}/roster/settings`}>Size fields</Link>.
-              </p>
-            )}
-            <div className="row-inline">
-              {sizeKeys.map((key) => (
-                <label key={key}>
-                  {key}
-                  <input type="text" name={`size_${key}`} defaultValue={sizes[key] ?? ""} />
-                </label>
-              ))}
-            </div>
-          </fieldset>
-
-          <button type="submit">Save changes</button>
+          <button type="submit" className="secondary">
+            Save profile
+          </button>
         </form>
       ) : (
         <dl className="detail-list">
           <dt>Grad year</dt>
           <dd>{student.grad_year ?? "—"}</dd>
-          <dt>Status</dt>
-          <dd>{STUDENT_STATUS_LABELS[student.status]}</dd>
+        </dl>
+      )}
+
+      {/* ---------------- Sizes ---------------- */}
+      <h2 id="sizes">Sizes</h2>
+      <p className="muted">
+        What this student wears, in the fields your program measures. {NO_HEALTH_LABEL}
+      </p>
+      {sizeKeys.length === 0 ? (
+        <p className="muted">
+          No size fields set up yet. Choose them under{" "}
+          <Link href={`/${slug}/roster/settings`}>Size fields</Link>.
+        </p>
+      ) : canWrite ? (
+        <form action={updateStudent} className="stack person-form">
+          <input type="hidden" name="programId" value={program.id} />
+          <input type="hidden" name="slug" value={slug} />
+          <input type="hidden" name="studentId" value={student.id} />
+          <input type="hidden" name="sparse" value="1" />
+          <input type="hidden" name="sizes" value="1" />
+          <input type="hidden" name="section" value="sizes" />
+          <div className="row-inline">
+            {sizeKeys.map((key) => (
+              <label key={key}>
+                {key}
+                <input type="text" name={`size_${key}`} defaultValue={sizes[key] ?? ""} />
+              </label>
+            ))}
+          </div>
+          <button type="submit" className="secondary">
+            Save sizes
+          </button>
+        </form>
+      ) : (
+        <dl className="detail-list">
           {sizeKeys.map((key) => (
             <div key={key}>
               <dt>{key}</dt>
@@ -247,306 +291,130 @@ export default async function StudentDetailPage({
         </dl>
       )}
 
-      {/* ---- Guardians ---- */}
-      <h2 id="guardians">Guardians</h2>
-      <p className="muted">{NO_HEALTH_LABEL}</p>
+      {/* ---------------- Guardians ---------------- */}
+      <div className="person-section-head">
+        <h2 id="guardians">Guardians</h2>
+        {canWrite && (
+          <AddGuardian
+            programId={program.id}
+            slug={slug}
+            studentId={student.id}
+            open={addOpen}
+            error={addOpen ? message(GUARDIANS_ERR, errorCode) : null}
+          />
+        )}
+      </div>
+      <p className="muted">
+        {guardians.length === 0
+          ? "Nobody yet — a student with no guardian gets no itinerary, no signup link and no way to report an absence."
+          : bouncing > 0
+            ? `${bouncing} of ${guardians.length} ${bouncing === 1 ? "address is" : "addresses are"} not receiving email.`
+            : "Everyone here is receiving email."}{" "}
+        {NO_HEALTH_LABEL}
+      </p>
       {canWrite && (
         <p className="muted">
-          Each family uses private links instead of accounts — the links in the
-          newest email always work. <strong>Email links to this family</strong>{" "}
-          sends those links to a guardian&apos;s email without disturbing any
-          links they already have. <strong>Reset this family&apos;s links</strong>{" "}
-          creates a fresh set and turns off every link previously emailed to this
-          family — use it if an email was forwarded outside the family or a link
-          ended up in the wrong hands.
+          Families use private links instead of accounts, and the links in the
+          newest email always work. <strong>Send family links</strong> emails
+          this family their links without disturbing any they already have.
         </p>
       )}
-      {freshLinks && (
-        <div className="confirm-box stack" style={{ width: "100%" }}>
-          <strong>
-            {emailed === "nokey"
-              ? "Family links ready (email not sent)."
-              : "Family links ready."}
-          </strong>
-          <p className="muted">
-            {emailed === "nokey"
-              ? "Email isn't set up for this deployment, so nothing was sent. Copy each link below into a message to the family — they work now, and any links the family already had still work too."
-              : "These new links appear once. Copy each one into a message to the family — they work now, and replace every link previously emailed to this family."}
-          </p>
-          <label className="stack">
-            Itinerary link
-            <input
-              type="text"
-              readOnly
-              value={freshLinks.itinerary}
-              aria-label="Itinerary link"
-            />
-          </label>
-          <label className="stack">
-            Volunteer signup link
-            <input
-              type="text"
-              readOnly
-              value={freshLinks.signup}
-              aria-label="Volunteer signup link"
-            />
-          </label>
-          <label className="stack">
-            Report-an-absence link
-            <input
-              type="text"
-              readOnly
-              value={freshLinks.absence}
-              aria-label="Report-an-absence link"
-            />
-          </label>
-        </div>
+      {guardiansError && <p className="alert-error">{guardiansError}</p>}
+      {token && (
+        <FreshLinks
+          token={token}
+          program={program}
+          emailedNoKey={emailed === "nokey"}
+        />
       )}
-      <table className="members">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Phone</th>
-            <th>Relationship</th>
-            <th>Email status</th>
-            {canWrite && <th></th>}
-          </tr>
-        </thead>
-        <tbody>
-          {guardians.map((g) => (
-            <tr key={g.id}>
-              {canWrite ? (
-                <>
-                  <td colSpan={5}>
-                    <form action={updateGuardian} className="row-inline">
-                      <input type="hidden" name="programId" value={program.id} />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="studentId" value={student.id} />
-                      <input type="hidden" name="guardianId" value={g.id} />
-                      <input
-                        type="text"
-                        name="name"
-                        defaultValue={g.name}
-                        required
-                        aria-label="Guardian name"
-                      />
-                      <input
-                        type="email"
-                        name="email"
-                        defaultValue={g.email ?? ""}
-                        aria-label="Guardian email"
-                      />
-                      <input
-                        type="tel"
-                        name="phone"
-                        defaultValue={g.phone ?? ""}
-                        aria-label="Guardian phone"
-                      />
-                      <input
-                        type="text"
-                        name="relationship"
-                        defaultValue={g.relationship ?? ""}
-                        aria-label="Relationship"
-                      />
-                      <span className="badge">{g.email_status}</span>
-                      <button type="submit" className="secondary">
-                        Save
-                      </button>
-                    </form>
-                  </td>
-                  <td>
-                    <div className="stack">
-                      <form action={emailGuardianLinks}>
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="studentId" value={student.id} />
-                        <input type="hidden" name="guardianId" value={g.id} />
-                        <button
-                          type="submit"
-                          className="secondary"
-                          disabled={!g.email}
-                          title={g.email ? undefined : "Add an email first"}
-                        >
-                          Email links to this family
-                        </button>
-                      </form>
-                      {resetConfirmGuardianId === g.id ? (
-                        <div className="confirm-box stack">
-                          <p className="muted">
-                            This creates a fresh set of links and turns off every
-                            link previously emailed to this family. Use it if an
-                            email was forwarded outside the family or a link ended
-                            up in the wrong hands. The new links appear once, below
-                            — email them to the family afterward.
-                          </p>
-                          <div className="row-inline">
-                            <form action={resendGuardianLinks}>
-                              <input type="hidden" name="programId" value={program.id} />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="studentId" value={student.id} />
-                              <input type="hidden" name="guardianId" value={g.id} />
-                              <button type="submit" className="danger">
-                                Reset links
-                              </button>
-                            </form>
-                            <Link href={`/${slug}/roster/${student.id}#guardians`}>
-                              Cancel
-                            </Link>
-                          </div>
-                        </div>
-                      ) : (
-                        <Link
-                          href={`/${slug}/roster/${student.id}?confirm=reset&guardian=${g.id}#guardians`}
-                          className="linklike"
-                        >
-                          Reset this family&apos;s links
-                        </Link>
-                      )}
-                      {g.email_status !== "ok" && (
-                        <form action={resetGuardianEmailStatus}>
-                          <input type="hidden" name="programId" value={program.id} />
-                          <input type="hidden" name="slug" value={slug} />
-                          <input type="hidden" name="studentId" value={student.id} />
-                          <input type="hidden" name="guardianId" value={g.id} />
-                          <button
-                            type="submit"
-                            className="secondary"
-                            title="Turn this address back on for announcements and weekly digests. Use it after fixing a bounced address, or if the family asked to resubscribe."
-                          >
-                            Mark deliverable again
-                          </button>
-                        </form>
-                      )}
-                      {removeConfirmGuardianId === g.id ? (
-                        <div className="confirm-box stack">
-                          <p>
-                            Remove {g.name} as a guardian? They&apos;ll stop
-                            receiving program emails and their family links will
-                            stop working.
-                          </p>
-                          <div className="row-inline">
-                            <form action={removeGuardian}>
-                              <input type="hidden" name="programId" value={program.id} />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input type="hidden" name="studentId" value={student.id} />
-                              <input type="hidden" name="guardianId" value={g.id} />
-                              <button type="submit" className="danger">
-                                Confirm remove
-                              </button>
-                            </form>
-                            <Link href={`/${slug}/roster/${student.id}#guardians`}>
-                              Cancel
-                            </Link>
-                          </div>
-                        </div>
-                      ) : (
-                        <Link
-                          href={`/${slug}/roster/${student.id}?confirm=remove_guardian&guardian=${g.id}#guardians`}
-                          className="linklike danger"
-                        >
-                          Remove
-                        </Link>
-                      )}
-                    </div>
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td>{g.name}</td>
-                  <td>{g.email ?? "—"}</td>
-                  <td>{g.phone ?? "—"}</td>
-                  <td>{g.relationship ?? "—"}</td>
-                  <td>{g.email_status}</td>
-                </>
-              )}
-            </tr>
-          ))}
-          {guardians.length === 0 && (
-            <tr>
-              <td colSpan={canWrite ? 6 : 5} className="muted">
-                No guardians yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
 
-      {canWrite && (
+      <div className="stack guardian-list">
+        {guardians.map((g) => (
+          <GuardianCard
+            key={g.id}
+            programId={program.id}
+            slug={slug}
+            studentId={student.id}
+            guardian={g}
+            canWrite={canWrite}
+            open={openGuardianId === g.id}
+            confirm={openGuardianId === g.id ? rowConfirm : null}
+            error={openGuardianId === g.id ? rowError : null}
+          />
+        ))}
+      </div>
+
+      {/* ---------------- Status ---------------- */}
+      <h2 id="status">Status</h2>
+      {canWrite ? (
         <>
-          <h3>Add a guardian</h3>
-          <form action={addGuardian} className="stack">
+          <form action={updateStudent} className="stack person-form">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="studentId" value={student.id} />
-            <div className="row-inline">
-              <label>
-                Name
-                <input type="text" name="name" required />
-              </label>
-              <label>
-                Email
-                <input type="email" name="email" />
-              </label>
-              <label>
-                Phone
-                <input type="tel" name="phone" />
-              </label>
-              <label>
-                Relationship
-                <input type="text" name="relationship" placeholder="Mother, Father, …" />
-              </label>
-            </div>
-            <button type="submit">Add guardian</button>
-          </form>
-        </>
-      )}
-
-      {/* ---- Deactivate / reactivate ---- */}
-      {canWrite && student.status === "active" && (
-        <>
-          <h2>Deactivate</h2>
-          {showConfirm ? (
-            <div className="stack confirm-box">
-              <p>Deactivating {student.first_name} will:</p>
-              <ul>
-                <li>Release their costume assignments (pieces return to inventory).</li>
-                <li>Remove them from travel rooms and buses.</li>
-                <li>Mark them absent for competitions dated today or later.</li>
-              </ul>
-              <p className="muted">
-                The record is never deleted — it becomes inactive and can be
-                reactivated later.
-              </p>
-              <form action={deactivateStudent} className="row-inline">
-                <input type="hidden" name="programId" value={program.id} />
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="studentId" value={student.id} />
-                <button type="submit" className="danger">
-                  Confirm deactivate
-                </button>
-                <Link href={`/${slug}/roster/${student.id}`}>Cancel</Link>
-              </form>
-            </div>
-          ) : (
-            <p>
-              <Link href={`/${slug}/roster/${student.id}?confirm=deactivate`} className="danger">
-                Deactivate student…
-              </Link>
+            <input type="hidden" name="sparse" value="1" />
+            <input type="hidden" name="section" value="status" />
+            <label>
+              Status
+              <select name="status" defaultValue={student.status}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="graduated">Graduated</option>
+              </select>
+            </label>
+            <button type="submit" className="secondary">
+              Save status
+            </button>
+            <p className="muted">
+              Graduated students drop off the directory. Inactive students stay
+              on it, greyed out.
             </p>
+          </form>
+
+          {student.status === "active" &&
+            (showDeactivateConfirm ? (
+              <div className="stack confirm-box">
+                <p>Deactivating {student.first_name} will:</p>
+                <ul>
+                  <li>Release their costume assignments (pieces return to inventory).</li>
+                  <li>Remove them from travel rooms and buses.</li>
+                  <li>Mark them absent for competitions dated today or later.</li>
+                </ul>
+                <p className="muted">
+                  The record is never deleted — it becomes inactive and can be
+                  reactivated later.
+                </p>
+                <form action={deactivateStudent} className="row-inline">
+                  <input type="hidden" name="programId" value={program.id} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="studentId" value={student.id} />
+                  <button type="submit" className="danger">
+                    Confirm deactivate
+                  </button>
+                  <Link href={`${detail}#status`}>Cancel</Link>
+                </form>
+              </div>
+            ) : (
+              <p>
+                <Link href={`${detail}?confirm=deactivate#status`} className="danger">
+                  Deactivate student…
+                </Link>
+              </p>
+            ))}
+
+          {student.status === "inactive" && (
+            <form action={reactivateStudent}>
+              <input type="hidden" name="programId" value={program.id} />
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="studentId" value={student.id} />
+              <button type="submit" className="secondary">
+                Reactivate student
+              </button>
+            </form>
           )}
         </>
-      )}
-
-      {canWrite && student.status === "inactive" && (
-        <form action={reactivateStudent}>
-          <input type="hidden" name="programId" value={program.id} />
-          <input type="hidden" name="slug" value={slug} />
-          <input type="hidden" name="studentId" value={student.id} />
-          <button type="submit" className="secondary">
-            Reactivate student
-          </button>
-        </form>
+      ) : (
+        <p className="muted">{STUDENT_STATUS_LABELS[student.status]}</p>
       )}
     </section>
   );

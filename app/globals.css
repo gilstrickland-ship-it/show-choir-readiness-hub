@@ -375,6 +375,24 @@
     gap: 0.4rem;
   }
 
+  /* `.row-inline` means "these sit on one line", but it never said which line
+     direction — and the base-layer `label` rule is `flex-direction: column`, so
+     a `<label class="row-inline">` inherited the column and stacked its checkbox
+     ABOVE its text. `.row-inline`'s own `align-items: flex-end` then pushed both
+     to the right edge of the fieldset, which is how a competition's ensemble
+     checkboxes (CompEdit), an event's, the results captions, the packet review's
+     "Include" and travel's "Overnight" all ended up right-aligned two-liners.
+     Compound, so every div/form/fieldset use of .row-inline is untouched — and
+     `label` alone could not be fixed, since the column IS right for the many
+     label-above-field pairs inside a .row-inline. Same shape as
+     label.checkbox-inline above; this is the T061/T066 cascade family seen from
+     the other side — components beats base, but only where a declaration
+     actually exists. */
+  label.row-inline {
+    flex-direction: row;
+    align-items: center;
+  }
+
   .muted {
     color: var(--muted-ink);
     font-size: 0.88rem;
@@ -629,47 +647,23 @@
     background: var(--line);
   }
 
-  /* ---------------- Tabs ---------------- */
-
-  .settings-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0 1.25rem;
-    border-bottom: 1px solid var(--line);
-    width: 100%;
-  }
-
-  .settings-tabs a,
-  .settings-tabs strong {
-    display: inline-block;
-    padding: 0.45rem 0.05rem calc(0.45rem - 3px);
-    border-bottom: 3px solid transparent;
-    margin-bottom: -1px;
-    font-size: 0.86rem;
-    font-weight: 550;
-    color: var(--muted-ink);
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .settings-tabs a:hover {
-    color: var(--ink);
-  }
-
-  .settings-tabs strong,
-  .settings-tabs [aria-current="page"] {
-    color: var(--ink);
-    font-weight: 650;
-    border-bottom-color: var(--accent);
-  }
-
   /* ---------------- Tables ---------------- */
 
+  /* `display: block; overflow-x: auto` is what lets a wide table scroll on a
+     phone instead of squeezing its columns to nothing — and it makes this box
+     the SCROLL PORT: the strip of the table a reader can actually see. The
+     row-expanding Edit panels (Money, Wardrobe, People) open several columns in,
+     so what they must fit inside is that strip, not the window. `container-type`
+     names it, and `100cqi` below is its width — the one number no `vw` can
+     express. Inline-size containment is free here: the box is already
+     `width: 100%` of its parent, so its own size never depended on its
+     contents. */
   table.members {
     width: 100%;
     border-collapse: collapse;
     display: block;
     overflow-x: auto;
+    container-type: inline-size;
     font-size: 0.9rem;
   }
 
@@ -695,6 +689,74 @@
 
   table.members tbody tr:hover td {
     background: var(--surface);
+  }
+
+  /* ---- A row's panel leaves the last cell (spec 005 T143b) ----
+     MEASURED at 375px, before: the ledger's "Fix this entry" panel opened 502px
+     into a 343px scroll port — 0% of it on screen. The 8-column inventory: 492px
+     in, 0%. The 5-column assignments table: 308px in, 11%. No width could fix
+     any of them, because the problem was WHERE the panel opened, not how wide it
+     was; a narrower panel is still a panel nobody can see.
+
+     So the panel gets its own row spanning every column, and the box inside that
+     row is STUCK to the left edge of the scroll port at the port's own width
+     (100cqi — the container is table.members). It is therefore fully on screen
+     wherever the table happens to be scrolled, not only at the far left.
+
+     The affordance that opens it is stuck to the right edge for the same reason:
+     an action column that starts 502px into a phone's table is one nobody finds.
+     Both are no-ops on a desktop, where nothing overflows. */
+  table.members td.table-action,
+  table.members th.table-action {
+    position: sticky;
+    right: 0;
+    background: var(--paper);
+    /* A pinned column paints over whatever is scrolling under it, so it needs a
+       rule to say where the row's content stops and the action starts. A rule,
+       not a shadow: this design carries its edges in hairlines. */
+    border-left: 1px solid var(--line);
+  }
+
+  /* A sticky cell paints over the row it sits in, so it has to carry that row's
+     own fill or the tint stops at the column edge. Listed after the base rule
+     and before the hover rule, so hover still wins for both. */
+  table.members tbody tr.ledger-uncat td.table-action {
+    background: var(--warn-soft);
+  }
+
+  table.members tbody tr:hover td.table-action {
+    background: var(--surface);
+  }
+
+  table.members tr.table-panel-row > td {
+    padding: 0;
+  }
+
+  table.members .table-panel {
+    position: sticky;
+    left: 0;
+    width: 100cqi;
+    box-sizing: border-box;
+    padding: 0 0.6rem 0.75rem;
+    /* The cells above set nowrap so columns keep their shape; a panel is prose
+       and forms, and must wrap. */
+    white-space: normal;
+  }
+
+  /* Anchors the app sends someone BACK to. `.shell-header` is
+     `position: sticky; top: 0`, so a fragment jump parks its target directly
+     under the chrome — and the target is always the row that a message belongs
+     to, which makes it the one thing you cannot see. These are load-bearing now
+     that a refused write reopens the row's own popover on its anchor: a ledger
+     row's fix panel (`#fix-<id>`), a budget line's edit panel (`#line-<id>`), a
+     guardian / ensemble / member row, and the student page's four group
+     headings. 5rem matches .comp-section, the first surface that hit this. */
+  table.members tr[id],
+  table.members details[id],
+  h1[id],
+  h2[id],
+  h3[id] {
+    scroll-margin-top: 5rem;
   }
 
   /* ---------------- Chips + badges ---------------- */
@@ -873,6 +935,14 @@
     padding: 1rem 1.1rem;
   }
 
+  /* The shared mint/rotate card (season calendar · itinerary · open shifts).
+     It is the width of what it interrupts — a `.stack` otherwise sizes a flex
+     child to its content, and the card came out narrower than the section it
+     belongs to. Was three copies of an inline width:100%. */
+  .share-link-card {
+    width: 100%;
+  }
+
   .invite-link {
     display: inline-block;
     font-family: var(--font-mono-stack);
@@ -885,8 +955,36 @@
     user-select: all;
   }
 
+  /* Comp-day attendance: a roster you thumb down, one student per line with the
+     three answers on the line under the name. A list, never a table — the three
+     buttons plus a note field are wider than a 375px screen, and a table would
+     put them behind a horizontal scroll. The measurements used to live in
+     style={{}} on the page, which is why nothing else could match them. */
+  .attendance-list {
+    list-style: none;
+    padding: 0;
+    width: 100%;
+  }
+
   .attendance-list li {
+    width: 100%;
     padding-top: 0.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* The three answers and the note, on the line under the name. This is the one
+     screen in the app worked standing up in a hallway with a phone in one hand,
+     so its buttons get a real thumb target — the base button rule comes out at
+     41px, measured, which is under the 44px every other deliberate hit area in
+     this file holds. Compound (class + element), so nothing here outranks the
+     base-layer button styles it sits beside (the T061/T066 cascade trap). */
+  .attendance-row {
+    margin-top: 0.35rem;
+  }
+
+  .attendance-row button {
+    min-height: 44px;
   }
 
   /* ---------------- Public token surface ---------------- */
@@ -1931,6 +2029,29 @@
     color: var(--muted-ink);
   }
 
+  /* Calendar-subscribe disclosure — a once-a-year job that used to hold a
+     permanent block above the spine. One line collapsed; the box inside is
+     unchanged (and opens itself for the one-time URL and for errors). */
+  .season-subscribe {
+    width: 100%;
+  }
+
+  .season-subscribe > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--ink-2);
+    padding: 0.2rem 0;
+  }
+
+  .season-subscribe > summary:hover {
+    color: var(--accent);
+  }
+
+  .season-subscribe[open] > summary {
+    margin-bottom: 0.6rem;
+  }
+
   .season-months {
     display: flex;
     flex-direction: column;
@@ -1978,8 +2099,27 @@
     border-top: 1px solid var(--line);
   }
 
-  .season-row.past {
+  /* Past rows read quieter — by dimming the row's CONTENTS, one by one, rather
+     than the row box. Fading the box would take the open edit popover down with
+     it (it lives inside the row), and a translucent popover lets the spine bleed
+     through its own form. Compound selectors, so nothing here can outrank the
+     base-layer element styles it sits next to (the T061/T066 cascade trap). */
+  .season-row.past > .season-date,
+  .season-row.past > .kind-tag,
+  .season-row.past > .season-row-main,
+  .season-row.past > .season-row-right > :not(.drawer),
+  .season-row.past > .season-row-right > .drawer > summary {
     opacity: 0.72;
+  }
+
+  /* The row you just added, on the way back from the quick-add drawer (or the
+     row you just corrected in its edit popover). Compound selectors on purpose:
+     a bare `.just-added` in this layer would outrank the base-layer element
+     variants it sits next to (the T061/T066 cascade trap). */
+  .season-row.just-added,
+  .season-feature.just-added {
+    background: var(--ok-soft);
+    box-shadow: inset 3px 0 0 var(--ok-text);
   }
 
   .season-date {
@@ -2018,6 +2158,14 @@
   .kind-tag.comp {
     background: var(--accent-soft);
     color: var(--accent-strong);
+    /* `comp` is ALSO the class on the competition command center's page root
+       (`.comp`, further down this layer), which is a full-width flex column.
+       Same specificity, later in source, so it wins — and the spine's Comp pill
+       stretches across the row, shoving the title and the right slot out of it.
+       This compound selector is the fix and the guard: any single-class rule
+       that borrows one of these variant names loses to it. */
+    display: inline-block;
+    width: auto;
   }
 
   .kind-tag.rehearsal,
@@ -2041,25 +2189,13 @@
     color: var(--accent-strong);
   }
 
-  /* ---------------- Host-mode (Wave I2) ---------------- */
-  .hosting-event .comp-back {
-    margin-bottom: 0.5rem;
-  }
-
-  .hosting-header-edit,
-  .hosting-add {
-    margin-top: 0.75rem;
-  }
-
-  .hosting-header-edit > summary,
-  .hosting-add > summary {
-    cursor: pointer;
-    font-weight: 600;
-    color: var(--accent-strong);
-    padding: 0.35rem 0;
-  }
-
+  /* ---------------- Host-mode (Wave I2, rebuilt spec 005 Wave 7) ----------------
+     Every disclosure on this surface now uses the app's shared `.comp-disclosure`
+     trigger (44px thumb target, further down this layer) instead of four
+     near-identical local `> summary` rules of ~26px each — which is both the
+     de-duplication RQ-6 asks for and the tap-target fix that came with it. */
   .hosting-school-card {
+    width: 100%;
     border: 1px solid var(--line);
     border-radius: var(--radius, 8px);
     padding: 0.75rem 0.9rem;
@@ -2074,14 +2210,8 @@
     margin-bottom: 0.25rem;
   }
 
-  .hosting-school-card details > summary {
-    cursor: pointer;
-    color: var(--accent-strong);
-    font-weight: 600;
-    padding: 0.25rem 0;
-  }
-
   .hosting-slot-row {
+    width: 100%;
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
@@ -2101,19 +2231,14 @@
     min-width: 8rem;
   }
 
+  /* A whole line of the slot row, not its last column — which is what keeps the
+     Edit panel opening at the row's LEFT edge on a phone (the Wave-4/6 lesson
+     about panels that open inside a narrow trailing cell). */
   .hosting-slot-actions {
     flex-basis: 100%;
   }
 
-  .hosting-slot-actions details > summary {
-    cursor: pointer;
-    color: var(--accent-strong);
-    font-weight: 600;
-    padding: 0.2rem 0;
-  }
-
   .hosting-shift {
-    margin-top: 0.5rem;
     align-items: flex-end;
   }
 
@@ -2154,6 +2279,10 @@
 
   .season-row-right {
     flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.15rem;
     text-align: right;
   }
 
@@ -2212,6 +2341,8 @@
     flex-direction: column;
     gap: 0.6rem;
     min-width: 0;
+    /* Anchor for the row's edit popover — see .season-feature-actions .drawer. */
+    position: relative;
   }
 
   .season-feature-badges {
@@ -2266,11 +2397,23 @@
     display: flex;
     gap: 0.6rem;
     flex-wrap: wrap;
+    /* Centers the quiet "Edit" disclosure against the solid buttons beside it
+       (they are all one height, so nothing else moves). */
+    align-items: center;
   }
 
   .season-feature-actions .button-link {
     font-size: 0.84rem;
     padding: 0.5rem 0.95rem;
+  }
+
+  /* The feature row's action bar wraps, so its "Edit" summary sits at whatever
+     x the buttons before it leave — a panel anchored to the summary walks off
+     the right edge of a narrow screen. Turning the wrapper static hands the
+     anchoring to .season-feature-body instead: one predictable left edge, and a
+     panel that can be sized against the body it hangs from. */
+  .season-feature-actions .drawer {
+    position: static;
   }
 
   /* ---------------- Competition command center ---------------- */
@@ -2281,7 +2424,13 @@
     padding: 1.75rem 1.5rem 4.5rem;
   }
 
-  .comp {
+  /* Host-mode borrows every piece of the comp hub's furniture (the head, the
+     titled sections, the summaries), so it borrows the page shell too rather
+     than approximating it with `.stack` — whose `align-items: flex-start` sized
+     each section to its widest child and left the school cards and slot rows
+     ragged against the sections above them. */
+  .comp,
+  .hosting-event {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
@@ -2426,290 +2575,150 @@
     width: auto;
   }
 
-  .comp-section-links {
-    display: flex;
-    gap: 0.9rem;
-    font-size: 0.82rem;
-  }
-
-  .comp-section-links a,
-  .comp-section-head > a {
-    font-size: 0.82rem;
-    color: var(--muted-ink);
-  }
-
-  .comp-chip {
-    display: inline-block;
-    font-family: var(--font-ui-stack);
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    padding: 0.18rem 0.55rem;
-    border-radius: 4px;
-    background: var(--surface-2);
-    color: var(--ink-2);
-    vertical-align: middle;
-  }
-
-  .comp-chip.ok {
-    background: var(--ok-soft);
-    color: var(--ok-text);
-  }
-
-  .comp-chip.warn {
-    background: var(--warn-soft);
-    color: var(--warn-text);
-  }
-
-  .comp-chip.alert {
-    background: var(--alert-soft);
-    color: var(--alert-text);
-  }
-
-  /* Shared row list: 1px separators top, plus a bottom rule on the last row. */
-  .comp-rows {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .comp-rows > *:last-child {
-    border-bottom: 1px solid var(--line);
-  }
-
-  .comp-itin-row {
-    display: flex;
-    gap: 1rem;
-    padding: 0.55rem 0;
-    border-top: 1px solid var(--line);
-    font-size: 0.875rem;
-    align-items: baseline;
-  }
-
-  .comp-itin-time {
-    font-family: var(--font-display-stack);
-    font-size: 1.0625rem;
-    font-weight: 750;
-    width: 76px;
-    flex: none;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .comp-itin-body {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .comp-itin-body strong {
-    font-weight: 650;
-  }
-
-  .comp-itin-time.perform,
-  .comp-itin-body .perform {
-    color: var(--accent);
-  }
-
-  .comp-att-summary {
-    font-size: 0.82rem;
-    color: var(--muted-ink);
-  }
-
-  .comp-att-row {
-    display: flex;
-    gap: 0.75rem;
-    padding: 0.6rem 0;
-    border-top: 1px solid var(--line);
-    align-items: center;
-    font-size: 0.875rem;
-    flex-wrap: wrap;
-  }
-
-  .comp-att-name {
-    flex: 1;
-    min-width: 160px;
-  }
-
-  .comp-att-toggle {
-    display: flex;
-    gap: 0.4rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .comp-att-note {
-    font: inherit;
-    font-size: 0.8rem;
-    padding: 0.3rem 0.5rem;
-    width: 8rem;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-s);
-    background: var(--paper);
-    color: var(--ink);
-  }
-
-  .comp-toggle-btn {
-    font: inherit;
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 0.3rem 0.75rem;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-s);
-    background: var(--paper);
-    color: var(--ink-2);
-    cursor: pointer;
-    transition: background-color var(--dur) var(--ease),
-      border-color var(--dur) var(--ease), color var(--dur) var(--ease);
-  }
-
-  .comp-toggle-btn:hover {
-    border-color: var(--ink-2);
-    color: var(--ink);
-  }
-
-  .comp-toggle-btn.active.expected {
-    border-color: var(--ok);
-    background: var(--ok-soft);
-    color: var(--ok-text);
-  }
-
-  .comp-toggle-btn.active.partial {
-    border-color: var(--warn);
-    background: var(--warn-soft);
-    color: var(--warn-text);
-  }
-
-  .comp-toggle-btn.active.absent {
-    border-color: var(--alert);
-    background: var(--alert-soft);
-    color: var(--alert-text);
-  }
-
-  .comp-section-footer {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    margin-top: 0.35rem;
-    font-size: 0.82rem;
-  }
-
-  .comp-section-footer a {
-    color: var(--muted-ink);
-  }
-
-  .comp-section-footer .linklike {
-    font-size: 0.82rem;
-    color: var(--muted-ink);
-  }
-
-  .comp-shift-grid {
+  /* ---- Glance cards (spec 005 US7) ----
+     One card per area of comp week. The whole card is the link — a phone-sized
+     tap target that opens the route owning that job. */
+  .comp-glance {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 0.75rem;
   }
 
-  .comp-shift-card {
+  .comp-glance-card {
     border: 1px solid var(--line);
+    border-top: 4px solid var(--line-strong);
     border-radius: var(--radius-m);
+    background: var(--paper);
     padding: 0.85rem 1rem;
     display: flex;
     flex-direction: column;
-    gap: 0.375rem;
+    gap: 0.3rem;
+    min-height: 76px;
+    color: inherit;
+    text-decoration: none;
+    transition: border-color var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease);
   }
 
-  .comp-shift-title {
-    font-weight: 650;
+  .comp-glance-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-1);
+  }
+
+  .comp-glance-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted-ink);
+  }
+
+  .comp-glance-status {
     font-size: 0.9rem;
+    font-weight: 550;
   }
 
-  .comp-shift-time {
+  /* Ensemble chips under the comp title. The row is a flex container with its
+     own `gap`, and `.chip` carries a legacy `margin` for the inline runs it was
+     built for (a paragraph of chips, where margin IS the spacing). Both applied
+     here, so every gap between two chips was 0.3rem + 0.25rem and the strip read
+     as a loose list rather than a set. The gap is this row's answer; the margin
+     is zeroed for its children only. */
+  .comp-head-chips {
+    margin: 0;
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+
+  .comp-head-chips > .chip {
+    margin: 0;
+  }
+
+  .comp-section-summary {
+    font-size: 0.82rem;
+    color: var(--muted-ink);
+  }
+
+  /* ---- Step strips ----
+     The packet pipeline (spec 005 US7-4): Uploaded → Parsed → Reviewed → On
+     itinerary → Published, shown on all three surfaces the pipeline crosses.
+     The roster import (spec 005 T137a) is the same idea over three phases —
+     choose → check → import — so it is the same strip rather than a second one
+     that drifts. Compound selectors on every state variant: a bare `.done`/
+     `.now` in this layer would outrank the base-layer element styles it sits
+     beside (the T061/T066 cascade trap). */
+  .packet-steps,
+  .import-steps {
+    width: 100%;
+  }
+
+  .packet-steps ol,
+  .import-steps ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.9rem;
+  }
+
+  .packet-step,
+  .import-step {
     font-size: 0.8rem;
     color: var(--muted-ink);
-    font-variant-numeric: tabular-nums;
   }
 
-  .comp-progress {
-    height: 6px;
-    border-radius: 3px;
-    background: var(--surface-2);
-    overflow: hidden;
+  /* Some steps go somewhere and some don't — "Reviewed" is a link once there is
+     a parse to review, plain text before that. Until now the only difference was
+     `:hover`, which a phone does not have and a keyboard user meets only after
+     tabbing into it, so the strip looked like five inert labels. The link keeps a
+     standing dotted underline (the base `a` treatment, quieted to suit 0.8rem
+     text) and firms up to a solid accent underline on hover and focus. */
+  .packet-step a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-decoration-thickness: 1px;
+    text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+    text-underline-offset: 0.22em;
   }
 
-  .comp-progress-fill {
-    height: 100%;
+  .packet-step a:hover,
+  .packet-step a:focus-visible {
+    color: var(--accent);
+    text-decoration-style: solid;
+    text-decoration-color: currentColor;
   }
 
-  .comp-progress-fill.warn {
-    background: var(--warn);
+  .packet-step-mark,
+  .import-step-mark {
+    margin-right: 0.3rem;
+    font-weight: 700;
   }
 
-  .comp-progress-fill.ok {
-    background: var(--ok);
+  .packet-step-state,
+  .import-step-state {
+    font-size: 0.72rem;
   }
 
-  .comp-shift-count {
-    font-size: 0.78rem;
-    font-weight: 600;
-  }
-
-  .comp-shift-count.warn {
-    color: var(--warn-text);
-  }
-
-  .comp-shift-count.ok {
+  .packet-step.done,
+  .import-step.done {
     color: var(--ok-text);
   }
 
-  .comp-meal-rule {
-    margin: 0;
-    font-size: 0.84rem;
-    color: var(--muted-ink);
+  .packet-step.now,
+  .import-step.now {
+    color: var(--ink);
+    font-weight: 650;
   }
 
-  .comp-meal-figures {
-    display: flex;
-    gap: 1.75rem;
-    align-items: baseline;
-    padding: 0.6rem 0;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
-  }
-
-  .comp-meal-num {
-    font-family: var(--font-display-stack);
-    font-size: 2.125rem;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .comp-meal-ens {
-    font-size: 0.875rem;
-  }
-
-  .comp-meal-note {
-    margin: 0;
-    font-size: 0.82rem;
-  }
-
-  .comp-packet-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    padding: 0.6rem 0;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-    font-size: 0.875rem;
-    flex-wrap: wrap;
-  }
-
-  .comp-packet-file {
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .comp-packet-row a {
-    font-size: 0.82rem;
-    color: var(--muted-ink);
+  .packet-step.blocked {
+    color: var(--alert-text);
+    font-weight: 650;
   }
 
   .comp-caption {
@@ -2805,29 +2814,6 @@
     color: var(--alert-text);
   }
 
-  .comp-travel-name {
-    font-size: 0.84rem;
-    font-weight: 550;
-  }
-
-  .comp-travel-meta {
-    font-size: 0.8rem;
-  }
-
-  .comp-travel-empty {
-    margin: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--alert-text);
-  }
-
-  .comp-travel-empty a {
-    color: var(--alert-text);
-  }
-
   /* Back link that leads the sub-page tab strip. */
   .comp-tab-back {
     font-weight: 650 !important;
@@ -2887,8 +2873,11 @@
     color: var(--muted-ink);
   }
 
-  /* Display-type underline sub-tabs (replaces .settings-tabs on redesigned
-     surfaces — Directory/Ledger/Alterations strips). */
+  /* The app's ONE sub-tab strip — display-type, underlined, uppercase. It began
+     as the redesigned surfaces' replacement for `.settings-tabs` (the smaller,
+     lighter, sentence-case strip this file used to carry as well); T142 moved
+     every surface onto SubTabs, the absence queue was the last holdout, and
+     with T157 the old class had no users left and is gone. */
   .subtabs {
     display: flex;
     flex-wrap: nowrap;
@@ -2931,16 +2920,26 @@
     position: relative;
   }
 
-  .drawer > summary {
+  /* A summary styled as a solid button carries no disclosure triangle, wherever
+     it sits — inside a drawer (Season, Money, Shifts, Wardrobe "+ Add") or in
+     flow as a section's primary action (host-mode's "Generate the schedule").
+     `.button-link` alone drops the ::marker by leaving `display: list-item`, but
+     Safari's own -webkit-details-marker survives that and lands a triangle
+     inside the fill; both are named here. Compound (element + class), so nothing
+     in this layer outranks the base-layer summary styles it sits beside. */
+  .drawer > summary,
+  summary.button-link {
     list-style: none;
     cursor: pointer;
   }
 
-  .drawer > summary::-webkit-details-marker {
+  .drawer > summary::-webkit-details-marker,
+  summary.button-link::-webkit-details-marker {
     display: none;
   }
 
-  .drawer > summary::marker {
+  .drawer > summary::marker,
+  summary.button-link::marker {
     content: "";
   }
 
@@ -2968,6 +2967,84 @@
     border-bottom: none;
     padding: 0;
     width: auto;
+  }
+
+  /* Quick-add sections inside the drawer (Season "+ Add"). One accordion — the
+     sections share a `name` so opening one closes the others — holding the true
+     minimum per kind; everything else is a "More options →" away. */
+  .quick-add-kinds {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .quick-add-kind {
+    border-top: 1px solid var(--line);
+  }
+
+  .quick-add-kind:first-child {
+    border-top: none;
+  }
+
+  .quick-add-kind[open] {
+    padding-bottom: 0.9rem;
+  }
+
+  .quick-add-kind > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.6rem 0;
+    font-family: var(--font-display-stack);
+    font-size: 0.95rem;
+    font-weight: 650;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .quick-add-kind > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .quick-add-kind > summary::marker {
+    content: "";
+  }
+
+  .quick-add-kind > summary::before {
+    content: "+ ";
+    color: var(--accent);
+  }
+
+  .quick-add-kind[open] > summary::before {
+    content: "– ";
+  }
+
+  .quick-add-kind > summary:hover {
+    color: var(--accent);
+  }
+
+  /* Spine row-edit popovers (Season). Same drawer, narrower, and pinned to the
+     side that keeps it on screen: rows hang off the spine's right edge, the
+     next-comp feature row's panel hangs off the left edge of the row body it is
+     anchored to. Compound selectors so neither the base `.drawer-panel` nor its
+     phone override can win by source order (the T061/T066 cascade trap). */
+  .drawer-panel.season-edit-panel,
+  .drawer-panel.season-feature-edit-panel {
+    text-align: left;
+  }
+
+  .drawer-panel.season-edit-panel {
+    width: min(24rem, 88vw);
+    right: 0;
+    left: auto;
+  }
+
+  /* Anchored to .season-feature-body, so "no wider than that body" is the width
+     that fits at every viewport — the body is already inset by the date column,
+     and 88vw would hang the same distance past the right edge. */
+  .drawer-panel.season-feature-edit-panel {
+    width: min(24rem, 100%);
+    left: 0;
+    right: auto;
   }
 
   /* Metric strip — 1px-gap grid on --line, cells --paper (Money). */
@@ -3082,11 +3159,261 @@
     color: var(--alert-text);
   }
 
+  /* A family is one to three people, never a list you scan — so the guardians
+     are CARDS, page-width, rather than rows of a horizontal scroller. That is
+     the Wave-4 lesson taken one step further: expanding the row instead of
+     floating over it stops a panel being SLICED by `table.members`
+     (`display:block; overflow-x:auto`), but it cannot stop it opening several
+     hundred pixels into that scroller — a guardian panel in the last cell of a
+     five-column table measured zero pixels on screen at 375px. A card has no
+     such offset, so the panel opens at the left edge where it can be read. */
+  .guardian-list {
+    width: 100%;
+    gap: 0.6rem;
+  }
+
+  .guardian-card {
+    width: 100%;
+  }
+
+  .guardian-card-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.6rem;
+  }
+
+  .guardian-card-actions {
+    width: 100%;
+    margin-top: 0.35rem;
+  }
+
+  /* The Edit panel inside a card. `100%` is honest here — the card IS the
+     measure — which is the whole reason the guardians left the table. Same
+     paper-over-rule treatment as .drawer-panel so it still reads as a panel;
+     prefixed class names, never a bare state word, so nothing here can outrank
+     the base-layer element styles it sits beside (the T061/T066 cascade trap). */
+  .people-edit-panel {
+    width: min(30rem, 100%);
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* Ensembles and placements stay tabular — two or three narrow columns, a list
+     you really do scan — so their panels open in a row beneath (`.table-panel`
+     sizes that to the scroll port), capped so a desktop gets a readable measure.
+     The width used to be the port MINUS the columns to the panel's left, which
+     kept it narrow enough and still left a quarter of it off a 375px screen,
+     because it opened inside the last cell (T143b). */
+  .people-row-panel {
+    width: 100%;
+    max-width: 22rem;
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* A panel stacks independent decisions (save the details, turn the address
+     back on, reset the family's links, remove them) — a hairline says those are
+     separate, not one long form, and the two that cannot be undone get a
+     thumb-sized hit area. */
+  .people-edit-form,
+  .people-row-form {
+    width: 100%;
+  }
+
+  .people-edit-form + .people-edit-form,
+  .people-row-form + .people-row-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .people-edit-form button.linklike,
+  .people-edit-form a.linklike,
+  .people-row-form button.linklike,
+  .people-row-form a.linklike {
+    min-height: 44px;
+  }
+
+  /* The student page's groups: a form per group, at a width a name and a grad
+     year are read at rather than the full page measure. */
+  .person-form {
+    width: 100%;
+    max-width: 34rem;
+  }
+
+  /* "Guardians" and its "+ Add guardian" drawer share a line — the drawer is
+     `position: relative`, so its panel anchors to the heading it belongs to. */
+  .person-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.9rem;
+    width: 100%;
+  }
+
+  .person-section-head > h2 {
+    margin: 0;
+  }
+
+  /* The import's one list of everything the parse decided — what happened,
+     where, and the next move. It replaced three unrelated shapes (a red box of
+     skipped columns, a chip inside a table cell, a bullet list of excluded
+     rows), and it is a LIST rather than a table because every field in it is a
+     sentence: four columns of prose came out three words wide on a phone. The
+     entries that kept data out carry an alert rule down their edge, so "what
+     must I act on?" is answerable from the margin. */
+  .import-issues {
+    width: 100%;
+  }
+
+  .import-issue-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .import-issue {
+    padding: 0.6rem 0.85rem 0.7rem;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+    font-size: 0.9rem;
+  }
+
+  .import-issue.blocking {
+    border-left-color: var(--alert);
+  }
+
+  .import-issue > p {
+    margin: 0 0 0.15rem;
+  }
+
+  .import-issue > p:last-child {
+    margin-bottom: 0;
+  }
+
+  .import-issue-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.6rem;
+  }
+
   /* ===================== Money ===================== */
+
+  /* The four decisions an entry asks for, two by two (spec 005 US8-1). The
+     shape is the claim: in or out, how much, who, what — and nothing else. */
+  .money-decisions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+    width: 100%;
+  }
+
+  /* The panel inside a money disclosure ("Connect it", "Add a line to…",
+     "Category settings", "More filters"). Its gaps come from .stack or
+     .row-inline; all it needs is the full width of the disclosure, since a
+     .stack lays its children out at their content width. */
+  .money-connect,
+  .money-more-panel {
+    width: 100%;
+  }
 
   .money-filters {
     width: 100%;
     font-size: 0.85rem;
+  }
+
+  /* "More filters" is a flex child of the filter row and owns a whole line of
+     it, so the five folded controls open under search + direction rather than
+     beside them. */
+  .money-more {
+    flex-basis: 100%;
+  }
+
+  /* Money's row panels (a ledger row's "Fix this entry", a budget line's
+     "Edit") EXPAND their row instead of floating over it, which is the one
+     thing the Season spine's popover idiom can't do here: `table.members` is
+     `display:block; overflow-x:auto` so it can scroll on a phone, and a scroll
+     container clips any absolutely-positioned descendant — a floating panel
+     came out sliced off at the cell edge. Same paper-over-rule treatment as
+     .drawer-panel so it still reads as a panel.
+     The width is the row it sits in (`.table-panel` above already sizes that to
+     the scroll port), capped so a 1280px desktop gets a readable measure rather
+     than a form stretched across the whole table. It used to be measured against
+     the port MINUS the columns to its left — a calculation that kept the panel
+     narrow enough in theory and still put it off-screen in practice, because it
+     opened inside the last cell. It doesn't any more (T143b). */
+  .money-fix-panel {
+    width: 100%;
+    max-width: 17rem;
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* The fix panel stacks two independent forms (put it on a line, void it) —
+     a hairline says those are two decisions, not one long form. */
+  .money-fix-form + .money-fix-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  /* "Void it" and "Void & redo" sit side by side and one of them is the
+     irreversible one, so they get a thumb-sized hit area and real space
+     between them rather than the default text-link gap. */
+  .money-fix-form .row-inline {
+    gap: 1.25rem;
+    align-items: center;
+  }
+
+  .money-fix-form button.linklike {
+    min-height: 44px;
+  }
+
+  /* The ledger pager owns the line under the table: how much of the ledger you
+     are looking at on the left, the two ways out of it on the right. On a bare
+     `.row-inline` the count and both links huddled at the left edge in a 0.6rem
+     gap — three targets inside a thumb's width, one of which is text. The auto
+     margin is what pins the links right (space-between alone would strand
+     "← Newer" in the middle of a three-child row); both are declared so the
+     two-child case, a first or last page, lands the same way. */
+  .money-pager {
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem 1.25rem;
+    font-size: 0.85rem;
+  }
+
+  .money-pager > .muted {
+    margin-right: auto;
+  }
+
+  .money-pager a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    font-weight: 600;
   }
 
   .money-ledger td.right,
@@ -3120,12 +3447,6 @@
   .money-uncat {
     color: var(--warn-text);
     font-weight: 600;
-  }
-
-  .money-fix {
-    color: var(--warn-text);
-    font-weight: 600;
-    font-size: 0.82rem;
   }
 
   /* ===================== Wardrobe ===================== */
@@ -3229,16 +3550,23 @@
     padding: 0.35rem 0.85rem;
   }
 
-  .alt-notes {
-    display: flex;
-    gap: 0.4rem;
+  /* A queue row's fitting note (spec 005 US14). It used to be a permanently
+     expanded text input on EVERY row — the queue read as a wall of half-filled
+     forms. Now the summary IS the note, so the queue reads as a queue, and the
+     disclosure owns a whole line of the wrapping flex row so its panel opens
+     under the row rather than beside the Done button. */
+  .alt-note {
     flex-basis: 100%;
-    align-items: center;
   }
 
-  .alt-notes input {
-    flex: 1;
-    min-width: 0;
+  .alt-note-panel {
+    width: min(30rem, 100%);
+    margin-top: 0.35rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
   }
 
   .wardrobe-cards {
@@ -3286,6 +3614,226 @@
     font-size: 0.82rem;
     color: var(--muted-ink);
     margin-top: 0.15rem;
+  }
+
+  /* ---- Wardrobe filter row + row panels (spec 005 US14) ---- */
+
+  /* Inventory's filter row, the set picker and the competition pickers — one
+     shape, because they are the same control doing the same job on four tabs. */
+  .wardrobe-filters {
+    width: 100%;
+    font-size: 0.85rem;
+  }
+
+  /* "More filters" is a flex child of the filter row and owns a whole line of
+     it, so the folded controls open under search + what-it-is rather than
+     beside them. */
+  .wardrobe-more {
+    flex-basis: 100%;
+  }
+
+  .wardrobe-more-panel {
+    width: 100%;
+  }
+
+  /* The app's expand-in-flow panel — wardrobe's (an inventory row's Edit, an
+     assignment row's Edit, a set's settings), host-mode's (a school card's
+     Edit, a slot row's Edit, the generator, the two add forms), and the
+     itinerary editor's (one line of comp day). They EXPAND
+     their row or their section instead of floating over it, which is the one
+     thing the Season spine's popover idiom can't do here: `table.members` is
+     `display:block; overflow-x:auto` so it can scroll on a phone, and a scroll
+     container clips any absolutely-positioned descendant — a floating panel came
+     out sliced off at the cell edge (the Wave-4 lesson). One rule rather than a
+     copy per surface: three copies of the same six declarations is how they
+     drift apart. Same paper-over-rule treatment as .drawer-panel so it still
+     reads as a panel. Prefixed class names, never a bare state word, so nothing
+     here can outrank the base-layer element styles it sits beside (the T061/T066
+     cascade trap). */
+  .wardrobe-row-panel,
+  .wardrobe-section-panel,
+  .hosting-panel,
+  .itinerary-row-panel {
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* An itinerary line carries seven fields — what happens, its kind, a start, an
+     end, a place, an order, a note — so its panel gets a wider cap than the
+     wardrobe's one select. Still capped: on a 1280px desktop the table is the
+     page's full measure, and a form stretched across all of it is unreadable. */
+  .itinerary-row-panel {
+    width: 100%;
+    max-width: 32rem;
+  }
+
+  /* Saving the line and taking it off the schedule are two decisions, not one
+     long form — a hairline says so, and the destructive one gets a thumb-sized
+     hit area. */
+  .itinerary-row-form + .itinerary-row-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  .itinerary-row-form a.linklike,
+  .itinerary-row-form button.linklike {
+    min-height: 44px;
+  }
+
+  /* A row panel is the width of the row it opens beneath (`.table-panel` sizes
+     that to the scroll port), capped so a desktop gets a readable measure. A
+     section panel spans the page it interrupts. Host-mode has no table on this
+     surface — its rows are cards and full-width slot lines — so every one of its
+     panels is the page's measure. */
+  .wardrobe-row-panel {
+    width: 100%;
+    max-width: 24rem;
+  }
+
+  /* The set-settings disclosure is a section of the page, not a control in a
+     row, so it and its panel take the page's width — a `.stack` otherwise sizes
+     a flex child to its content and the panel comes out narrower than the grid
+     it belongs to. */
+  .wardrobe-settings,
+  .wardrobe-section-panel,
+  .hosting-panel {
+    width: 100%;
+  }
+
+  /* A panel stacks independent forms (save it, move its alteration on, take the
+     piece back) — a hairline says those are separate decisions, not one long
+     form, and the destructive one gets a thumb-sized hit area. */
+  .wardrobe-row-form + .wardrobe-row-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  .wardrobe-row-form button.linklike {
+    min-height: 44px;
+  }
+
+  /* ---- Checkout (the hallway screen) ---- */
+
+  .checkout-list {
+    width: 100%;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .checkout-row {
+    display: flex;
+    width: 100%;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.25rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* Absent students are skipped, not hidden — the row stays so the counts still
+     add up. It used to say so with opacity, which took the row's ink from 19:1
+     down to 4.2:1 and its secondary line to 2.2:1 — under AA, on the one screen
+     that gets read in a dim hallway. It says so with a rule through the name and
+     the "absent — skipped" badge instead: same message, full-strength ink, and
+     the same treatment the printed sheet uses. Compound selector: a bare
+     `.is-absent` in this layer would outrank base-layer element styles
+     (T061/T066). */
+  .checkout-row.is-absent > div > .checkout-who {
+    text-decoration: line-through;
+  }
+
+  .checkout-row.is-absent > div > .muted {
+    font-style: italic;
+  }
+
+  .checkout-who {
+    font-weight: 600;
+  }
+
+  /* A phone held in a hallway with a garment bag over the other arm: the tap
+     target is deliberately far bigger than the app's default button. */
+  .checkout-toggle {
+    min-height: 3rem;
+    min-width: 8rem;
+    font-size: 1rem;
+  }
+
+  .checkout-toggle-state {
+    font-size: 0.75rem;
+    opacity: 0.85;
+  }
+
+  /* ---- Quick change (the printable sheet, spec 005 US15) ---- */
+
+  /* The sentence that teaches the model. Bigger than body copy and above
+     everything else, because the sheet is unreadable without it. */
+  .qc-explainer {
+    width: 100%;
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .qc-standfirst {
+    width: 100%;
+  }
+
+  .qc-ensemble {
+    width: 100%;
+  }
+
+  /* Each ensemble's grid scrolls on its own, so a wide one never makes the page
+     body scroll sideways (US15-2). */
+  .qc-scroll {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .qc-grid {
+    min-width: 40rem;
+  }
+
+  /* "Change 2" over "Opener → Ballad": the position and the two numbers it sits
+     between, never a bare sort order. */
+  .qc-change-num {
+    display: block;
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    color: var(--muted-ink);
+  }
+
+  .qc-change-label {
+    display: block;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.85rem;
+    color: var(--ink);
+  }
+
+  /* Cue words, not column jargon — "Takes off" / "Puts on" read as stage
+     directions because that is what they are. */
+  .qc-cue {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-ink);
+  }
+
+  /* Same reasoning as the checkout row, and the same answer: an absent student
+     stays on the sheet (their slot in the running order still exists) marked in
+     italic with an "absent" chip, rather than dimmed into ink a school printer
+     drops and a screen reader's user can't read. */
+  .qc-row.is-absent > td {
+    font-style: italic;
   }
 
   /* ===================== Comms (digest-first landing, Wave D) ===================== */
@@ -3344,8 +3892,11 @@
     letter-spacing: 0.02em;
   }
 
-  /* Digest draft card — the approval focal point. Warn top rule + shadow-2 lift
-     it above the recently-sent log. */
+  /* Digest status card — the landing's report on where this week's digest
+     stands (spec 005 US9-1). Warn top rule + shadow-2 lift it above the
+     recently-sent log. It holds no controls beyond the one link into the
+     workspace, so the preview block and the action row it used to carry are
+     gone with them. */
   .digest-card {
     border: 1px solid var(--line);
     border-top: 4px solid var(--warn);
@@ -3364,6 +3915,14 @@
     box-shadow: var(--shadow-1);
   }
 
+  /* The card is a flex column, so its one action would otherwise stretch the
+     full width and shout louder than the state line it belongs to. Compound
+     selector — a bare rule here would outrank the base-layer link styles it
+     sits beside (the T061/T066 cascade trap). */
+  .digest-card > .button-link {
+    align-self: flex-start;
+  }
+
   .digest-card-head {
     display: flex;
     align-items: center;
@@ -3377,37 +3936,6 @@
     font-size: 1.35rem;
     text-transform: uppercase;
     letter-spacing: 0.01em;
-  }
-
-  .digest-preview {
-    border: 1px solid var(--line);
-    border-radius: var(--radius-s);
-    background: var(--surface);
-    padding: 0.9rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-  }
-
-  .digest-preview strong {
-    font-weight: 650;
-  }
-
-  .digest-preview p {
-    margin: 0;
-    color: var(--ink-2);
-  }
-
-  .digest-actions {
-    display: flex;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .digest-actions form {
-    margin: 0;
   }
 
   /* Recently-sent announcement log. */
@@ -3475,6 +4003,39 @@
   .staffing-full {
     font-weight: 600;
     color: var(--ok-text);
+  }
+
+  /* A shift row's "Edit" panel (spec 005 US9-3). Like Money's row panels it
+     EXPANDS the card instead of floating over it: the card already contains a
+     `table.members` of signups, which is `display:block; overflow-x:auto` and so
+     a scroll container that would slice an absolutely-positioned panel — and
+     expanding leaves the shift's title, time and open-slot count on screen while
+     you correct them, which the `?edit=` mode switch this replaces did not.
+     Same paper-over-rule treatment as .drawer-panel so it still reads as a
+     panel. Prefixed class, not a bare state word, so nothing here can outrank
+     the base-layer element styles it sits beside (the T061/T066 cascade trap). */
+  .shift-edit-panel {
+    width: min(30rem, 100%);
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* The panel stacks two independent forms (save the shift, delete it) — a
+     hairline says those are two decisions, not one long form, and the delete
+     gets a thumb-sized hit area because it is the irreversible one. */
+  .shift-edit-form + .shift-edit-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  .shift-edit-form button.linklike {
+    min-height: 44px;
   }
 
   /* ===================== Settings (restyle, Wave D) ===================== */
@@ -3786,6 +4347,29 @@
     border-bottom: 2px solid var(--line);
   }
 
+  /* The staff editor beside the host packet it was typed from (spec 005 T156).
+     Two columns that each wrap to full width on a phone; the numbers used to
+     live in a style={{}} on the page, which is why nothing else could match
+     them. Prefixed class names, never a bare state word, so nothing here can
+     outrank the base-layer element styles it sits beside (T061/T066). */
+  .itinerary-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    width: 100%;
+  }
+
+  .itinerary-editor,
+  .itinerary-packet {
+    flex: 1 1 22rem;
+    min-width: 0;
+  }
+
+  .itinerary-packet-view {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+  }
+
   /* Absence history as stacked cards (C2-4) — a 4-column table is unreadable on
      a 375px phone. Same card idiom as the costume/share cards. */
   .token-report-list {
@@ -3941,10 +4525,15 @@
     background: var(--accent-soft);
   }
 
+  /* `width: 100%` is load-bearing everywhere it appears in this section: these
+     blocks sit inside a `.stack` (`align-items: flex-start`), so anything that
+     doesn't claim its width shrink-wraps to its own content and stops filling
+     the card or section it belongs to. */
   .travel-chip-grid {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
+    width: 100%;
   }
 
   .travel-chip-form {
@@ -3993,6 +4582,9 @@
     position: sticky;
     bottom: 0;
     z-index: 30;
+    /* Full width or the bar shrink-wraps to its own text inside the page's
+       `.stack` and floats over the card beside it. */
+    width: 100%;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -4033,6 +4625,158 @@
   .travel-fill-bar-done:hover {
     background: var(--accent-strong);
     text-decoration: none;
+  }
+
+  /* ---------------- Trip page sections (Wave 2, spec 005 US6) ----------------
+     The page reads as titled sections in one constant order, each with a live
+     summary beside its heading, so nothing has to be opened to be understood.
+     Every variant below is a COMPOUND selector: a bare `.is-target`/`.is-over`/
+     `.is-absent` in this layer would outrank the base-layer element styles it
+     sits beside (the T061/T066 cascade trap). */
+
+  .travel-section {
+    width: 100%;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .travel-section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+
+  .travel-section-head > h2 {
+    margin: 0;
+  }
+
+  .travel-section-summary {
+    color: var(--muted-ink);
+    font-size: 0.9rem;
+  }
+
+  /* The app's disclosure trigger (trip page, competition hub, money). Every one
+     of them names what it holds and shows its current state. The summary IS the
+     control — edit, delete, add-a-line and add-a-chaperone live behind it and
+     nowhere else — so it carries a thumb-sized hit area instead of the ~26px a
+     bare line of text gives. Kept as the default `list-item` display so the
+     browser's own disclosure marker survives. One rule for all three surfaces:
+     three copies of the same five declarations is how they drift apart. */
+  .travel-disclosure,
+  .comp-disclosure,
+  .money-disclosure,
+  .shift-disclosure,
+  .wardrobe-disclosure,
+  .people-disclosure {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--accent-strong);
+    min-height: 44px;
+    padding: 0.65rem 0;
+  }
+
+  .travel-group-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    width: 100%;
+  }
+
+  .travel-group-card {
+    flex: 1 1 15rem;
+    min-width: 13rem;
+    padding: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+  }
+
+  .travel-group-card.is-target {
+    border-color: var(--accent);
+  }
+
+  /* Over capacity warns, never blocks (§6). */
+  .travel-group-card.is-over {
+    border-color: var(--warn);
+    background: var(--warn-soft);
+  }
+
+  .travel-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .travel-member-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+  }
+
+  .travel-member-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .travel-member-who {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .travel-member-who > .chip {
+    margin: 0;
+  }
+
+  /* An absent rider reads quieter but still legible — the same 0.72 the season
+     spine dims past rows to (a lighter value failed the contrast check). The dim
+     lands on the NAME, never on the row: `opacity` composites the whole subtree,
+     so dimming the row took the "absent" danger chip down with it and the chip's
+     alert text stopped clearing AA. */
+  .travel-member-row.is-absent .travel-member-name,
+  .travel-unassigned > li.is-absent .travel-unassigned-name,
+  .travel-chip.is-absent .travel-chip-name {
+    opacity: 0.72;
+  }
+
+  .travel-unassigned {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+  }
+
+  .travel-unassigned > li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .travel-unassigned-name {
+    font-weight: 600;
+    margin-right: 0.25rem;
+  }
+
+  .travel-chaperone-row {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--line);
+    width: 100%;
+  }
+
+  .travel-day-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
   }
 
   @media (max-width: 760px) {
@@ -4304,6 +5048,20 @@
       text-align: center;
     }
 
+    /* The "+ Add" drawer is a <details> wrapping the button, so the stretch
+       has to land on the wrapper for it to sit level with Trophy case — and
+       then on the summary inside it, or the button stays text-width and half
+       the stretched row isn't tappable. */
+    .season-actions .drawer {
+      flex: 1;
+    }
+
+    .season-actions .drawer > summary {
+      display: block;
+      width: 100%;
+      text-align: center;
+    }
+
     .season-filter-note {
       display: none;
     }
@@ -4354,26 +5112,10 @@
       font-size: 1.2rem;
     }
 
-    .comp-att-row {
-      align-items: flex-start;
-    }
-
-    .comp-att-name {
-      min-width: 100%;
-    }
-
-    .comp-att-toggle {
-      width: 100%;
-    }
-
-    .comp-att-note {
-      flex: 1;
-      width: auto;
-      min-width: 6rem;
-    }
-
-    .comp-meal-figures {
-      gap: 1rem 1.5rem;
+    /* Glance cards go single-column on a phone: a two-up grid at 375px puts
+       "41 expected · 2 absent" on three lines. */
+    .comp-glance {
+      grid-template-columns: 1fr;
     }
 
     /* Wave C task landings on phones: metric strip 2-col, header + filters
@@ -4399,10 +5141,44 @@
       width: 100%;
     }
 
+    /* Four decisions become one column — a 2-col grid at 375px leaves an
+       amount field too narrow to read "1,234.56" in. */
+    .money-decisions {
+      grid-template-columns: 1fr;
+    }
+
     .drawer-panel {
       right: auto;
       left: 0;
       width: min(34rem, 92vw);
+    }
+
+    /* The student page's "+ Add guardian" drawer sits at the RIGHT end of its
+       heading row, so flipping its panel to `left: 0` hangs it off that end and
+       runs it ~190px past the screen. It keeps the desktop anchoring, which on a
+       phone is the one that works: the panel's right edge lands on the page
+       gutter and it opens leftward across the width it has. */
+    .person-section-head .drawer-panel {
+      left: auto;
+      right: 0;
+    }
+
+    /* …but the spine's row popovers keep their own anchoring — flipping them
+       would push the panel off the side of the phone. */
+    .drawer-panel.season-edit-panel {
+      width: min(24rem, 88vw);
+      right: 0;
+      left: auto;
+    }
+
+    /* The feature panel hangs off the row BODY, which on a 375px phone is the
+       screen minus the page padding (2.2rem) and the 76px date column plus its
+       1.1rem gutter — about 246px. Sizing to that body is what keeps it on
+       screen; 88vw (330px) would run 84px past the right edge. */
+    .drawer-panel.season-feature-edit-panel {
+      width: min(24rem, 100%);
+      left: 0;
+      right: auto;
     }
 
     .alt-row {
@@ -4413,6 +5189,10 @@
       flex-basis: 100%;
     }
 
+    .wardrobe-filters {
+      width: 100%;
+    }
+
     /* Comms digest-first landing collapses to a single column; the aside drops
        below the digest card + recently-sent log. */
     .comms-body {
@@ -4420,11 +5200,17 @@
       gap: 1.5rem;
     }
 
-    .digest-actions .accent,
-    .digest-actions .discard,
-    .digest-actions .button-link {
-      flex: 1;
+    /* On a phone the digest card's one action spans the card so it stays an
+       easy tap target. */
+    .digest-card > .button-link {
+      align-self: stretch;
       text-align: center;
+    }
+
+    /* A shift's Edit panel takes the card's full width on a phone rather than
+       the 30rem it gets on a desktop card. */
+    .shift-edit-panel {
+      width: 100%;
     }
 
     /* Restricted notice: tighten the display heading + let the CTA span the
@@ -4436,6 +5222,53 @@
     .restricted-actions .button-link {
       display: block;
       text-align: center;
+    }
+  }
+
+  /* ==================== Print ====================
+     One surface is designed to leave the screen: the quick-change sheet, which
+     goes into the wings on paper (spec 005 US15). Print drops the app chrome
+     everywhere — nobody wants a nav bar on a printout — and the sheet drops its
+     own picker and instructions, stops scrolling horizontally, and gives each
+     ensemble its own page with the column headers repeated on every sheet. */
+  @media print {
+    .shell-header,
+    .mobile-nav,
+    .support-banner,
+    .subtabs,
+    .qc-chrome {
+      display: none;
+    }
+
+    main {
+      padding: 0;
+    }
+
+    /* A scroll container prints only what was scrolled into view, so the grid
+       lays out at its natural width instead. */
+    .qc-scroll {
+      overflow-x: visible;
+    }
+
+    .qc-grid {
+      min-width: 0;
+      display: table;
+      font-size: 0.8rem;
+    }
+
+    /* Repeat the "Change 2 / Opener → Ballad" headers when a long ensemble runs
+       over a page. */
+    .qc-grid thead {
+      display: table-header-group;
+    }
+
+    .qc-row {
+      break-inside: avoid;
+    }
+
+    /* One ensemble per sheet — that is how it gets handed out. */
+    .qc-ensemble + .qc-ensemble {
+      break-before: page;
     }
   }
 }

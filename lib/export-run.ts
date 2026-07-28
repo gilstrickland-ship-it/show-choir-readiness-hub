@@ -10,6 +10,11 @@ import { appBaseUrl } from "@/lib/tokens";
 //   because export_jobs and the exports bucket have no client write policy — the
 //   job is the only writer. Shared by the Inngest function and the inline fallback
 //   (dev/pilot without Inngest), mirroring the packet-parse dual-path pattern.
+//
+// RLS is off on this client, so the (jobId, programId) pair has to agree or the
+// runner would write one program's zip path onto another program's job row.
+// Every update below is scoped by BOTH: a mismatched pair updates nothing
+// instead of crossing tenants.
 
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
@@ -17,7 +22,11 @@ export async function runExportJob(jobId: string, programId: string): Promise<st
   const admin = createAdminClient();
   const storagePath = `${programId}/${jobId}.zip`;
 
-  await admin.from("export_jobs").update({ status: "running" }).eq("id", jobId);
+  await admin
+    .from("export_jobs")
+    .update({ status: "running" })
+    .eq("id", jobId)
+    .eq("program_id", programId);
 
   try {
     const zip = await buildExportZip(admin, programId);
@@ -37,7 +46,8 @@ export async function runExportJob(jobId: string, programId: string): Promise<st
         storage_path: storagePath,
         finished_at: new Date().toISOString(),
       })
-      .eq("id", jobId);
+      .eq("id", jobId)
+      .eq("program_id", programId);
 
     // Best-effort email of a signed download link. When no email key is present
     // (or no director email resolves), the in-app export page lists this job as
@@ -54,7 +64,8 @@ export async function runExportJob(jobId: string, programId: string): Promise<st
         error: e instanceof Error ? e.message : String(e),
         finished_at: new Date().toISOString(),
       })
-      .eq("id", jobId);
+      .eq("id", jobId)
+      .eq("program_id", programId);
     return "failed";
   }
 }

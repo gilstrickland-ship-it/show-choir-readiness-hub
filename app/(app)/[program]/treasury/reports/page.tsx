@@ -1,51 +1,48 @@
-import Link from "next/link";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { TREASURY_ROLES } from "@/lib/nav";
+import { oneParam } from "@/lib/flash";
 import {
-  formatCents,
-  sumActuals,
-  listMonthsWithEntries,
+  lineActualsFromRows,
+  seasonTotalsFromRow,
+  commitmentTotalsFromRow,
+  actualForDirection,
+  pickSeasonBudget,
   monthKeyForDate,
   reconciledThroughMonth,
   formatMonthKey,
-  CATEGORY_DIRECTION_LABELS,
-  type CategoryDirection,
-  type LedgerDirection,
-  type LedgerMonthRow,
+  UNCATEGORIZED_KEY,
+  type LineActual,
+  type LedgerSeasonTotals,
+  type CommitmentTotals,
 } from "@/lib/treasury";
-import { TreasuryTabs } from "../TreasuryTabs";
+import { SubTabs } from "../../SubTabs";
+import { treasuryTabs } from "@/lib/subnav";
+import { EventReport, type NamedRow } from "./EventReport";
+import { BoardSnapshot, type SnapshotCatRow } from "./BoardSnapshot";
 
-// Reports (T020): per-event cost report (competition or trip → income/expense/
-// net + line breakdown) and a read-only board-snapshot data page (totals,
-// category rollups, uncategorized note, as-of stamp) that links to the P5 PDF
-// at /api/pdf/board-snapshot?season=... . Read-only; no writes.
+// Reports (T020, replanned in spec 005 Wave 12): what one competition or trip
+// cost, and the board snapshot the monthly meeting is read from. Read-only; no
+// writes, for any seat. A load-and-compose page — the two reports are their own
+// files (EventReport, BoardSnapshot), which is also where their vocabulary and
+// their "we could not read this" behaviour live.
+//
+// Every number here is a SQL aggregate (0019), not a sum over a fetched entry
+// list. This is the page a treasurer reads to a board from, so it is the last
+// place that may quietly stop at PostgREST's 1000-row cap. The per-event report
+// asks for one event's aggregate instead of pulling the season and filtering it
+// in memory.
 
-interface CatRow {
-  id: string;
-  name: string;
-  direction: CategoryDirection;
-}
 interface LineRow {
   id: string;
   category_id: string;
   name: string;
-}
-interface EntryRow {
-  direction: LedgerDirection;
-  amount_cents: number;
-  voided_at: string | null;
-  budget_line_id: string | null;
-  competition_id: string | null;
-  trip_id: string | null;
-  entry_date: string;
-}
-interface NamedRow {
-  id: string;
-  name: string;
+  // Planned is what "Still available" is measured against (spec 006 §1), so the
+  // snapshot needs the budget's own figures, not only the ledger's.
+  planned_cents: number;
 }
 
 export default async function ReportsPage({
@@ -53,7 +50,9 @@ export default async function ReportsPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ event?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?event=a&event=b), so the
+  // read goes through `oneParam` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -63,28 +62,54 @@ export default async function ReportsPage({
       <Restricted slug={slug} surface="Money" role={role} allowed={TREASURY_ROLES} />
     );
   }
-  const { event } = await searchParams;
+  const sp = await searchParams;
+  const event = oneParam(sp, "event");
 
   const supabase = await createClient();
 
-  let cats: CatRow[] = [];
+  let cats: SnapshotCatRow[] = [];
   let lines: LineRow[] = [];
-  let entries: EntryRow[] = [];
   let comps: NamedRow[] = [];
   let trips: NamedRow[] = [];
+  let seasonByLine = new Map<string, LineActual>();
+  let totals: LedgerSeasonTotals | null = null;
+  // The middle layer (spec 006). Its own aggregate, so its own failure: a
+  // committed figure we could not read is a blank, and the "still available"
+  // line is withheld entirely rather than printed as though nothing were
+  // promised — which is the exact wrong number this feature exists to stop.
+  let commitmentTotals: CommitmentTotals | null = null;
+  // The per-line aggregate can fail on its own, and it used to fail SILENTLY:
+  // its error collapsed into an empty map while the only banner keyed on the
+  // OTHER rpc, so a board snapshot could print $0.00 actuals for every category
+  // beside real budgeted figures — the exact shape of number a board acts on.
+  let actualsUnavailable = false;
+  let eventActualsUnavailable = false;
+  // The budget's own shape fails separately again, and an empty category list
+  // renders as "No budget categories yet." — a statement about the budget that
+  // is false when the read is what failed.
+  let structureUnavailable = false;
 
   if (season) {
-    const [{ data: budget }, { data: compData }, { data: tripData }, { data: entryData }] =
-      await Promise.all([
+    const [
+      budgetRes,
+      { data: compData },
+      { data: tripData },
+      lineRes,
+      totalsRes,
+      commitmentRes,
+    ] = await Promise.all([
+        // The ACTIVE budget, else the newest — the same choice the board PDF
+        // makes (lib/pdf/queries loadBoardSnapshot), which matters here more
+        // than anywhere: this page and that PDF are the two things a treasurer
+        // hands the same meeting. `.order("status")` sorts the enum by
+        // declaration order and so preferred the DRAFT (lib/treasury
+        // pickSeasonBudget).
         supabase
           .from("budgets")
-          .select("id, name")
+          .select("id, name, status")
           .eq("program_id", program.id)
           .eq("season_id", season.id)
-          .order("status", { ascending: true })
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+          .order("created_at", { ascending: false }),
         supabase
           .from("competitions")
           .select("id, name")
@@ -97,40 +122,68 @@ export default async function ReportsPage({
           .eq("program_id", program.id)
           .eq("season_id", season.id)
           .order("starts_on", { ascending: false }),
-        supabase
-          .from("ledger_entries")
-          .select(
-            "direction, amount_cents, voided_at, budget_line_id, competition_id, trip_id, entry_date",
-          )
-          .eq("program_id", program.id)
-          .eq("season_id", season.id)
-          .is("voided_at", null),
+        supabase.rpc("ledger_line_actuals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
+        supabase.rpc("ledger_season_totals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
+        // The same aggregate the ledger strip and Budget vs Actual read, and the
+        // same definition the board PDF restates in TypeScript on its
+        // service-role path — one source, so the handout and the screen cannot
+        // put two different "still available" figures in front of one meeting.
+        supabase.rpc("commitment_totals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
       ]);
 
-    const b = budget as { id: string; name: string } | null;
+    // The budget's own row failing reads downstream as "this program has no
+    // budget", and the snapshot then prints "No budget categories yet." — a
+    // statement about the budget, made when it was the READ that failed.
+    const b = pickSeasonBudget(
+      (budgetRes.data as { id: string; name: string; status: string }[] | null) ??
+        [],
+    );
+    if (budgetRes.error) structureUnavailable = true;
     comps = (compData as NamedRow[] | null) ?? [];
     trips = (tripData as NamedRow[] | null) ?? [];
-    entries = (entryData as EntryRow[] | null) ?? [];
+    actualsUnavailable = !!lineRes.error;
+    seasonByLine = lineRes.error ? new Map() : lineActualsFromRows(lineRes.data);
+    const totalsRow = Array.isArray(totalsRes.data)
+      ? totalsRes.data[0]
+      : totalsRes.data;
+    totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
+    const commitmentRow = Array.isArray(commitmentRes.data)
+      ? commitmentRes.data[0]
+      : commitmentRes.data;
+    commitmentTotals = commitmentRes.error
+      ? null
+      : commitmentTotalsFromRow(commitmentRow);
 
     if (b) {
-      const { data: catData } = await supabase
+      const { data: catData, error: catError } = await supabase
         .from("budget_categories")
         .select("id, name, direction")
         .eq("program_id", program.id)
         .eq("budget_id", b.id)
         .order("direction", { ascending: true })
         .order("sort_order", { ascending: true });
-      cats = (catData as CatRow[] | null) ?? [];
+      cats = (catData as SnapshotCatRow[] | null) ?? [];
+      if (catError) structureUnavailable = true;
       if (cats.length > 0) {
-        const { data: lineData } = await supabase
+        const { data: lineData, error: lineError } = await supabase
           .from("budget_lines")
-          .select("id, category_id, name")
+          .select("id, category_id, name, planned_cents")
           .eq("program_id", program.id)
           .in(
             "category_id",
             cats.map((c) => c.id),
           );
         lines = (lineData as LineRow[] | null) ?? [];
+        if (lineError) structureUnavailable = true;
       }
     }
   }
@@ -139,231 +192,148 @@ export default async function ReportsPage({
   const lineCat = new Map(lines.map((l) => [l.id, l.category_id]));
 
   // ---- Board snapshot rollups ----------------------------------------------
-  const snapshot = sumActuals(entries);
+  // A category's rollup is read the way the category MEANS it — an income
+  // category counts money in, an expense category counts money out
+  // (lib/treasury actualForDirection). That is the same split the header
+  // figures use, because ledger_season_totals divides by the ENTRY's direction
+  // too, so the two halves of this snapshot can be added up against each other.
+  //
+  // It used to be every cent booked to the line regardless of direction, filed
+  // under whichever direction its category happened to be. A refund booked
+  // against an expense line therefore INCREASED that category's total and, in
+  // the PDF, the season's total expenses — so the Net printed on the handout and
+  // the Net on this page could disagree at the same board meeting.
+  //
+  // Uncategorized comes back as its own bucket from the aggregate and is
+  // reported separately below (it belongs to no category, in either direction).
+  const catDirection = new Map(cats.map((c) => [c.id, c.direction]));
   const catActual = new Map<string, number>();
-  let uncategorizedCount = 0;
-  let uncategorizedTotal = 0;
-  for (const e of entries) {
-    if (e.budget_line_id) {
-      const catId = lineCat.get(e.budget_line_id);
-      if (catId) {
-        catActual.set(catId, (catActual.get(catId) ?? 0) + e.amount_cents);
-      }
-    } else {
-      uncategorizedCount += 1;
-      uncategorizedTotal += e.amount_cents;
-    }
+  for (const [lineId, actual] of seasonByLine) {
+    if (lineId === UNCATEGORIZED_KEY) continue;
+    const catId = lineCat.get(lineId);
+    if (!catId) continue;
+    const direction = catDirection.get(catId);
+    if (!direction) continue;
+    catActual.set(
+      catId,
+      (catActual.get(catId) ?? 0) + actualForDirection(actual, direction),
+    );
   }
+  // What the season PLANNED to spend — the first of the four numbers. Only the
+  // expense side has a "still available", because only spending authority can be
+  // committed against (spec §2, decision D4). Null when the budget's own lines
+  // could not be read: a planned total of $0 would make every committed dollar
+  // read as an overrun.
+  const plannedExpense = structureUnavailable
+    ? null
+    : lines.reduce(
+        (sum, l) =>
+          catDirection.get(l.category_id) === "expense"
+            ? sum + l.planned_cents
+            : sum,
+        0,
+      );
+
   const asOf = formatDateTimeInTz(new Date(), program.timezone);
 
   // "Reconciled through" (Wave L): the latest contiguous month whose books were
-  // checked against the bank statement. `entries` is already void-free.
-  const monthsWithEntries = listMonthsWithEntries(entries as LedgerMonthRow[]);
+  // checked against the bank statement. The month list is void-free by
+  // construction (the aggregate excludes voided rows).
+  const monthsWithEntries = totals?.months ?? [];
   let reconciledThroughLabel: string | null = null;
+  // A failed reconciliation read used to collapse into an empty key list, which
+  // reads as "No months reconciled yet." — the money control's own status line,
+  // stated wrongly, while the downloadable PDF printed the truth from the same
+  // table. Blank, and say why.
+  let reconciledUnavailable = false;
   if (season && monthsWithEntries.length > 0) {
-    const { data: recRows } = await supabase
+    const { data: recRows, error: recError } = await supabase
       .from("ledger_reconciliations")
       .select("month")
       .eq("program_id", program.id);
-    const reconciledKeys = ((recRows as { month: string }[] | null) ?? [])
-      .map((r) => monthKeyForDate(r.month))
-      .filter((k): k is string => k !== null);
-    const through = reconciledThroughMonth(monthsWithEntries, reconciledKeys);
-    reconciledThroughLabel = through ? formatMonthKey(through) : null;
+    if (recError) {
+      reconciledUnavailable = true;
+    } else {
+      const reconciledKeys = ((recRows as { month: string }[] | null) ?? [])
+        .map((r) => monthKeyForDate(r.month))
+        .filter((k): k is string => k !== null);
+      const through = reconciledThroughMonth(monthsWithEntries, reconciledKeys);
+      reconciledThroughLabel = through ? formatMonthKey(through) : null;
+    }
   }
 
-  // ---- Per-event cost report ------------------------------------------------
+  // ---- The chosen event -----------------------------------------------------
+  // `?event=` is a client-supplied id and is resolved IN-PROGRAM before it is
+  // used for anything: the name comes from this season's own competition and
+  // trip lists, and an id that isn't on one of them never reaches the aggregate
+  // (it used to be handed straight to the rpc, which then answered for an event
+  // this page had already decided it would not name).
   const kind = event?.startsWith("comp:")
     ? "comp"
     : event?.startsWith("trip:")
       ? "trip"
       : null;
   const eventId = kind ? event!.slice(5) : null;
-  const eventName = kind
-    ? kind === "comp"
+  const eventName = !eventId
+    ? null
+    : kind === "comp"
       ? (comps.find((c) => c.id === eventId)?.name ?? null)
-      : (trips.find((t) => t.id === eventId)?.name ?? null)
-    : null;
+      : (trips.find((t) => t.id === eventId)?.name ?? null);
 
-  const eventEntries = eventId
-    ? entries.filter((e) =>
-        kind === "comp" ? e.competition_id === eventId : e.trip_id === eventId,
-      )
-    : [];
-  const eventTotals = sumActuals(eventEntries);
-  // Line breakdown within the event.
-  const eventByLine = new Map<string | null, number>();
-  for (const e of eventEntries) {
-    const key = e.budget_line_id;
-    eventByLine.set(key, (eventByLine.get(key) ?? 0) + e.amount_cents);
+  // One aggregate scoped to the chosen event — asked for only when an event is
+  // chosen, and grouped by budget line so the breakdown and the totals are the
+  // same numbers by construction.
+  let eventByLine = new Map<string, LineActual>();
+  if (season && eventId && kind && eventName) {
+    const { data, error } = await supabase.rpc("ledger_line_actuals", {
+      p_program_id: program.id,
+      p_season_id: season.id,
+      p_competition_id: kind === "comp" ? eventId : null,
+      p_trip_id: kind === "trip" ? eventId : null,
+    });
+    eventActualsUnavailable = !!error;
+    if (!error) eventByLine = lineActualsFromRows(data);
   }
 
   return (
     <section className="stack">
-      <TreasuryTabs slug={slug} active="reports" />
+      <SubTabs strip={treasuryTabs(slug, "reports")} />
       <h1>Reports</h1>
+      <p className="muted">
+        Two ways to read the season&apos;s money: what one event cost, and the
+        summary the board meets over. Both count the ledger as it stands —
+        voided entries never count.
+      </p>
 
       {!season && <p className="alert-error">No active season.</p>}
 
       {season && (
         <>
-          {/* Per-event cost report */}
-          <div className="stack">
-            <h2>Per-event cost report</h2>
-            <p className="muted">
-              What a competition or trip actually cost — income, expense, and net
-              for every entry tagged to it.
-            </p>
-            <form method="get" className="row-inline">
-              <label>
-                Event
-                <select name="event" defaultValue={event ?? ""}>
-                  <option value="">Choose a competition or trip…</option>
-                  {comps.length > 0 && (
-                    <optgroup label="Competitions">
-                      {comps.map((c) => (
-                        <option key={c.id} value={`comp:${c.id}`}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {trips.length > 0 && (
-                    <optgroup label="Trips">
-                      {trips.map((t) => (
-                        <option key={t.id} value={`trip:${t.id}`}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </label>
-              <button type="submit" className="secondary">
-                Run
-              </button>
-            </form>
+          <EventReport
+            slug={slug}
+            comps={comps}
+            trips={trips}
+            selected={event ?? ""}
+            eventName={eventName}
+            byLine={eventByLine}
+            lineName={lineName}
+            unavailable={eventActualsUnavailable}
+          />
 
-            {eventId && eventName && (
-              <div className="stack">
-                <dl className="detail-list">
-                  <dt>Event</dt>
-                  <dd>{eventName}</dd>
-                  <dt>Income</dt>
-                  <dd className="num">{formatCents(eventTotals.inCents)}</dd>
-                  <dt>Expense</dt>
-                  <dd className="num">{formatCents(eventTotals.outCents)}</dd>
-                  <dt>Net</dt>
-                  <dd className="num">
-                    <strong>{formatCents(eventTotals.netCents)}</strong>
-                  </dd>
-                </dl>
-                <table className="members">
-                  <thead>
-                    <tr>
-                      <th>Budget line</th>
-                      <th className="num">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...eventByLine.entries()].map(([lid, amt]) => (
-                      <tr key={lid ?? "uncat"}>
-                        <td>
-                          {lid ? (
-                            (lineName.get(lid) ?? "—")
-                          ) : (
-                            <span className="muted">uncategorized</span>
-                          )}
-                        </td>
-                        <td className="num">{formatCents(amt)}</td>
-                      </tr>
-                    ))}
-                    {eventEntries.length === 0 && (
-                      <tr>
-                        <td colSpan={2} className="muted">
-                          No entries tagged to this event.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Board snapshot data */}
-          <div className="stack">
-            <h2>Board snapshot</h2>
-            <p className="muted">
-              The monthly-meeting summary. Full financial transparency to the
-              board is a fiduciary norm — and the treasurer&apos;s protection.
-              As of {asOf}.
-            </p>
-            <p className="muted">
-              {reconciledThroughLabel
-                ? `Reconciled through ${reconciledThroughLabel}.`
-                : "No months reconciled yet."}
-            </p>
-
-            <dl className="detail-list">
-              <dt>Income (actual)</dt>
-              <dd className="num">{formatCents(snapshot.inCents)}</dd>
-              <dt>Expense (actual)</dt>
-              <dd className="num">{formatCents(snapshot.outCents)}</dd>
-              <dt>Net</dt>
-              <dd className="num">
-                <strong>{formatCents(snapshot.netCents)}</strong>
-              </dd>
-            </dl>
-
-            <h3>Category rollups</h3>
-            <table className="members">
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th>Direction</th>
-                  <th className="num">Actual</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cats.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td>{CATEGORY_DIRECTION_LABELS[c.direction]}</td>
-                    <td className="num">{formatCents(catActual.get(c.id) ?? 0)}</td>
-                  </tr>
-                ))}
-                {cats.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="muted">
-                      No budget categories yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-
-            {uncategorizedCount > 0 ? (
-              <p className="alert-error">
-                {uncategorizedCount} uncategorized{" "}
-                {uncategorizedCount === 1 ? "entry" : "entries"} totaling{" "}
-                {formatCents(uncategorizedTotal)} are not reflected in the
-                category rollups above.{" "}
-                <Link href={`/${slug}/treasury?uncategorized=1`}>Clear them</Link>.
-              </p>
-            ) : (
-              <p className="muted">All entries are categorized.</p>
-            )}
-
-            <p>
-              <a
-                href={`/api/pdf/board-snapshot?season=${season.id}`}
-                className="secondary"
-              >
-                Download board snapshot (PDF)
-              </a>
-            </p>
-          </div>
+          <BoardSnapshot
+            slug={slug}
+            seasonId={season.id}
+            asOf={asOf}
+            reconciledThroughLabel={reconciledThroughLabel}
+            reconciledUnavailable={reconciledUnavailable}
+            cats={cats}
+            catActual={catActual}
+            totals={totals}
+            plannedExpense={plannedExpense}
+            commitments={commitmentTotals}
+            actualsUnavailable={actualsUnavailable}
+            structureUnavailable={structureUnavailable}
+          />
         </>
       )}
     </section>

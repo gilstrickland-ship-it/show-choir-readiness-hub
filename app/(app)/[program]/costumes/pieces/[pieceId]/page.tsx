@@ -17,10 +17,11 @@ import {
 } from "@/lib/costumes";
 import { updatePiece, retirePiece } from "../../actions";
 
-// Piece detail / edit (T009). Program inventory — no season on the piece itself;
-// set_id is the current-season grouping and can be re-pointed here. Retire keeps
-// the record (inventory is never deleted, §4). director/admin/costume_manager
-// write; board_member reads.
+// One piece, all of it. Program inventory — no season on the piece itself;
+// set_id is the current-season grouping and can be re-pointed here. Retiring
+// keeps the record (inventory is never deleted, §4). The inventory row's Edit
+// panel handles the five fields that change constantly; this page is where the
+// rest of them live.
 
 interface PieceDetail {
   id: string;
@@ -34,12 +35,25 @@ interface PieceDetail {
   notes: string | null;
 }
 
+const ERR: Record<string, string> = {
+  piece: "A piece needs a name and a kind.",
+  set: "That set isn't part of this program. Reload the page and pick one from the list.",
+  save: "Couldn't save. Try again.",
+};
+
+// The code rides in the URL, so the lookup must be a lookup and not a walk up
+// Object.prototype — `?error=constructor` would otherwise hand React a function.
+function message(code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(ERR, code) ? ERR[code] : null;
+}
+
 export default async function PieceDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string; pieceId: string }>;
-  searchParams: Promise<{ saved?: string; error?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, pieceId } = await params;
   const { program, role } = await getTenantContext(slug);
@@ -50,7 +64,13 @@ export default async function PieceDetailPage({
     );
   }
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
-  const { saved, error } = await searchParams;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const error = message(one("error"));
 
   const supabase = await createClient();
   const { data: pieceData } = await supabase
@@ -69,19 +89,23 @@ export default async function PieceDetailPage({
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
   const sets = (setData as { id: string; name: string }[] | null) ?? [];
+  const retired = piece.condition === "retire";
 
   return (
     <section className="stack">
-      <p>
-        <Link href={`/${slug}/costumes`}>← Inventory</Link>
-      </p>
-      <h1>
-        {piece.label}{" "}
-        {piece.condition === "retire" && <span className="muted">(retired)</span>}
-      </h1>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">
+            <Link href={`/${slug}/costumes/inventory`}>← Inventory</Link> ·{" "}
+            {PIECE_KIND_LABELS[piece.kind]}
+            {retired ? " · retired" : ""}
+          </p>
+          <h1 className="page-h1">{piece.label}</h1>
+        </div>
+      </div>
 
-      {saved && <p className="alert-ok">Saved.</p>}
-      {error === "piece" && <p className="alert-error">A piece needs a kind and a label.</p>}
+      {one("saved") && <p className="alert-ok">Saved.</p>}
+      {error && <p className="alert-error">{error}</p>}
 
       {canWrite ? (
         <form action={updatePiece} className="stack">
@@ -90,7 +114,7 @@ export default async function PieceDetailPage({
           <input type="hidden" name="pieceId" value={piece.id} />
           <div className="row-inline">
             <label>
-              Kind
+              What it is
               <select name="kind" defaultValue={piece.kind}>
                 {PIECE_KINDS.map((k) => (
                   <option key={k} value={k}>
@@ -100,15 +124,15 @@ export default async function PieceDetailPage({
               </select>
             </label>
             <label>
-              Label
+              Name
               <input type="text" name="label" defaultValue={piece.label} required />
             </label>
             <label>
-              Size label
+              Size
               <input type="text" name="size_label" defaultValue={piece.size_label ?? ""} />
             </label>
             <label>
-              Color
+              Colour
               <input type="text" name="color" defaultValue={piece.color ?? ""} />
             </label>
             <label>
@@ -122,7 +146,7 @@ export default async function PieceDetailPage({
               </select>
             </label>
             <label>
-              Storage location
+              Where it lives
               <input
                 type="text"
                 name="storage_location"
@@ -132,7 +156,7 @@ export default async function PieceDetailPage({
             <label>
               Set
               <select name="set_id" defaultValue={piece.set_id ?? ""}>
-                <option value="">(no set)</option>
+                <option value="">Not in a set</option>
                 {sets.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -150,22 +174,22 @@ export default async function PieceDetailPage({
         </form>
       ) : (
         <dl className="detail-list">
-          <dt>Kind</dt>
+          <dt>What it is</dt>
           <dd>{PIECE_KIND_LABELS[piece.kind]}</dd>
           <dt>Size</dt>
           <dd>{piece.size_label ?? "—"}</dd>
-          <dt>Color</dt>
+          <dt>Colour</dt>
           <dd>{piece.color ?? "—"}</dd>
           <dt>Condition</dt>
-          <dd>{PIECE_CONDITION_LABELS[piece.condition] ?? piece.condition}</dd>
-          <dt>Storage</dt>
+          <dd>{PIECE_CONDITION_LABELS[piece.condition]}</dd>
+          <dt>Where it lives</dt>
           <dd>{piece.storage_location ?? "—"}</dd>
           <dt>Notes</dt>
           <dd>{piece.notes ?? "—"}</dd>
         </dl>
       )}
 
-      {canWrite && piece.condition !== "retire" && (
+      {canWrite && !retired && (
         <form action={retirePiece}>
           <input type="hidden" name="programId" value={program.id} />
           <input type="hidden" name="slug" value={slug} />

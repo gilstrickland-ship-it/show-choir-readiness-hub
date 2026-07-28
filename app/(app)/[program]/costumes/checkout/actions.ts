@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
+import { programPath } from "@/lib/return-path";
 import { COSTUME_WRITE_ROLES, DIRECT_KINDS } from "@/lib/costumes";
 import { competitionEnsembleIds } from "@/lib/competitions";
 
@@ -18,6 +19,13 @@ interface CompetitionRow {
   season_id: string;
 }
 
+// Fail closed on the slug (lib/return-path): it arrives as a form field, and a
+// value like "/evil.com" interpolated into a path makes a protocol-relative URL
+// the browser follows off-site.
+function checkoutPath(slug: string): string {
+  return programPath(slug, "costumes/checkout") ?? "/";
+}
+
 // Idempotently seed checkout rows for a competition: one per active assignment of
 // its PARTICIPATING ensembles' sets (season-scoped), plus a direct piece row for
 // each prop/set piece in those sets. A competition can include several ensembles
@@ -28,7 +36,7 @@ export async function seedCheckout(formData: FormData): Promise<void> {
   const competitionId = String(formData.get("competitionId") ?? "");
   await requireRole(programId, COSTUME_WRITE_ROLES);
 
-  const base = `/${slug}/costumes/checkout`;
+  const base = checkoutPath(slug);
   if (!competitionId) redirect(base);
 
   const supabase = await createClient();
@@ -136,14 +144,30 @@ export async function toggleCheckout(formData: FormData): Promise<void> {
   const checkoutId = String(formData.get("checkoutId") ?? "");
   const { user } = await requireRole(programId, COSTUME_WRITE_ROLES);
 
-  const base = `/${slug}/costumes/checkout?competition=${competitionId}`;
-
   const supabase = await createClient();
+
+  // The competition id only steers the redirect, but it is echoed into a URL
+  // this page then reads back — resolve it in-program rather than reflecting
+  // whatever the form posted.
+  const { data: compData } = await supabase
+    .from("competitions")
+    .select("id")
+    .eq("id", competitionId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  const base = compData
+    ? `${checkoutPath(slug)}?competition=${competitionId}`
+    : checkoutPath(slug);
+  if (!compData) redirect(base);
+
+  // The row is proven to be this program's AND this competition's before any
+  // check-out stamp is written through it (Constitution I).
   const { data: rowData } = await supabase
     .from("costume_checkouts")
     .select("id, checked_out_at, checked_in_at")
     .eq("id", checkoutId)
     .eq("program_id", programId)
+    .eq("competition_id", competitionId)
     .maybeSingle();
   const row = rowData as
     | { id: string; checked_out_at: string | null; checked_in_at: string | null }
@@ -175,6 +199,6 @@ export async function toggleCheckout(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) redirect(`${base}&error=toggle`);
-  revalidatePath(`/${slug}/costumes/checkout`);
+  revalidatePath(checkoutPath(slug));
   redirect(base);
 }

@@ -8,6 +8,7 @@ import { DIGEST_WRITE_ROLES, currentWeekOf } from "@/lib/comms";
 import { sendDigestCore } from "@/lib/comms-send";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { draftDigest } from "@/lib/ai/digest-draft";
+import { programPath } from "@/lib/return-path";
 
 // Digest review actions (§8, T025, Constitution IV). Director/admin only. The AI
 // NEVER sends: "Draft now" produces a `draft`, a human edits + approves, and only
@@ -17,15 +18,16 @@ function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
 }
 
+// The digest workspace is the ONE home for the digest lifecycle (spec 005
+// US9-1): draft, edit, approve, discard, send, history. The Comms landing shows
+// the state and links here, so every action below returns to this page and the
+// `backTo` fork these redirects used to carry is gone with the landing's forms.
 function digestPath(slug: string): string {
-  return `/${slug}/comms/digest`;
-}
-
-// The digest lifecycle is reachable from two surfaces: the digest-first Comms
-// landing (/comms) and the full digest workspace (/comms/digest). `backTo=comms`
-// returns to the landing; anything else returns to the workspace.
-function backTarget(slug: string, backTo: string): string {
-  return backTo === "comms" ? `/${slug}/comms` : digestPath(slug);
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  return programPath(slug, "comms/digest") ?? "/";
 }
 
 // "Draft now" fallback (mirrors the packet-parse inline path). Runs the gather →
@@ -56,40 +58,90 @@ export async function draftNow(formData: FormData): Promise<void> {
   redirect(`${digestPath(slug)}?${outcome}`);
 }
 
-export async function saveDigest(formData: FormData): Promise<void> {
+// The three things a reviewer can do to a draft they are LOOKING AT, in one
+// action, because they are one form (Constitution IV).
+//
+// Approve and Send used to be sibling forms carrying nothing but the digest id,
+// while the subject and body lived in a third form whose only submit was "Save
+// edits". A director who corrected the AI's text and pressed Approve therefore
+// approved the STORED row — their edits were discarded by the redirect's
+// re-render, and Send could then deliver un-reviewed AI text to every guardian.
+// What a human approves must be what the human was reading, so the buttons live
+// inside the form that holds the text and arrive with it: this action PERSISTS
+// the posted subject/body first and only then flips status. Approve and Send
+// remain two separate presses.
+const INTENTS = ["save", "approve", "send"] as const;
+type Intent = (typeof INTENTS)[number];
+
+function intentOf(fd: FormData): Intent | null {
+  const raw = str(fd, "intent");
+  return (INTENTS as readonly string[]).includes(raw) ? (raw as Intent) : null;
+}
+
+export async function reviewDigest(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const digestId = str(formData, "digestId");
-  await requireRole(programId, DIGEST_WRITE_ROLES);
+  const seasonId = str(formData, "seasonId") || null;
+  const { user } = await requireRole(programId, DIGEST_WRITE_ROLES);
+  const dest = digestPath(slug);
+
+  const intent = intentOf(formData);
+  if (!intent || !digestId) redirect(`${dest}?error=intent`);
 
   const subject = str(formData, "subject");
   const bodyMd = str(formData, "body_md");
-  if (!subject || !bodyMd) redirect(`${digestPath(slug)}?error=empty`);
+  if (!subject || !bodyMd) redirect(`${dest}?error=empty`);
 
   const supabase = await createClient();
-  // Editable only while not yet sent.
-  await supabase
+
+  // Persist first, always — including on the way to approving or sending, which
+  // is the whole point. Editable only while not yet sent; `.select()` proves a
+  // row actually matched, so a digest that has already gone out (or is not this
+  // program's) cannot fall through to the status flip below.
+  const { data: savedRow, error: saveError } = await supabase
     .from("digests")
     .update({ subject, body_md: bodyMd })
     .eq("id", digestId)
     .eq("program_id", programId)
-    .neq("status", "sent");
+    .neq("status", "sent")
+    .select("id, status")
+    .maybeSingle();
+  const saved = savedRow as { id: string; status: string } | null;
+  if (saveError || !saved) redirect(`${dest}?error=save`);
 
-  revalidatePath(digestPath(slug));
-  redirect(`${digestPath(slug)}?saved=1`);
+  if (intent === "save") {
+    revalidatePath(dest);
+    redirect(`${dest}?saved=1`);
+  }
+
+  if (intent === "approve") {
+    // Draft-only, unchanged: the guard is what makes approval a one-way step.
+    const { data: approvedRow } = await supabase
+      .from("digests")
+      .update({ status: "approved", approved_by: user.id })
+      .eq("id", digestId)
+      .eq("program_id", programId)
+      .eq("status", "draft")
+      .select("id")
+      .maybeSingle();
+    if (!approvedRow) redirect(`${dest}?error=notdraft`);
+    revalidatePath(dest);
+    redirect(`${dest}?approved=1`);
+  }
+
+  await sendApprovedDigest(supabase, { programId, digestId, seasonId, dest });
 }
 
 // Discard an unapproved draft (§7 redesign — the digest card's danger action).
 // Draft-only: the `.eq("status", "draft")` guard means an already-approved or
 // sent digest can NEVER be discarded here, so this never destroys an approved or
 // sent parent-facing record (Constitution IV — nothing that reached parents is
-// touched). A discarded week simply re-drafts on the next run. `backTo` lets the
-// digest-first Comms landing and the digest workspace each return to themselves.
+// touched). A discarded week simply re-drafts on the next run.
 export async function discardDigest(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const digestId = str(formData, "digestId");
-  const backTo = str(formData, "backTo");
   await requireRole(programId, DIGEST_WRITE_ROLES);
 
   const supabase = await createClient();
@@ -100,29 +152,8 @@ export async function discardDigest(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .eq("status", "draft");
 
-  const dest = backTarget(slug, backTo);
-  revalidatePath(dest);
-  redirect(`${dest}?discarded=1`);
-}
-
-export async function approveDigest(formData: FormData): Promise<void> {
-  const programId = str(formData, "programId");
-  const slug = str(formData, "slug");
-  const digestId = str(formData, "digestId");
-  const backTo = str(formData, "backTo");
-  const { user } = await requireRole(programId, DIGEST_WRITE_ROLES);
-
-  const supabase = await createClient();
-  await supabase
-    .from("digests")
-    .update({ status: "approved", approved_by: user.id })
-    .eq("id", digestId)
-    .eq("program_id", programId)
-    .eq("status", "draft");
-
-  const dest = backTarget(slug, backTo);
-  revalidatePath(dest);
-  redirect(`${dest}?approved=1`);
+  revalidatePath(digestPath(slug));
+  redirect(`${digestPath(slug)}?discarded=1`);
 }
 
 // Send an APPROVED digest (§8, T038). Recipients = guardians with email_status
@@ -132,17 +163,18 @@ export async function approveDigest(formData: FormData): Promise<void> {
 // (packet-parse dual-path). The core is approved-only and flips the digest to
 // 'sent' — idempotent, so a retried job never double-sends. digest_sends rows are
 // unchanged either way.
-export async function sendDigest(formData: FormData): Promise<void> {
-  const programId = str(formData, "programId");
-  const slug = str(formData, "slug");
-  const digestId = str(formData, "digestId");
-  const seasonId = str(formData, "seasonId") || null;
-  const backTo = str(formData, "backTo");
-  await requireRole(programId, DIGEST_WRITE_ROLES);
-  const dest = backTarget(slug, backTo);
-
-  const supabase = await createClient();
-
+//
+// Not a server action: reviewDigest is the only way in, so the body being sent
+// is always the body that was just persisted from the reviewer's screen.
+async function sendApprovedDigest(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  {
+    programId,
+    digestId,
+    seasonId,
+    dest,
+  }: { programId: string; digestId: string; seasonId: string | null; dest: string },
+): Promise<never> {
   // Pre-check approved so a non-approved digest never enqueues (the core guards
   // too — this is just for a clean error before the async hand-off).
   const { data: digestData } = await supabase

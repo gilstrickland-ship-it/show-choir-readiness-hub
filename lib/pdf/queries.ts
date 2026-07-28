@@ -4,19 +4,98 @@ import {
   type HostedSlotKind,
 } from "@/lib/hosting";
 import {
-  listMonthsWithEntries,
   monthKeyForDate,
   reconciledThroughMonth,
   formatMonthKey,
-  type LedgerMonthRow,
+  summarizeSeasonLedger,
+  summarizeCommitments,
+  actualForDirection,
+  pickSeasonBudget,
+  UNCATEGORIZED_KEY,
+  type CommitmentRow,
+  type LedgerEntryRow,
 } from "@/lib/treasury";
+import { zonedDateKey } from "@/lib/datetime";
 
 // Data loaders for the four derived documents (§6, §7, T017). Each takes a
-// Supabase client (the caller's RLS client, so tenant isolation is enforced at
-// the query) and a target id, and returns plain typed data the renderer turns
-// into a PDF. Documents are derived, never stored (Constitution VI): every load
-// runs against live rows. Returns null when the base resource is missing/hidden
-// so the route can 404.
+// Supabase client and a target id, and returns plain typed data the renderer
+// turns into a PDF. Documents are derived, never stored (Constitution VI): every
+// load runs against live rows. Returns null when the base resource is
+// missing/hidden so the route can 404.
+//
+// TENANT SCOPING IS THIS FILE'S JOB, not the client's. Two callers pass a
+// SERVICE-ROLE client — the share-link parent packet route and the export-all
+// zip builder — so RLS is off for them and an unscoped child query renders
+// whatever rows happen to reference the parent id. Rows carrying another
+// program's program_id can reference this program's parents (single-column FKs
+// plus RLS write policies that only check the row's own program_id), so every
+// child query below filters on the parent's program_id explicitly. Without that,
+// another tenant's free text prints as a chaperone name on this program's
+// parent-facing packet.
+
+// ---------------------------------------------------------------------------
+// PAGING — no document may quietly describe a prefix of the truth
+// ---------------------------------------------------------------------------
+// PostgREST caps a response at `max_rows` (1000 here and on the hosted default)
+// and says NOTHING when it truncates. Every list in this file becomes a printed
+// document — a bus manifest a chaperone counts heads against, a meal headcount a
+// caterer cooks to, a board snapshot a treasurer reads to a board — so a silent
+// prefix is the worst available failure: it looks complete. Every multi-row read
+// below therefore pages until a short page comes back.
+//
+// WHY loadBoardSnapshot PAGES INSTEAD OF CALLING THE 0019 AGGREGATES. Its money
+// totals could be one SQL row (public.ledger_season_totals), and the Reports
+// PAGE reads them exactly that way. This file cannot: two of its callers — the
+// share-link parent-packet route and the export-all zip builder — pass a
+// SERVICE-ROLE client, where auth.uid() is null and the 0019 read guard
+// (private.ledger_may_read) therefore refuses. Widening that guard to admit a
+// service-role caller would carve an exception into a fiduciary read control to
+// save a round trip. Paging the raw read costs one request per 1000 entries and
+// leaves the guard as strict as it should be, while the SUMS themselves are the
+// SQL definitions restated once, in a shared pure helper
+// (lib/treasury summarizeSeasonLedger) — so the PDF and the page cannot drift.
+//
+// Every paged query orders by a UNIQUE column (`id`) LAST. A page boundary in an
+// ambiguously-ordered result can repeat or skip a row, and in a money sum that
+// is a wrong number rather than a missing one.
+const PAGE_SIZE = 1000;
+// ~2 million rows. Past that the query is wrong, not the data: stop with a loud
+// error rather than looping forever or handing back a prefix.
+const MAX_PAGES = 2000;
+
+// `data` stays `unknown` here for the same reason every read in this file ends
+// in an `as` cast: a select with an embedded resource is typed as an ARRAY of
+// the embed by the client, and the row shapes below are the ones the callers
+// assert. The caller names the shape; this only guarantees completeness.
+interface RangeQuery {
+  range(
+    from: number,
+    to: number,
+  ): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+}
+
+// `build` mints a FRESH query per page — a Supabase builder is a one-shot
+// thenable, so re-ranging the same object is not safe.
+export async function fetchAllRows<T>(
+  build: () => RangeQuery,
+  what: string,
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE_SIZE;
+    const { data, error } = await build().range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(`${what}: ${error.message}`);
+    if (data !== null && data !== undefined && !Array.isArray(data)) {
+      throw new Error(`${what}: expected a list of rows`);
+    }
+    const batch = (data ?? []) as T[];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) return rows;
+  }
+  throw new Error(
+    `${what}: more than ${MAX_PAGES * PAGE_SIZE} rows — refusing to render a document from a read this file cannot prove is complete`,
+  );
+}
 
 export interface Rider {
   name: string;
@@ -78,49 +157,63 @@ export async function loadTripDoc(
     .maybeSingle();
   const program = progRow as { name: string; timezone: string } | null;
 
-  const { data: groupRows } = await supabase
-    .from("travel_groups")
-    .select("id, kind, label, capacity, notes, sort_order")
-    .eq("program_id", trip.program_id)
-    .eq("trip_id", tripId)
-    .order("sort_order", { ascending: true })
-    .order("label", { ascending: true });
-  const groups =
-    (groupRows as {
-      id: string;
-      kind: "room" | "bus";
-      label: string;
-      capacity: number | null;
-      notes: string | null;
-    }[] | null) ?? [];
+  const groups = await fetchAllRows<{
+    id: string;
+    kind: "room" | "bus";
+    label: string;
+    capacity: number | null;
+    notes: string | null;
+  }>(
+    () =>
+      supabase
+        .from("travel_groups")
+        .select("id, kind, label, capacity, notes, sort_order")
+        .eq("program_id", trip.program_id)
+        .eq("trip_id", tripId)
+        .order("sort_order", { ascending: true })
+        .order("label", { ascending: true })
+        .order("id", { ascending: true }),
+    "trip travel groups",
+  );
   const groupIds = groups.map((g) => g.id);
 
   // Absent set (competition-linked only).
   const absent = new Set<string>();
   if (trip.competition_id) {
-    const { data: att } = await supabase
-      .from("attendance")
-      .select("student_id")
-      .eq("program_id", trip.program_id)
-      .eq("competition_id", trip.competition_id)
-      .eq("status", "absent");
-    for (const a of (att as { student_id: string }[] | null) ?? []) {
-      absent.add(a.student_id);
-    }
+    const att = await fetchAllRows<{ student_id: string }>(
+      () =>
+        supabase
+          .from("attendance")
+          .select("student_id")
+          .eq("program_id", trip.program_id)
+          .eq("competition_id", trip.competition_id)
+          .eq("status", "absent")
+          .order("id", { ascending: true }),
+      "trip absent list",
+    );
+    for (const a of att) absent.add(a.student_id);
   }
 
   const ridersByGroup = new Map<string, Rider[]>();
   const chaperonesByGroup = new Map<string, string[]>();
   if (groupIds.length > 0) {
-    const { data: aRows } = await supabase
-      .from("travel_assignments")
-      .select("travel_group_id, student_id, student:students(first_name, last_name)")
-      .in("travel_group_id", groupIds);
-    for (const a of (aRows as {
+    const aRows = await fetchAllRows<{
       travel_group_id: string;
       student_id: string;
       student: { first_name: string; last_name: string } | null;
-    }[] | null) ?? []) {
+    }>(
+      () =>
+        supabase
+          .from("travel_assignments")
+          .select(
+            "travel_group_id, student_id, student:students(first_name, last_name)",
+          )
+          .eq("program_id", trip.program_id)
+          .in("travel_group_id", groupIds)
+          .order("id", { ascending: true }),
+      "trip riders",
+    );
+    for (const a of aRows) {
       const list = ridersByGroup.get(a.travel_group_id) ?? [];
       list.push({
         name: a.student ? `${a.student.last_name}, ${a.student.first_name}` : "?",
@@ -129,15 +222,21 @@ export async function loadTripDoc(
       ridersByGroup.set(a.travel_group_id, list);
     }
 
-    const { data: cRows } = await supabase
-      .from("travel_chaperones")
-      .select("travel_group_id, name_override, guardian:guardians(name)")
-      .in("travel_group_id", groupIds);
-    for (const c of (cRows as {
+    const cRows = await fetchAllRows<{
       travel_group_id: string;
       name_override: string | null;
       guardian: { name: string } | null;
-    }[] | null) ?? []) {
+    }>(
+      () =>
+        supabase
+          .from("travel_chaperones")
+          .select("travel_group_id, name_override, guardian:guardians(name)")
+          .eq("program_id", trip.program_id)
+          .in("travel_group_id", groupIds)
+          .order("id", { ascending: true }),
+      "trip chaperones",
+    );
+    for (const c of cRows) {
       const list = chaperonesByGroup.get(c.travel_group_id) ?? [];
       list.push(c.guardian?.name ?? c.name_override ?? "?");
       chaperonesByGroup.set(c.travel_group_id, list);
@@ -242,20 +341,26 @@ export async function loadPacketData(
 
   let items: ItineraryItem[] = [];
   if (itinerary && itineraryPublished) {
-    const { data: itemRows } = await supabase
-      .from("itinerary_items")
-      .select("starts_at, ends_at, kind, title, location, details, sort_order")
-      .eq("itinerary_id", itinerary.id)
-      .order("sort_order", { ascending: true })
-      .order("starts_at", { ascending: true, nullsFirst: false });
-    items = ((itemRows as {
+    const itemRows = await fetchAllRows<{
       starts_at: string | null;
       ends_at: string | null;
       kind: string;
       title: string | null;
       location: string | null;
       details: string | null;
-    }[] | null) ?? []).map((r) => ({
+    }>(
+      () =>
+        supabase
+          .from("itinerary_items")
+          .select("starts_at, ends_at, kind, title, location, details, sort_order")
+          .eq("program_id", comp.program_id)
+          .eq("itinerary_id", itinerary.id)
+          .order("sort_order", { ascending: true })
+          .order("starts_at", { ascending: true, nullsFirst: false })
+          .order("id", { ascending: true }),
+      "packet itinerary items",
+    );
+    items = itemRows.map((r) => ({
       startsAt: r.starts_at,
       endsAt: r.ends_at,
       kind: r.kind,
@@ -266,14 +371,19 @@ export async function loadPacketData(
   }
 
   // Bus + room groups from the trip(s) linked to this competition.
-  const { data: tripRows } = await supabase
-    .from("trips")
-    .select("id")
-    .eq("program_id", comp.program_id)
-    .eq("competition_id", competitionId);
+  const tripRows = await fetchAllRows<{ id: string }>(
+    () =>
+      supabase
+        .from("trips")
+        .select("id")
+        .eq("program_id", comp.program_id)
+        .eq("competition_id", competitionId)
+        .order("id", { ascending: true }),
+    "packet trips",
+  );
   const rooms: TravelGroupData[] = [];
   const buses: TravelGroupData[] = [];
-  for (const t of (tripRows as { id: string }[] | null) ?? []) {
+  for (const t of tripRows) {
     const td = await loadTripDoc(supabase, t.id);
     if (td) {
       rooms.push(...td.rooms);
@@ -282,33 +392,42 @@ export async function loadPacketData(
   }
 
   // Shift roster (who's working which shift) for this competition.
-  const { data: shiftRows } = await supabase
-    .from("shifts")
-    .select("id, title, starts_at, ends_at, needed_count")
-    .eq("program_id", comp.program_id)
-    .eq("competition_id", competitionId)
-    .order("starts_at", { ascending: true, nullsFirst: false });
-  const shiftBase =
-    (shiftRows as {
-      id: string;
-      title: string;
-      starts_at: string | null;
-      ends_at: string | null;
-      needed_count: number;
-    }[] | null) ?? [];
+  const shiftBase = await fetchAllRows<{
+    id: string;
+    title: string;
+    starts_at: string | null;
+    ends_at: string | null;
+    needed_count: number;
+  }>(
+    () =>
+      supabase
+        .from("shifts")
+        .select("id, title, starts_at, ends_at, needed_count")
+        .eq("program_id", comp.program_id)
+        .eq("competition_id", competitionId)
+        .order("starts_at", { ascending: true, nullsFirst: false })
+        .order("id", { ascending: true }),
+    "packet shifts",
+  );
   const shifts: ShiftRosterEntry[] = [];
   if (shiftBase.length > 0) {
-    const { data: signupRows } = await supabase
-      .from("shift_signups")
-      .select("shift_id, name, status, guardian:guardians(name)")
-      .in("shift_id", shiftBase.map((s) => s.id))
-      .eq("status", "confirmed");
-    const bySh = new Map<string, string[]>();
-    for (const su of (signupRows as {
+    const signupRows = await fetchAllRows<{
       shift_id: string;
       name: string | null;
       guardian: { name: string } | null;
-    }[] | null) ?? []) {
+    }>(
+      () =>
+        supabase
+          .from("shift_signups")
+          .select("shift_id, name, status, guardian:guardians(name)")
+          .eq("program_id", comp.program_id)
+          .in("shift_id", shiftBase.map((s) => s.id))
+          .eq("status", "confirmed")
+          .order("id", { ascending: true }),
+      "packet shift signups",
+    );
+    const bySh = new Map<string, string[]>();
+    for (const su of signupRows) {
       const list = bySh.get(su.shift_id) ?? [];
       list.push(su.guardian?.name ?? su.name ?? "Volunteer");
       bySh.set(su.shift_id, list);
@@ -398,14 +517,17 @@ export async function loadMealData(
   if (!comp) return null;
 
   // Participating ensembles (junction) — the grouping key set.
-  const { data: ceRows } = await supabase
-    .from("competition_ensembles")
-    .select("ensemble_id")
-    .eq("program_id", comp.program_id)
-    .eq("competition_id", competitionId);
-  const participatingIds = ((ceRows as { ensemble_id: string }[] | null) ?? []).map(
-    (r) => r.ensemble_id,
+  const ceRows = await fetchAllRows<{ ensemble_id: string }>(
+    () =>
+      supabase
+        .from("competition_ensembles")
+        .select("ensemble_id")
+        .eq("program_id", comp.program_id)
+        .eq("competition_id", competitionId)
+        .order("id", { ascending: true }),
+    "meal participating ensembles",
   );
+  const participatingIds = ceRows.map((r) => r.ensemble_id);
 
   const { data: progRow } = await supabase
     .from("programs")
@@ -415,35 +537,46 @@ export async function loadMealData(
   const program = progRow as { name: string; timezone: string } | null;
 
   // Attendance rows + student names.
-  const { data: attRows } = await supabase
-    .from("attendance")
-    .select("student_id, status, students(first_name, last_name)")
-    .eq("program_id", comp.program_id)
-    .eq("competition_id", competitionId);
-  const attendance =
-    (attRows as {
-      student_id: string;
-      status: "expected" | "absent" | "partial";
-      students: { first_name: string; last_name: string } | null;
-    }[] | null) ?? [];
+  const attendance = await fetchAllRows<{
+    student_id: string;
+    status: "expected" | "absent" | "partial";
+    students: { first_name: string; last_name: string } | null;
+  }>(
+    () =>
+      supabase
+        .from("attendance")
+        .select("student_id, status, students(first_name, last_name)")
+        .eq("program_id", comp.program_id)
+        .eq("competition_id", competitionId)
+        .order("id", { ascending: true }),
+    "meal attendance",
+  );
 
-  // Student → ensemble membership(s) in the competition's season.
+  // Student → ensemble membership(s) in the competition's season. Ordered by id
+  // so "their FIRST participating ensemble" is a stable answer rather than
+  // whatever the planner returned first — a headcount that reshuffles between
+  // renders is a headcount nobody trusts.
   const studentIds = attendance.map((a) => a.student_id);
   const ensembleByStudent = new Map<string, string>();
   const ensembleNames = new Map<string, string>();
   if (studentIds.length > 0 && participatingIds.length > 0) {
-    const { data: mems } = await supabase
-      .from("ensemble_members")
-      .select("student_id, ensemble_id, ensembles(name)")
-      .eq("program_id", comp.program_id)
-      .eq("season_id", comp.season_id)
-      .in("ensemble_id", participatingIds)
-      .in("student_id", studentIds);
-    for (const m of (mems as {
+    const mems = await fetchAllRows<{
       student_id: string;
       ensemble_id: string;
       ensembles: { name: string } | null;
-    }[] | null) ?? []) {
+    }>(
+      () =>
+        supabase
+          .from("ensemble_members")
+          .select("student_id, ensemble_id, ensembles(name)")
+          .eq("program_id", comp.program_id)
+          .eq("season_id", comp.season_id)
+          .in("ensemble_id", participatingIds)
+          .in("student_id", studentIds)
+          .order("id", { ascending: true }),
+      "meal ensemble memberships",
+    );
+    for (const m of mems) {
       if (!ensembleByStudent.has(m.student_id)) {
         ensembleByStudent.set(m.student_id, m.ensemble_id);
         if (m.ensembles?.name) ensembleNames.set(m.ensemble_id, m.ensembles.name);
@@ -569,44 +702,50 @@ export async function loadHostEventDoc(
     .maybeSingle();
   const program = progRow as { name: string; timezone: string } | null;
 
-  const { data: schoolRows } = await supabase
-    .from("hosted_schools")
-    .select(
-      "id, school_name, ensemble_name, director_name, director_email, director_phone, performer_count, division, costume_colors, homeroom, arrival_notes, sort_order",
-    )
-    .eq("program_id", event.program_id)
-    .eq("hosted_event_id", eventId)
-    .order("sort_order", { ascending: true });
-  const schoolsRaw =
-    (schoolRows as {
-      id: string;
-      school_name: string;
-      ensemble_name: string | null;
-      director_name: string | null;
-      director_email: string | null;
-      director_phone: string | null;
-      performer_count: number | null;
-      division: string | null;
-      costume_colors: string | null;
-      homeroom: string | null;
-      arrival_notes: string | null;
-    }[] | null) ?? [];
+  const schoolsRaw = await fetchAllRows<{
+    id: string;
+    school_name: string;
+    ensemble_name: string | null;
+    director_name: string | null;
+    director_email: string | null;
+    director_phone: string | null;
+    performer_count: number | null;
+    division: string | null;
+    costume_colors: string | null;
+    homeroom: string | null;
+    arrival_notes: string | null;
+  }>(
+    () =>
+      supabase
+        .from("hosted_schools")
+        .select(
+          "id, school_name, ensemble_name, director_name, director_email, director_phone, performer_count, division, costume_colors, homeroom, arrival_notes, sort_order",
+        )
+        .eq("program_id", event.program_id)
+        .eq("hosted_event_id", eventId)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true }),
+    "hosted schools",
+  );
 
-  const { data: slotRows } = await supabase
-    .from("hosted_slots")
-    .select("hosted_school_id, kind, label, starts_at, duration_minutes, sort_order")
-    .eq("program_id", event.program_id)
-    .eq("hosted_event_id", eventId)
-    .order("starts_at", { ascending: true, nullsFirst: false })
-    .order("sort_order", { ascending: true });
-  const slotsRaw =
-    (slotRows as {
-      hosted_school_id: string | null;
-      kind: HostedSlotKind;
-      label: string | null;
-      starts_at: string | null;
-      duration_minutes: number | null;
-    }[] | null) ?? [];
+  const slotsRaw = await fetchAllRows<{
+    hosted_school_id: string | null;
+    kind: HostedSlotKind;
+    label: string | null;
+    starts_at: string | null;
+    duration_minutes: number | null;
+  }>(
+    () =>
+      supabase
+        .from("hosted_slots")
+        .select("hosted_school_id, kind, label, starts_at, duration_minutes, sort_order")
+        .eq("program_id", event.program_id)
+        .eq("hosted_event_id", eventId)
+        .order("starts_at", { ascending: true, nullsFirst: false })
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true }),
+    "hosted slots",
+  );
 
   const nameById = new Map<string, string>();
   for (const s of schoolsRaw) nameById.set(s.id, s.school_name);
@@ -707,6 +846,27 @@ export interface BoardSnapshotData {
   // "Reconciled through {Month YYYY}" — the latest contiguous month whose books
   // were checked against the bank statement (Wave L). Null when none yet.
   reconciledThroughLabel: string | null;
+  // The middle layer (spec 006). Money the program has already promised but has
+  // not yet paid — the difference between what a budget says is left and what is
+  // actually free to spend. Expected money is carried SEPARATELY and never added
+  // to what is available: you may not spend money you have merely been promised.
+  openCommittedCents: number;
+  openExpectedCents: number;
+  openCommitmentCount: number;
+  // Every dollar that left the account this season, however it was coded —
+  // `ledger_season_totals.out_cents` and nothing else. "Still available" is
+  // measured against this rather than against the expense categories' rollup,
+  // because a dollar spent out of an income line still left the account, and
+  // because the on-screen snapshot reads exactly this one aggregate: two
+  // definitions of "spent" is how the handout and the screen came to disagree
+  // once already.
+  seasonOutCents: number;
+  // The three numbers a board is owed about how the commitments themselves are
+  // being run: overdue, over their amount, and recorded after the purchase (R6 —
+  // the single most valuable number on a board snapshot).
+  staleCommitmentCount: number;
+  overspentCommitmentCount: number;
+  afterTheFactCount: number;
 }
 
 interface SeasonBase {
@@ -737,57 +897,114 @@ export async function loadBoardSnapshot(
   const program = progRow as { name: string; timezone: string } | null;
 
   // Active budget for the season (fall back to the most recent budget).
-  const { data: budgetRows } = await supabase
-    .from("budgets")
-    .select("id, name, status, created_at")
-    .eq("program_id", season.program_id)
-    .eq("season_id", seasonId)
-    .order("created_at", { ascending: false });
-  const budgets =
-    (budgetRows as { id: string; name: string; status: string; created_at: string }[] | null) ??
-    [];
-  const budget = budgets.find((b) => b.status === "active") ?? budgets[0] ?? null;
+  const budgets = await fetchAllRows<{
+    id: string;
+    name: string;
+    status: string;
+    created_at: string;
+  }>(
+    () =>
+      supabase
+        .from("budgets")
+        .select("id, name, status, created_at")
+        .eq("program_id", season.program_id)
+        .eq("season_id", seasonId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true }),
+    "board snapshot budgets",
+  );
+  // The ACTIVE budget, else the newest — the shared choice, not a local repeat
+  // of it. `.order("status")` sorts the enum by DECLARATION order, so the query
+  // that looked like it preferred 'active' actually preferred the DRAFT; this
+  // page and the Reports page are the two things a treasurer hands the same
+  // meeting, so they ask one helper (lib/treasury pickSeasonBudget).
+  const budget = pickSeasonBudget(budgets);
 
-  // Actuals per budget_line (exclude voided), plus uncategorized buckets.
-  const actualByLine = new Map<string, number>();
-  let uncategorizedIn = 0;
-  let uncategorizedOut = 0;
-  const { data: ledgerRows } = await supabase
-    .from("ledger_entries")
-    .select("direction, amount_cents, budget_line_id, voided_at, entry_date")
-    .eq("program_id", season.program_id)
-    .eq("season_id", seasonId)
-    .is("voided_at", null);
-  const ledger =
-    (ledgerRows as {
-      direction: "in" | "out";
-      amount_cents: number;
-      budget_line_id: string | null;
-      voided_at: string | null;
-      entry_date: string;
-    }[] | null) ?? [];
-  for (const e of ledger) {
-    const amt = Number(e.amount_cents);
-    if (e.budget_line_id) {
-      actualByLine.set(e.budget_line_id, (actualByLine.get(e.budget_line_id) ?? 0) + amt);
-    } else if (e.direction === "in") {
-      uncategorizedIn += amt;
-    } else {
-      uncategorizedOut += amt;
-    }
-  }
+  // THE SEASON'S LIVE LEDGER, WHOLE. This used to be one unbounded select whose
+  // rows were summed here, which meant the board snapshot silently stopped at
+  // PostgREST's 1000-row cap and printed a smaller number than the Reports page
+  // — the two surfaces a board compares. It pages now (see fetchAllRows above
+  // for why this path cannot call the 0019 aggregates), and the reduction is the
+  // shared pure helper that restates those aggregates' definitions.
+  //
+  // `commitment_id` rides along because the drawdown is computed from it: a
+  // commitment's remaining balance is DERIVED from the entries linked to it
+  // (there is no stored paid_cents), so a read that omitted the column would
+  // report every commitment as untouched and overstate what is still committed.
+  const ledger = await fetchAllRows<LedgerEntryRow>(
+    () =>
+      supabase
+        .from("ledger_entries")
+        .select(
+          "direction, amount_cents, budget_line_id, commitment_id, voided_at, entry_date",
+        )
+        .eq("program_id", season.program_id)
+        .eq("season_id", seasonId)
+        .is("voided_at", null)
+        .order("id", { ascending: true }),
+    "board snapshot ledger",
+  );
+  const { totals, byLine, byCommitment } = summarizeSeasonLedger(ledger);
+
+  // THE SEASON'S COMMITMENTS, WHOLE — same reasoning, same paging. This path
+  // cannot call public.commitment_totals for the reason stated at the top of the
+  // file (a service-role client has no auth.uid(), so the read guard refuses and
+  // widening it would carve an exception into a fiduciary control), so it reads
+  // the rows and reduces them with the pure helper that restates the SQL
+  // definitions field for field. tests/rls/commitments.spec.ts runs both over the
+  // same 1,100 rows in real Postgres and asserts they agree.
+  const commitments = await fetchAllRows<CommitmentRow>(
+    () =>
+      supabase
+        .from("commitments")
+        .select(
+          "id, kind, budget_line_id, amount_cents, shipping_cents, tax_cents, need_by, after_the_fact, closed_at, cancelled_at, superseded_at",
+        )
+        .eq("program_id", season.program_id)
+        .eq("season_id", seasonId)
+        .order("id", { ascending: true }),
+    "board snapshot commitments",
+  );
+  // "Overdue" is a calendar judgement and the calendar belongs to the PROGRAM
+  // (Constitution VII) — the same date public.commitment_totals computes from
+  // programs.timezone, so a UTC host never decides a Chicago program's purchase
+  // order is late.
+  const commitmentSummary = summarizeCommitments(
+    commitments,
+    byCommitment,
+    zonedDateKey(new Date(), program?.timezone ?? "UTC"),
+  );
+
+  // A line's actual is read the way its CATEGORY means it — an income line
+  // counts money in, an expense line counts money out (lib/treasury
+  // actualForDirection), applied where the direction is known, below.
+  //
+  // It used to be every cent booked to the line REGARDLESS of direction, which
+  // is a different question from the one the header answers: money in and money
+  // out are split by the ENTRY's direction there. So a refund booked to an
+  // expense line added to "total expenses" instead of subtracting from it, and
+  // the PDF's Net and the Reports page's Net could be handed to the same board
+  // meeting disagreeing. One definition now, on both surfaces.
+  const uncategorized = byLine.get(UNCATEGORIZED_KEY);
+  const uncategorizedIn = uncategorized?.inCents ?? 0;
+  const uncategorizedOut = uncategorized?.outCents ?? 0;
 
   // "Reconciled through" — months (this season) with activity, matched against
-  // the program's reconciliation records (Wave L). The ledger query already
-  // excludes voided rows, so every fetched row counts toward its month.
-  const monthsWithEntries = listMonthsWithEntries(ledger as LedgerMonthRow[]);
+  // the program's reconciliation records (Wave L). The month list comes off the
+  // same summary, so it is void-free and complete by construction.
+  const monthsWithEntries = totals.months;
   let reconciledThroughLabel: string | null = null;
   if (monthsWithEntries.length > 0) {
-    const { data: recRows } = await supabase
-      .from("ledger_reconciliations")
-      .select("month")
-      .eq("program_id", season.program_id);
-    const reconciledKeys = ((recRows as { month: string }[] | null) ?? [])
+    const recRows = await fetchAllRows<{ month: string }>(
+      () =>
+        supabase
+          .from("ledger_reconciliations")
+          .select("month")
+          .eq("program_id", season.program_id)
+          .order("id", { ascending: true }),
+      "board snapshot reconciliations",
+    );
+    const reconciledKeys = recRows
       .map((r) => monthKeyForDate(r.month))
       .filter((k): k is string => k !== null);
     const through = reconciledThroughMonth(monthsWithEntries, reconciledKeys);
@@ -798,19 +1015,22 @@ export async function loadBoardSnapshot(
   const expenseCategories: SnapshotCategory[] = [];
 
   if (budget) {
-    const { data: catRows } = await supabase
-      .from("budget_categories")
-      .select("id, name, direction, sort_order")
-      .eq("program_id", season.program_id)
-      .eq("budget_id", budget.id)
-      .order("sort_order", { ascending: true });
-    const cats =
-      (catRows as {
-        id: string;
-        name: string;
-        direction: "income" | "expense";
-        sort_order: number;
-      }[] | null) ?? [];
+    const cats = await fetchAllRows<{
+      id: string;
+      name: string;
+      direction: "income" | "expense";
+      sort_order: number;
+    }>(
+      () =>
+        supabase
+          .from("budget_categories")
+          .select("id, name, direction, sort_order")
+          .eq("program_id", season.program_id)
+          .eq("budget_id", budget.id)
+          .order("sort_order", { ascending: true })
+          .order("id", { ascending: true }),
+      "board snapshot categories",
+    );
 
     let lineRows: {
       id: string;
@@ -820,14 +1040,17 @@ export async function loadBoardSnapshot(
       sort_order: number;
     }[] = [];
     if (cats.length > 0) {
-      const { data: lr } = await supabase
-        .from("budget_lines")
-        .select("id, category_id, name, planned_cents, sort_order")
-        .eq("program_id", season.program_id)
-        .in("category_id", cats.map((c) => c.id))
-        .order("sort_order", { ascending: true });
-      lineRows =
-        (lr as typeof lineRows | null) ?? [];
+      lineRows = await fetchAllRows<(typeof lineRows)[number]>(
+        () =>
+          supabase
+            .from("budget_lines")
+            .select("id, category_id, name, planned_cents, sort_order")
+            .eq("program_id", season.program_id)
+            .in("category_id", cats.map((c) => c.id))
+            .order("sort_order", { ascending: true })
+            .order("id", { ascending: true }),
+        "board snapshot budget lines",
+      );
     }
 
     for (const cat of cats) {
@@ -836,7 +1059,7 @@ export async function loadBoardSnapshot(
         .map((l) => ({
           name: l.name,
           plannedCents: Number(l.planned_cents),
-          actualCents: actualByLine.get(l.id) ?? 0,
+          actualCents: actualForDirection(byLine.get(l.id), cat.direction),
         }));
       const catData: SnapshotCategory = {
         name: cat.name,
@@ -867,5 +1090,12 @@ export async function loadBoardSnapshot(
     totalPlannedExpense: sum(expenseCategories, "plannedCents"),
     totalActualExpense: sum(expenseCategories, "actualCents") + uncategorizedOut,
     reconciledThroughLabel,
+    seasonOutCents: totals.outCents,
+    openCommittedCents: commitmentSummary.totals.openCommittedCents,
+    openExpectedCents: commitmentSummary.totals.openExpectedCents,
+    openCommitmentCount: commitmentSummary.totals.openCount,
+    staleCommitmentCount: commitmentSummary.totals.staleCount,
+    overspentCommitmentCount: commitmentSummary.totals.overspentCount,
+    afterTheFactCount: commitmentSummary.totals.afterTheFactCount,
   };
 }

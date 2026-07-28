@@ -12,21 +12,35 @@ import {
 import { emailConfigured } from "@/lib/email";
 import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import Link from "next/link";
-import { CommsTabs } from "../CommsTabs";
-import { IntroStrip, HelpDot } from "../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
-import {
-  draftNow,
-  saveDigest,
-  approveDigest,
-  sendDigest,
-  discardDigest,
-} from "./actions";
+import { SubTabs } from "../../SubTabs";
+import { commsTabs } from "@/lib/subnav";
+import { draftNow, reviewDigest, discardDigest } from "./actions";
 
-// Comms — Digest tab (§8, T025, Constitution IV). Weekly AI-drafted parent digest:
-// gather → Claude draft → director review/edit/approve → send with per-family
-// token links. NEVER auto-sends. Director/admin manage; other comms roles read.
-// The AI-drafting controls appear only when the `digest` flag is on.
+// Comms — Digest workspace (§8, T025, Constitution IV). Weekly AI-drafted parent
+// digest: gather → Claude draft → director review/edit/approve → send with
+// per-family token links. NEVER auto-sends. Director/admin manage; other comms
+// roles read. The AI-drafting controls appear only when the `digest` flag is on.
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146): it said "the AI
+// drafts a weekly note… you read, edit, and approve it — nothing sends on its
+// own", which is the paragraph under the tabs, said permanently and to everyone.
+// Constitution IV's approval invariant is carried by that paragraph and by the
+// unapproved-draft banner, so removing the strip removes nothing but the echo.
+//
+// Spec 005 US9-1: this page is the digest's ONE home. Draft, edit, approve,
+// discard, send and history exist here and nowhere else — the Comms landing
+// carries a status card that links in. Approve and send stay two separate
+// presses on a page that shows the whole body, which is the point of
+// Constitution IV: a human reads what an AI wrote before a parent does.
+//
+// APPROVE AND SEND SUBMIT THE TEXT ON SCREEN. They used to be sibling forms
+// carrying only the digest id, so a director who edited the AI's draft and
+// pressed Approve approved the STORED row and lost their edits to the redirect's
+// re-render — the human approved something other than what they were reading,
+// which is the one thing the approval gate exists to prevent. The buttons sit
+// inside the subject/body form now and post a named `intent`; the action saves
+// the posted text before it flips any status, so an unedited approval and an
+// edited one are the same code path.
 
 interface DigestRow {
   id: string;
@@ -61,12 +75,10 @@ export default async function DigestPage({
     skipped?: string;
     failed?: string;
     error?: string;
-    help?: string;
   }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
   if (!COMMS_ROLES.includes(role)) {
     return (
@@ -84,13 +96,6 @@ export default async function DigestPage({
   const sp = await searchParams;
 
   const supabase = await createClient();
-
-  // First-use intro strip (spec 003 §3) — the AI drafts; a director approves.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
 
   const { data: digestData } = await supabase
     .from("digests")
@@ -140,25 +145,17 @@ export default async function DigestPage({
           <p className="eyebrow">
             <Link href={`/${slug}/comms`}>← Comms</Link> · digest workspace
           </p>
-          <div className="page-title-row">
-            <h1 className="page-h1">Weekly digest</h1>
-            {showGuide && <HelpDot href={`/${slug}/comms/digest?help=1`} />}
-          </div>
+          <h1 className="page-h1">Weekly digest</h1>
         </div>
       </div>
 
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="digest"
-          programId={program.id}
-          selfPath={`/${slug}/comms/digest`}
-          guideState={guideState}
-          help={sp.help === "1"}
-          canWrite={canManage}
-        />
-      )}
-
-      <CommsTabs slug={slug} active="digest" shiftsEnabled={flags.shifts} />
+      <SubTabs
+        strip={commsTabs(slug, "digest", {
+          digestEnabled,
+          announcementsEnabled: flags.announcements,
+          shiftsEnabled: flags.shifts,
+        })}
+      />
 
       <p className="muted">
         An AI-drafted weekly summary a director reviews and approves before it
@@ -215,6 +212,25 @@ export default async function DigestPage({
       )}
       {sp.error === "empty" && (
         <p className="alert-error">A digest needs a subject and a body.</p>
+      )}
+      {sp.error === "save" && (
+        <p className="alert-error">
+          Nothing was saved, so nothing was approved or sent. A digest that has
+          already gone out can&apos;t be edited — reload to see its current
+          state.
+        </p>
+      )}
+      {sp.error === "intent" && (
+        <p className="alert-error">
+          That form didn&apos;t say what it was for, so nothing was changed.
+          Reload and try again.
+        </p>
+      )}
+      {sp.error === "notdraft" && (
+        <p className="alert-error">
+          Your edits were saved, but this digest is no longer a draft — only a
+          draft can be approved. Reload to see where it got to.
+        </p>
       )}
       {sp.error === "notapproved" && (
         <p className="alert-error">Only an approved digest can be sent.</p>
@@ -278,13 +294,18 @@ export default async function DigestPage({
 
             {editable ? (
               <form
-                action={saveDigest}
+                action={reviewDigest}
                 className="stack"
                 style={{ marginTop: "0.5rem" }}
               >
                 <input type="hidden" name="programId" value={program.id} />
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="digestId" value={d.id} />
+                <input
+                  type="hidden"
+                  name="seasonId"
+                  value={season?.id ?? ""}
+                />
                 <label style={{ width: "100%" }}>
                   Subject
                   <input
@@ -306,9 +327,35 @@ export default async function DigestPage({
                     Plain text works — leave a blank line between paragraphs.
                   </span>
                 </label>
-                <button type="submit" className="secondary">
-                  Save edits
-                </button>
+                {/* Every submit here carries the subject and body above it, so
+                    approving or sending can only ever act on the text on
+                    screen. Two presses, still: Approve appears on a draft,
+                    Send only once it is approved. */}
+                <div className="row-inline">
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="save"
+                    className="secondary"
+                  >
+                    Save edits
+                  </button>
+                  {d.status === "draft" && (
+                    <button type="submit" name="intent" value="approve">
+                      Approve
+                    </button>
+                  )}
+                  {d.status === "approved" && (
+                    <button type="submit" name="intent" value="send">
+                      Send to {recipientCount} families now
+                    </button>
+                  )}
+                </div>
+                <p className="muted">
+                  {d.status === "draft"
+                    ? "Approve saves your edits first — what you approve is what is in the box above."
+                    : "Send saves your edits first, then emails this text to every family."}
+                </p>
               </form>
             ) : (
               <>
@@ -323,49 +370,19 @@ export default async function DigestPage({
               </>
             )}
 
-            {canManage && (
+            {/* Discard is the one control that must NOT carry the edits — it
+                throws the draft away — so it stays its own form, after the
+                review form rather than inside it (forms cannot nest). */}
+            {canManage && d.status === "draft" && (
               <div className="row-inline" style={{ marginTop: "0.5rem" }}>
-                {d.status === "draft" && (
-                  <>
-                    <form action={approveDigest}>
-                      <input
-                        type="hidden"
-                        name="programId"
-                        value={program.id}
-                      />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="digestId" value={d.id} />
-                      <button type="submit">Approve</button>
-                    </form>
-                    <form action={discardDigest}>
-                      <input
-                        type="hidden"
-                        name="programId"
-                        value={program.id}
-                      />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="digestId" value={d.id} />
-                      <button type="submit" className="discard">
-                        Discard
-                      </button>
-                    </form>
-                  </>
-                )}
-                {d.status === "approved" && (
-                  <form action={sendDigest}>
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="digestId" value={d.id} />
-                    <input
-                      type="hidden"
-                      name="seasonId"
-                      value={season?.id ?? ""}
-                    />
-                    <button type="submit">
-                      Send to {recipientCount} families now
-                    </button>
-                  </form>
-                )}
+                <form action={discardDigest}>
+                  <input type="hidden" name="programId" value={program.id} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="digestId" value={d.id} />
+                  <button type="submit" className="discard">
+                    Discard
+                  </button>
+                </form>
               </div>
             )}
           </div>

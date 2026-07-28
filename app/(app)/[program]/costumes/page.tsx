@@ -9,21 +9,18 @@ import { zonedWallToUtc, zonedDateKey } from "@/lib/datetime";
 import {
   COSTUME_WRITE_ROLES,
   OPEN_ALTERATION_STATUSES,
-  ALTERATION_STATUS_LABELS,
-  PIECE_KIND_LABELS,
-  NO_HEALTH_LABEL,
   type PieceKind,
   type AlterationStatus,
 } from "@/lib/costumes";
-import { CostumeTabs } from "./CostumeTabs";
-import { setAlterationStatus, updateAlterationNotes } from "./alterations/actions";
+import { SubTabs } from "../SubTabs";
+import { costumeTabs } from "@/lib/subnav";
+import { AltQueue, type QueueItem } from "./AltQueue";
 
-// Wardrobe landing (season-workflow redesign, "Wardrobe" design ref) — the
-// Alterations queue is the landing content (Inventory moved to /costumes/
-// inventory). Urgency banner counts down to the next competition; the queue is
-// urgency-sorted (soonest ensemble comp first) with the existing Start/Done
-// status transitions; summary cards glance at Assignments / Checkout / Condition
-// flags. Read-only for board_member; writers get the Start/Done + notes controls.
+// Wardrobe landing — the Alterations queue, which is the tab this seat works
+// every week. Urgency banner counts down to the next competition; the queue is
+// urgency-sorted (soonest ensemble comp first) with Start/Done and a row-local
+// note panel; glance cards hand off to Assignments / Checkout / Condition
+// flags. Read-only for board_member; writers get the controls.
 
 interface RawAssignment {
   id: string;
@@ -39,17 +36,17 @@ interface RawAssignment {
   } | null;
 }
 
-interface QueueItem {
-  id: string;
-  status: AlterationStatus;
-  notes: string | null;
-  studentName: string;
-  pieceLabel: string;
-  pieceKind: PieceKind;
-  location: string | null;
-  size: string | null;
-  ensembleId: string | null;
-  sortDate: string; // YYYY-MM-DD urgency key ("9999-…" when no upcoming comp)
+// Messages that belong to ONE queue row. They arrive with `?edit=<assignmentId>`,
+// which is also what reopens that row's note panel.
+const ROW_ERR: Record<string, string> = {
+  alteration: "Couldn't save that. Try again.",
+};
+
+// The code rides in the URL, so the lookup must be a lookup and not a walk up
+// Object.prototype — `?error=constructor` would otherwise hand React a function.
+function message(map: Record<string, string>, code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(map, code) ? map[code] : null;
 }
 
 // Whole days from `now` to `target` (future). Past clamps to 0.
@@ -63,7 +60,9 @@ export default async function WardrobePage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ saved?: string; error?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?edit=a&edit=b), so every
+  // read goes through `one()` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -74,7 +73,15 @@ export default async function WardrobePage({
     );
   }
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
-  const { saved, error } = await searchParams;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const errorCode = one("error");
+  const openId = canWrite ? one("edit") : null;
+  const rowError = message(ROW_ERR, errorCode);
 
   const tz = program.timezone;
   const now = new Date();
@@ -157,6 +164,7 @@ export default async function WardrobePage({
   }
 
   const openCount = items.length;
+  const openRowExists = openId != null && items.some((i) => i.id === openId);
 
   // Days until the next competition (banner).
   let daysToComp: number | null = null;
@@ -167,7 +175,7 @@ export default async function WardrobePage({
     }
   }
 
-  // ---- Summary-card counts (cheap) ------------------------------------------
+  // ---- Glance-card counts (cheap) -------------------------------------------
   const [
     piecesCountRes,
     setsCountRes,
@@ -228,7 +236,7 @@ export default async function WardrobePage({
   ].join(" · ");
 
   return (
-    <section className="stack wardrobe">
+    <section className="stack">
       <div className="page-head">
         <div className="page-head-titles">
           <p className="eyebrow">{eyebrow}</p>
@@ -236,13 +244,14 @@ export default async function WardrobePage({
         </div>
       </div>
 
-      <CostumeTabs slug={slug} active="alterations" />
+      <SubTabs strip={costumeTabs(slug, "alterations")} />
 
       {!season && <p className="muted">No active season — nothing to alter yet.</p>}
-      {saved && <p className="alert-ok">Saved.</p>}
-      {error === "alteration" && (
-        <p className="alert-error">Couldn&apos;t update the alteration. Try again.</p>
-      )}
+      {one("saved") && <p className="alert-ok">Saved.</p>}
+      {/* A row's refusal renders inside that row's panel. It only surfaces here
+          when the row it belongs to has left the queue (a status moved on) —
+          otherwise the message would vanish with the row. */}
+      {rowError && !openRowExists && <p className="alert-error">{rowError}</p>}
 
       {nextComp && openCount > 0 && (
         <div className="wardrobe-urgency">
@@ -262,84 +271,17 @@ export default async function WardrobePage({
       )}
 
       {openCount > 0 && (
-        <>
-          {canWrite && <p className="muted">{NO_HEALTH_LABEL}</p>}
-          <div className="alt-queue">
-            {items.map((it) => {
-              const meta = [it.location, it.size].filter(Boolean).join(" · ");
-              return (
-                <div key={it.id} className="alt-row">
-                  <span className={`alt-pill ${it.status}`}>
-                    {ALTERATION_STATUS_LABELS[it.status]}
-                  </span>
-                  <div className="alt-body">
-                    <strong>{it.pieceLabel}</strong>{" "}
-                    <span className="alt-kind">{PIECE_KIND_LABELS[it.pieceKind]}</span>
-                    {" — "}
-                    {it.studentName}
-                    {it.notes && <span className="muted"> · {it.notes}</span>}
-                  </div>
-                  {meta && <span className="alt-meta">{meta}</span>}
-                  {canWrite && (
-                    <div className="alt-actions">
-                      {it.status === "needed" && (
-                        <form action={setAlterationStatus}>
-                          <input type="hidden" name="programId" value={program.id} />
-                          <input type="hidden" name="slug" value={slug} />
-                          <input type="hidden" name="assignmentId" value={it.id} />
-                          <input type="hidden" name="status" value="in_progress" />
-                          <button
-                            type="submit"
-                            className="secondary"
-                            aria-label={`Start alteration: ${it.pieceLabel} — ${it.studentName}`}
-                          >
-                            Start
-                          </button>
-                        </form>
-                      )}
-                      <form action={setAlterationStatus}>
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="assignmentId" value={it.id} />
-                        <input type="hidden" name="status" value="done" />
-                        <button
-                          type="submit"
-                          aria-label={`Mark alteration done: ${it.pieceLabel} — ${it.studentName}`}
-                        >
-                          Done
-                        </button>
-                      </form>
-                    </div>
-                  )}
-                  {canWrite && (
-                    <form action={updateAlterationNotes} className="alt-notes">
-                      <input type="hidden" name="programId" value={program.id} />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="assignmentId" value={it.id} />
-                      <input
-                        type="text"
-                        name="alteration_notes"
-                        defaultValue={it.notes ?? ""}
-                        aria-label="Alteration notes"
-                        placeholder="Hem, take in waist…"
-                      />
-                      <button
-                        type="submit"
-                        className="secondary"
-                        aria-label={`Save alteration note: ${it.pieceLabel} — ${it.studentName}`}
-                      >
-                        Save note
-                      </button>
-                    </form>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
+        <AltQueue
+          programId={program.id}
+          slug={slug}
+          items={items}
+          canWrite={canWrite}
+          openId={openId}
+          error={rowError}
+        />
       )}
 
-      {/* Summary cards */}
+      {/* Glance cards: each one delegates to the tab that owns that job. */}
       <div className="wardrobe-cards">
         <div className="wardrobe-card">
           <h3>Assignments</h3>

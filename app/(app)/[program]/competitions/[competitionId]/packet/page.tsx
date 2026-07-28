@@ -5,7 +5,10 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateTimeInTz } from "@/lib/datetime";
-import { CompetitionTabs } from "../CompetitionTabs";
+import { SubTabs } from "../../../SubTabs";
+import { competitionTabs } from "@/lib/subnav";
+import { PacketPipeline } from "../PacketPipeline";
+import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { uploadPacket, reparsePacket, runParseNow } from "./actions";
 
 // A queued/running parse older than this is treated as stuck — the inline worker
@@ -106,10 +109,23 @@ export default async function PacketPage({
     if (!parseByDoc.has(p.document_id)) parseByDoc.set(p.document_id, p);
   }
 
+  // Where this packet is in the five steps (US7-4). Only when parsing is on —
+  // with the flag off there is no parse/review half of the pipeline to show.
+  const pipeline = parseEnabled
+    ? packetPipelineSteps(
+        await loadPacketPipeline(supabase, {
+          programId: program.id,
+          competitionId,
+        }),
+        `/${slug}/competitions/${competitionId}`,
+      )
+    : null;
+
   return (
     <section className="stack">
-      <CompetitionTabs slug={slug} competitionId={competitionId} active="packet" />
+      <SubTabs strip={competitionTabs(slug, competitionId, "packet")} />
       <h1>Host packet</h1>
+      {pipeline && <PacketPipeline steps={pipeline} />}
 
       {sp.uploaded && (
         <p className="alert-ok">
@@ -123,6 +139,11 @@ export default async function PacketPage({
       )}
       {sp.error === "upload" && <p className="alert-error">Upload failed. Try again.</p>}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t record the document.</p>}
+      {sp.error === "parse" && (
+        <p className="alert-error">
+          That parse doesn&apos;t belong to this competition, so it wasn&apos;t run.
+        </p>
+      )}
 
       {!parseEnabled && (
         <p className="muted">

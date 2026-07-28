@@ -36,6 +36,19 @@ on conflict (id) do update set full_name = excluded.full_name;
 insert into programs (id, name, slug, timezone) values
   ('${p.program}', '${prefix} Program', '${prefix}-program', 'America/Chicago');
 
+-- The three spending rules (0023) are OFF on the fixture programs, and that is a
+-- fixture decision rather than a claim about defaults. Every commitment seeded
+-- below is over the $250 / $1,000 shipped defaults, so leaving them on would
+-- mean the specs for 0021's rules — self-approval, append-only, the lifecycle —
+-- were all really testing 0023's. The threshold specs turn each number on inside
+-- the transaction that exercises it, and the defaults themselves are proved on a
+-- program created without saying anything.
+update programs
+   set commitment_second_approver_cents = 0,
+       commitment_board_approval_cents  = 0,
+       commitment_three_quotes_cents    = 0
+ where id = '${p.program}';
+
 insert into seasons (id, program_id, label, is_active) values
   ('${p.seasonActive}', '${p.program}', '2026-27', true);
 
@@ -147,6 +160,12 @@ insert into budget_lines (id, program_id, category_id, name, planned_cents) valu
 insert into ledger_entries (id, program_id, season_id, direction, amount_cents, budget_line_id, entered_by, memo) values
   ('${p.ledgerLive}', '${p.program}', '${p.seasonActive}', 'out', 12500, '${p.budgetLine}', '${p.treasurer}', 'live entry');
 
+-- A live entry with no budget line. This is the row categorize_ledger_entry
+-- exists for (void + re-enter on the line, one transaction), and the one the
+-- Uncategorized nudge counts.
+insert into ledger_entries (id, program_id, season_id, direction, amount_cents, entered_by, memo, counterparty) values
+  ('${p.ledgerUncategorized}', '${p.program}', '${p.seasonActive}', 'out', 7500, '${p.treasurer}', 'uncategorized entry', 'Bus Co');
+
 insert into ledger_audit (id, program_id, entry_id, action, actor) values
   ('${p.ledgerAudit}', '${p.program}', '${p.ledgerLive}', 'create', '${p.treasurer}');
 
@@ -155,6 +174,22 @@ insert into ledger_audit (id, program_id, entry_id, action, actor) values
 -- past month keeps it clear of any current-month collisions the role spec inserts.
 insert into ledger_reconciliations (id, program_id, month, reconciled_by) values
   ('${p.ledgerReconciliation}', '${p.program}', '2026-06-01', '${p.treasurer}');
+
+-- Commitments (0021): the layer between planned and spent. Both rows are still
+-- 'requested', which is the only state a commitment may be BORN in — the trigger
+-- refuses an insert carrying an approval, an issue, a receipt or a closure, so
+-- the approved fixture below is seeded as a request and then approved.
+-- \`number\` is deliberately NOT supplied: it is assigned per program per funding
+-- source by the database, never by a writer.
+insert into commitments
+  (id, program_id, season_id, kind, funding_source, vendor, purpose,
+   amount_cents, shipping_cents, tax_cents, budget_line_id, need_by, requested_by) values
+  ('${p.commitment}', '${p.program}', '${p.seasonActive}', 'spending', 'district',
+   '${prefix} Costume Co', 'Premiere costumes — spring set',
+   300000, 15000, 5000, '${p.budgetLine}', current_date + 30, '${p.director}'),
+  ('${p.commitmentExpected}', '${p.program}', '${p.seasonActive}', 'expected', 'booster',
+   '${prefix} Rival District', 'Entry fees they owe us',
+   50000, 0, 0, '${p.budgetLine}', current_date + 60, '${p.director}');
 
 insert into shifts (id, program_id, season_id, competition_id, title) values
   ('${p.shift}', '${p.program}', '${p.seasonActive}', '${p.competition}', 'Concessions');
@@ -177,8 +212,12 @@ insert into digest_sends (id, program_id, digest_id, email) values
 insert into guardian_tokens (id, program_id, guardian_id, token_hash) values
   ('${p.guardianToken}', '${p.program}', '${p.guardian}', '${prefix}-guardian-token-hash');
 
+-- resource_id for an 'itinerary' link is the COMPETITION id, not the itinerary
+-- row's — that is what the app writes and reads back (itinerary/actions.ts
+-- matches \`l.resource_id === competitionId\`) and what 0017's tenancy trigger
+-- enforces. This fixture used the itinerary id until the trigger caught it.
 insert into share_links (id, program_id, resource, resource_id, token_hash) values
-  ('${p.shareLink}', '${p.program}', 'itinerary', '${p.itinerary}', '${prefix}-share-link-hash');
+  ('${p.shareLink}', '${p.program}', 'itinerary', '${p.competition}', '${prefix}-share-link-hash');
 
 insert into token_events (id, program_id, token_kind, token_id, action) values
   ('${p.tokenEvent}', '${p.program}', 'guardian', '${p.guardianToken}', 'view');
@@ -219,6 +258,29 @@ insert into ledger_audit (id, program_id, entry_id, action, actor) values
 -- school/slot under it) are frozen (archive.spec exercises the rejection).
 insert into hosted_events (id, program_id, season_id, name, event_date, status) values
   ('${p.hostedEventArchived}', '${p.program}', '${p.seasonArchived}', 'Archived Invitational', null, 'done');
+
+-- An APPROVED commitment: requested by the director, approved by the treasurer.
+-- Seeded in two statements because a commitment is born a request — the insert
+-- trigger refuses one that arrives already approved, which is the guard that
+-- stops a seat allowed to REQUEST from forging the approval in the same write.
+insert into commitments
+  (id, program_id, season_id, kind, funding_source, vendor, purpose,
+   amount_cents, budget_line_id, need_by, requested_by) values
+  ('${p.commitmentApproved}', '${p.program}', '${p.seasonActive}', 'spending', 'booster',
+   'Approved Choreo LLC', 'Choreography — spring set', 120000, '${p.budgetLine}',
+   current_date + 14, '${p.director}');
+
+update commitments
+   set status = 'approved', approved_by = '${p.treasurer}', approved_at = now()
+ where id = '${p.commitmentApproved}';
+
+-- A commitment on the ARCHIVED season: readable, but every write to it is
+-- refused (the season's books are closed).
+insert into commitments
+  (id, program_id, season_id, kind, funding_source, vendor, purpose,
+   amount_cents, budget_line_id, requested_by) values
+  ('${p.commitmentArchived}', '${p.program}', '${p.seasonArchived}', 'spending', 'district',
+   'Old Costume Co', 'Last year''s set', 90000, '${p.budgetLineArchived}', '${p.director}');
 `;
 }
 

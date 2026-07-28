@@ -7,16 +7,36 @@ import {
   COMPETITION_WRITE_ROLES,
   ITINERARY_ITEM_KINDS,
 } from "@/lib/competitions";
-import { CompetitionTabs } from "../../../CompetitionTabs";
-import { IntroStrip, HelpDot } from "../../../../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
+import { SubTabs } from "../../../../../SubTabs";
+import { competitionTabs } from "@/lib/subnav";
+import { PacketPipeline } from "../../../PacketPipeline";
+import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { acceptParse } from "./actions";
+import { ACCEPT_LIVE_CONFIRM, REVIEW_FLASH_MAPS } from "./shared";
+import { readFlash } from "@/lib/flash";
 import { formatTimeZoneLabel } from "@/lib/datetime";
 
 // Packet parse review screen (§5 step 5, T015). Source document on the left,
 // editable parsed items + ambiguities/issues on the right. Accept materializes
-// items into the draft itinerary (source='parsed') for further manual editing;
-// nothing auto-publishes (Constitution IV).
+// items into the itinerary (source='parsed') for further manual editing.
+//
+// WHAT THIS SCREEN PROMISES HAS TO BE TRUE IN BOTH STATES. It used to say, in
+// every case, "Nothing here reaches a parent until you accept it here and then
+// publish the itinerary" — which is exactly right for a draft and false for a
+// competition whose itinerary is already published, where accepting replaces
+// what families are reading in one click. The screen reads the itinerary's
+// status now and says whichever of the two things is true, and the live case
+// asks for an explicit confirm before the button will do anything (the action
+// requires it too — Constitution IV, a human approves what they are seeing).
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It said "the AI
+// read the host's packet and drafted these times for you to check. Nothing
+// reaches a family until you accept them and publish the itinerary" and "compare
+// each row to the source on the left and fix anything flagged" — every clause of
+// which this screen now states permanently: the paragraph under the heading, the
+// "Flagged for your review" box, the five-step pipeline strip, and the Source /
+// Parsed items column headings. The page's version is also the more careful one,
+// because it changes when the itinerary is already live.
 
 interface ParseRow {
   id: string;
@@ -56,33 +76,43 @@ export default async function ReviewPage({
   searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string; parseId: string }>;
-  searchParams: Promise<{ help?: string }>;
+  // Next hands back an ARRAY for a duplicated param, so every read goes through
+  // lib/flash — a hand-typed `?error=constructor` must resolve to nothing.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, competitionId, parseId } = await params;
-  const { program, role, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   requireFlag(program, "packet_parse");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const tz = program.timezone;
   const sp = await searchParams;
+  const flash = readFlash(sp, REVIEW_FLASH_MAPS);
 
   const supabase = await createClient();
 
-  // First-use intro strip (spec 003 §3) — the AI drafted these; a human accepts.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
+  // Scoped to the program AND to the competition in the URL: a parse row only
+  // ever reviews its own competition's packet, so a row pointing somewhere else
+  // renders nowhere rather than under whichever competition was asked for.
   const { data: parseData } = await supabase
     .from("packet_parses")
     .select("id, document_id, status, error, raw_output")
     .eq("id", parseId)
     .eq("program_id", program.id)
+    .eq("competition_id", competitionId)
     .maybeSingle();
   const parse = parseData as ParseRow | null;
   if (!parse) notFound();
+
+  // Is there still a publish step between these items and a family's phone? The
+  // whole tone of this screen turns on the answer, so it is read, not assumed.
+  const { data: itinRow } = await supabase
+    .from("itineraries")
+    .select("status")
+    .eq("program_id", program.id)
+    .eq("competition_id", competitionId)
+    .maybeSingle();
+  const isLive = (itinRow as { status: string } | null)?.status === "published";
 
   const parsed = parse.raw_output?.parsed;
   const items = parsed?.items ?? [];
@@ -94,6 +124,7 @@ export default async function ReviewPage({
     .from("documents")
     .select("storage_path")
     .eq("id", parse.document_id)
+    .eq("program_id", program.id)
     .maybeSingle();
   let signedUrl: string | null = null;
   const path = (doc as { storage_path: string } | null)?.storage_path;
@@ -104,40 +135,46 @@ export default async function ReviewPage({
     signedUrl = signed?.signedUrl ?? null;
   }
 
+  // The same five-step strip the packet and itinerary pages show (US7-4) — but
+  // about THIS parse, not the competition's latest one. Those pages are about
+  // the competition, so latest is right for them; this screen is about the parse
+  // in its URL, and deriving the strip from a newer sibling meant a failed
+  // re-upload could print "Parsed — stuck" across the top of an accepted draft.
+  // The row is already loaded above, so being parse-specific also costs a query
+  // less than being wrong did.
+  const compBase = `/${slug}/competitions/${competitionId}`;
+  const pipeline = packetPipelineSteps(
+    await loadPacketPipeline(supabase, {
+      programId: program.id,
+      competitionId,
+      parse: { id: parse.id, status: parse.status },
+    }),
+    compBase,
+  );
+
   return (
     <section className="stack">
       <p>
-        <Link href={`/${slug}/competitions/${competitionId}/packet`}>
-          ← Packet
-        </Link>
+        <Link href={`${compBase}/packet`}>← Packet</Link>
       </p>
-      <CompetitionTabs
-        slug={slug}
-        competitionId={competitionId}
-        active="packet"
-      />
-      <div className="page-title-row">
-        <h1>Review parsed packet</h1>
-        {showGuide && (
-          <HelpDot
-            href={`/${slug}/competitions/${competitionId}/packet/${parseId}/review?help=1`}
-          />
-        )}
-      </div>
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="packet_review"
-          programId={program.id}
-          selfPath={`/${slug}/competitions/${competitionId}/packet/${parseId}/review`}
-          guideState={guideState}
-          help={sp.help === "1"}
-        />
+      <SubTabs strip={competitionTabs(slug, competitionId, "packet")} />
+      <PacketPipeline steps={pipeline} />
+      <h1>Review parsed packet</h1>
+      {flash.error && <p className="alert-error">{flash.error.message}</p>}
+      {isLive ? (
+        <p className="alert-error">
+          AI-drafted from the host packet. This competition&apos;s itinerary is
+          already <strong>published</strong>, so accepting replaces the times
+          families are reading right now — there is no publish step left after
+          it. Times are shown in {formatTimeZoneLabel(tz)}.
+        </p>
+      ) : (
+        <p className="muted">
+          AI-drafted from the host packet. Nothing here reaches a parent until
+          you accept it here and then publish the itinerary. Times are shown in{" "}
+          {formatTimeZoneLabel(tz)}.
+        </p>
       )}
-      <p className="muted">
-        AI-drafted from the host packet. Nothing here reaches a parent until you
-        accept it here and then publish the itinerary. Times are shown in{" "}
-        {formatTimeZoneLabel(tz)}.
-      </p>
 
       {parsed?.competition && (
         <p className="muted">
@@ -281,11 +318,40 @@ export default async function ReviewPage({
                   </div>
                 </fieldset>
               ))}
-              <p className="muted">
-                Accepting replaces the draft itinerary&apos;s items with these.
-                You can keep editing on the Itinerary tab, then publish there.
-              </p>
-              <button type="submit">Accept into draft itinerary</button>
+              {isLive ? (
+                // The extra, explicit yes. Not a nicety: without it one click
+                // puts AI-drafted times in front of every family, and the
+                // action refuses a post that does not carry this (./actions).
+                <div className="confirm-box stack">
+                  <strong>These replace what families see now</strong>
+                  <p>
+                    The itinerary for this competition is published. Accepting
+                    removes the times families are reading and puts these in
+                    their place immediately — nothing else has to happen for
+                    them to see it.
+                  </p>
+                  <label className="row-inline">
+                    <input
+                      type="checkbox"
+                      name="confirm"
+                      value={ACCEPT_LIVE_CONFIRM}
+                      required
+                    />
+                    I have read these times and I want families to see them now.
+                  </label>
+                </div>
+              ) : (
+                <p className="muted">
+                  Accepting replaces the draft itinerary&apos;s items with
+                  these. You can keep editing on the Itinerary tab, then publish
+                  there.
+                </p>
+              )}
+              <button type="submit">
+                {isLive
+                  ? "Replace what families see"
+                  : "Accept into draft itinerary"}
+              </button>
             </form>
           ) : (
             <p className="muted">

@@ -12,7 +12,8 @@ import {
 } from "@/lib/shifts";
 import { competitionEnsembleIds, type ItineraryItemKind } from "@/lib/competitions";
 import { toZonedInputValue } from "@/lib/datetime";
-import { CommsTabs } from "../../CommsTabs";
+import { SubTabs } from "../../../SubTabs";
+import { commsTabs } from "@/lib/subnav";
 import { createSuggestedShifts } from "../actions";
 
 // "Suggest shifts" (§8, T024, invariant §9.3). For a competition WITH a PUBLISHED
@@ -35,7 +36,7 @@ export default async function SuggestShiftsPage({
   searchParams: Promise<{ competition?: string }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
   requireFlag(program, "shifts");
   if (!COMMS_ROLES.includes(role)) {
@@ -178,7 +179,13 @@ export default async function SuggestShiftsPage({
 
   return (
     <section className="stack">
-      <CommsTabs slug={slug} active="shifts" shiftsEnabled />
+      <SubTabs
+        strip={commsTabs(slug, "shifts", {
+          digestEnabled: flags.digest,
+          announcementsEnabled: flags.announcements,
+          shiftsEnabled: true,
+        })}
+      />
       <p>
         <Link href={`/${slug}/comms/shifts`}>← Shifts</Link>
       </p>

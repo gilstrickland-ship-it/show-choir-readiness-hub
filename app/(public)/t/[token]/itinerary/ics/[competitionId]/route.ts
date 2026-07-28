@@ -1,16 +1,30 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { resolveToken, logTokenEvent, guardianCan } from "@/lib/tokens";
-import { getClientIp, rateLimitRawToken } from "@/lib/public-token";
+import {
+  resolveToken,
+  logTokenEvent,
+  guardianCan,
+  parentSurfaceAvailable,
+  documentAllowsToken,
+} from "@/lib/tokens";
+import {
+  getClientIp,
+  rateLimitRawToken,
+  UNAVAILABLE_MESSAGE,
+} from "@/lib/public-token";
 import { brand } from "@/lib/brand";
 import { buildIcs, slugifyForFilename, type IcsItem } from "@/lib/ics";
 
 // Add-to-calendar (.ics) for a published itinerary on the tokenized surface
 // (§8a, §9.3, C2-1). Parents had to hand-copy call times; this hands their
 // calendar app a subscribable file of the same published items they already see
-// on /itinerary. Mirrors the packet route exactly: same rate-limit + audit
-// guards, the SAME published-only invariant, and the SAME guardian/share
-// eligibility boundary. RLS does not apply to anonymous visitors, so the
-// service-role client is used and eligibility is checked explicitly here.
+// on /itinerary. Same rate-limit + audit guards and the same published-only
+// invariant as the packet route. RLS does not apply to anonymous visitors, so
+// the service-role client is used and eligibility is checked explicitly here.
+//
+// It does NOT share the packet route's token boundary any more, and the reason
+// is the CONTENT: this file is the schedule the shared itinerary page already
+// prints, so a broadcast `itinerary` share link may pull it. The packet PDF
+// names students against hotel rooms, so that one is guardian-only.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,9 +88,23 @@ export async function GET(
   const resolved = await resolveToken(token);
   if (!resolved) return text("Not found", 404);
 
+  // 3. The owning program must run competitions (Constitution VIII — the rule
+  //    lives in lib/tokens PARENT_SURFACE_FLAGS). No page to render here, so the
+  //    calm sentence is the 404 body.
+  if (!parentSurfaceAvailable(resolved.program, "itinerary")) {
+    return text(UNAVAILABLE_MESSAGE, 404);
+  }
+
   const supabase = createAdminClient();
 
-  // 3. Eligibility (capability boundary) for this token kind.
+  // 4. Eligibility (capability boundary) for this token kind, from the one table
+  //    that decides it (DOCUMENT_TOKEN_KINDS). A share link keeps the .ics: it
+  //    carries the same published TIMES the shared page shows, and no student,
+  //    chaperone or room name — which is exactly why the packet, on the same
+  //    competition, is guardian-only.
+  if (!documentAllowsToken("itinerary_ics", resolved.kind)) {
+    return text("Not found", 404);
+  }
   if (resolved.kind === "share") {
     // Only an itinerary share link maps to a competition, and only to ITS own.
     if (resolved.resource !== "itinerary") return text("Not found", 404);
@@ -93,7 +121,7 @@ export async function GET(
     if (!eligible) return text("Not found", 404);
   }
 
-  // 4. Load the PUBLISHED itinerary (invariant §9.3) — drafts are never visible.
+  // 5. Load the PUBLISHED itinerary (invariant §9.3) — drafts are never visible.
   const { data: comp } = await supabase
     .from("competitions")
     .select("id, name")
@@ -144,7 +172,7 @@ export async function GET(
     details: r.details,
   }));
 
-  // 5. Audit the download (best-effort — never blocks the response).
+  // 6. Audit the download (best-effort — never blocks the response).
   await logTokenEvent({
     programId: resolved.program.id,
     kind: resolved.kind,

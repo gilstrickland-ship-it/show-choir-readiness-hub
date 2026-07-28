@@ -7,105 +7,133 @@ import { TREASURY_ROLES } from "@/lib/nav";
 import {
   TREASURY_WRITE_ROLES,
   LEDGER_DIRECTIONS,
+  COMMITMENT_STATUS_LABELS,
   formatCents,
-  formatDateOnly,
-  todayDateKey,
-  sumActuals,
-  listMonthsWithEntries,
+  ledgerSearchTerm,
+  seasonTotalsFromRow,
+  commitmentTotalsFromRow,
+  commitmentDrawdownFromRows,
+  commitmentRefLabel,
+  ledgerPageRange,
+  ledgerPageRangeUnknownTotal,
+  parsePageParam,
   monthKeyForDate,
-  formatMonthKey,
-  NO_HEALTH_LABEL,
-  type CategoryDirection,
+  pickSeasonBudget,
+  LEDGER_PAGE_SIZE,
+  type CommitmentFundingSource,
+  type CommitmentKind,
+  type CommitmentStatus,
+  type CommitmentTotals,
   type LedgerDirection,
-  type LedgerAmountRow,
-  type LedgerMonthRow,
+  type LedgerSeasonTotals,
 } from "@/lib/treasury";
-import { TreasuryTabs } from "./TreasuryTabs";
-import { IntroStrip, HelpDot } from "../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
+import { zonedDateKey } from "@/lib/datetime";
+import { SubTabs } from "../SubTabs";
+import { Flash } from "../Flash";
+import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
 import {
-  addEntry,
-  voidEntry,
-  categorizeEntry,
-  markReconciled,
-  unmarkReconciled,
-} from "./actions";
+  LEDGER_FLASH_MAPS,
+  entryAnchor,
+  type LedgerSection,
+} from "./flash";
+import { treasuryTabs } from "@/lib/subnav";
+import { AddEntry, type EntryPrefill } from "./AddEntry";
+import { LedgerFilters } from "./LedgerFilters";
+import { LedgerTable, type EntryRow } from "./LedgerTable";
+import { Reconciliation } from "./Reconciliation";
+import type { CatOpt, CommitOpt, LineOpt, NamedOpt, TagOptions } from "./shared";
 
-// Running ledger (T019) — the treasury landing. Date-desc list with direction
-// badges, cents-formatted amounts, a running balance, filters (date range /
-// direction / budget line / competition / trip / include-voided), the add-entry
-// form (with receipt upload), the void + "void & re-enter" flow, and the
-// Uncategorized nudge with one-click filter and inline categorize.
+// The running ledger (T019) — the treasury landing, and after spec 005 US8 a
+// load-and-compose page: the season metric strip and the Uncategorized nudge
+// live here, and the four surfaces that hold controls are their own files
+// (AddEntry, LedgerFilters, LedgerTable, Reconciliation).
+//
+// NOTHING ON THIS PAGE IS SUMMED FROM A FETCHED ROW LIST ANY MORE. PostgREST
+// caps a response at `max_rows` (1000), so the old season-wide fetches meant
+// that past a thousand entries the Balance, the In/Out totals, the
+// Uncategorized count and the reconciliation month list were all computed from
+// an arbitrary prefix — a treasurer could read a wrong balance to the board with
+// nothing on screen indicating truncation. Totals now come from the 0019 SQL
+// aggregates (one row each, no cap), and the LIST is explicitly paginated and
+// says which slice of how many it is showing.
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It said "every
+// dollar in or out is one line here — nothing is ever deleted; a mistake is
+// voided and redone, and the whole board can see the books", which is the
+// eyebrow over the title ("Tracked, never touched — entries void, never delete")
+// and the foot of the page ("A mistake is voided and redone with a reason — the
+// audit log keeps both"), permanently and to every seat. A fiduciary invariant
+// belongs in page furniture, not behind a Got-it button.
 
-interface EntryRow {
-  id: string;
-  entry_date: string;
-  direction: LedgerDirection;
-  amount_cents: number;
-  budget_line_id: string | null;
-  competition_id: string | null;
-  trip_id: string | null;
-  memo: string | null;
-  counterparty: string | null;
-  receipt_path: string | null;
-  voided_at: string | null;
-  void_reason: string | null;
-  created_at: string;
-}
-interface LineOpt {
-  id: string;
-  name: string;
-  category_id: string;
-}
-interface CatOpt {
-  id: string;
-  name: string;
-  direction: CategoryDirection;
-}
-interface CompOpt {
-  id: string;
-  name: string;
-}
-interface TripOpt {
-  id: string;
-  name: string;
+const ENTRY_COLUMNS =
+  "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, commitment_id, memo, counterparty, receipt_path, voided_at, void_reason";
+
+// The open commitments this season's entries can be paid against (spec 006 R3).
+// Ordered newest-first and capped: this is a PICKER, not a report — the
+// commitments page is the report, and it pages. A season with more open purchase
+// orders than this has a different problem than a truncated dropdown.
+const COMMITMENT_PICKER_LIMIT = 200;
+
+// The filter chain, described once and applied to BOTH the count query and the
+// page query, so "showing 1–100 of 412" can never be describing a different set
+// of rows than the table underneath it.
+type FilterOp =
+  | { kind: "eq"; column: string; value: string }
+  | { kind: "isNull"; column: string }
+  | { kind: "gte"; column: string; value: string }
+  | { kind: "lte"; column: string; value: string }
+  | { kind: "or"; filters: string };
+
+interface LedgerFilterSpec {
+  seasonId: string | null;
+  includeVoided: boolean;
+  uncategorizedOnly: boolean;
+  direction: LedgerDirection | "all";
+  from: string;
+  to: string;
+  line: string;
+  competition: string;
+  trip: string;
+  search: string | null;
 }
 
-const ERR: Record<string, string> = {
-  entry:
-    "Could not save the entry. Check the amount (e.g. 1,234.56), direction, and date.",
-  void: "Could not void the entry.",
-  void_reason: "A void needs a reason.",
-  categorize: "Could not categorize the entry.",
-  receipt_type: "Receipts must be a PDF or image.",
-  receipt_upload: "The receipt failed to upload. The entry was not saved.",
-  reconcile: "Could not update the reconciliation record.",
-};
+function ledgerFilterOps(f: LedgerFilterSpec): FilterOp[] {
+  const ops: FilterOp[] = [];
+  if (f.seasonId) ops.push({ kind: "eq", column: "season_id", value: f.seasonId });
+  if (!f.includeVoided) ops.push({ kind: "isNull", column: "voided_at" });
+  if (f.uncategorizedOnly) ops.push({ kind: "isNull", column: "budget_line_id" });
+  if (f.direction !== "all") {
+    ops.push({ kind: "eq", column: "direction", value: f.direction });
+  }
+  if (f.from) ops.push({ kind: "gte", column: "entry_date", value: f.from });
+  if (f.to) ops.push({ kind: "lte", column: "entry_date", value: f.to });
+  if (f.line) ops.push({ kind: "eq", column: "budget_line_id", value: f.line });
+  if (f.competition) {
+    ops.push({ kind: "eq", column: "competition_id", value: f.competition });
+  }
+  if (f.trip) ops.push({ kind: "eq", column: "trip_id", value: f.trip });
+  // Who and what — the two free-text columns the four decisions write.
+  if (f.search) {
+    ops.push({
+      kind: "or",
+      filters: `counterparty.ilike.%${f.search}%,memo.ilike.%${f.search}%`,
+    });
+  }
+  return ops;
+}
 
 export default async function LedgerPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    from?: string;
-    to?: string;
-    direction?: string;
-    line?: string;
-    competition?: string;
-    trip?: string;
-    voided?: string;
-    uncategorized?: string;
-    reenter?: string;
-    confirm?: string;
-    saved?: string;
-    error?: string;
-    help?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?direction=in&direction=out),
+  // so every read goes through `one()` — a hand-typed URL must not 500 the page
+  // or smuggle an array into a query filter.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role, season } = await getTenantContext(slug);
   requireFlag(program, "treasury");
   if (!TREASURY_ROLES.includes(role)) {
     return (
@@ -118,40 +146,41 @@ export default async function LedgerPage({
     );
   }
   const canWrite = TREASURY_WRITE_ROLES.includes(role);
+
   const sp = await searchParams;
+  const one = (key: string): string | null => oneParam(sp, key);
 
   const supabase = await createClient();
-
-  // First-use intro strip (spec 003 §3) — flag on, real member (not a support
-  // view). Read the member's collapsed state once; the strip decides its own
-  // visibility from that + ?help=1.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
 
   // Option sources: budget lines (grouped by category) for the current season's
   // budget, plus season competitions and trips for tagging + filtering.
   let cats: CatOpt[] = [];
   let lines: LineOpt[] = [];
-  let comps: CompOpt[] = [];
-  let trips: TripOpt[] = [];
+  let comps: NamedOpt[] = [];
+  let trips: NamedOpt[] = [];
+  let commits: CommitOpt[] = [];
+  // Every open commitment's remaining balance, so opening the drawer from a
+  // commitment can put what is still owed in the Amount box.
+  const commitRemaining = new Map<string, number>();
 
   if (season) {
-    const { data: budget } = await supabase
+    // Which budget's lines the entry form offers. The ACTIVE one, else the
+    // newest — `.order("status")` sorts the enum by declaration order and so
+    // offered the DRAFT's lines to code an entry against, while the reports
+    // read the active budget (lib/treasury pickSeasonBudget).
+    const { data: budgetRows } = await supabase
       .from("budgets")
-      .select("id")
+      .select("id, status")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
-      .order("status", { ascending: true })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order("created_at", { ascending: false });
 
-    const budgetId = (budget as { id: string } | null)?.id ?? null;
+    const budgetId =
+      pickSeasonBudget(
+        (budgetRows as { id: string; status: string }[] | null) ?? [],
+      )?.id ?? null;
 
-    const [catRes, compRes, tripRes] = await Promise.all([
+    const [catRes, compRes, tripRes, commitRes] = await Promise.all([
       budgetId
         ? supabase
             .from("budget_categories")
@@ -173,11 +202,42 @@ export default async function LedgerPage({
         .eq("program_id", program.id)
         .eq("season_id", season.id)
         .order("starts_on", { ascending: false }),
+      // OPEN commitments only — a closed or cancelled document is not something
+      // a treasurer means to pay down, and it is what the money math counts. The
+      // database still accepts any status, so a late invoice against a closed
+      // purchase order remains recordable from that commitment's own page.
+      supabase
+        .from("commitments")
+        .select("id, kind, funding_source, number, revision, vendor")
+        .eq("program_id", program.id)
+        .eq("season_id", season.id)
+        .is("closed_at", null)
+        .is("cancelled_at", null)
+        .is("superseded_at", null)
+        .order("funding_source", { ascending: true })
+        .order("number", { ascending: false })
+        .limit(COMMITMENT_PICKER_LIMIT),
     ]);
 
     cats = (catRes.data as CatOpt[] | null) ?? [];
-    comps = (compRes.data as CompOpt[] | null) ?? [];
-    trips = (tripRes.data as TripOpt[] | null) ?? [];
+    comps = (compRes.data as NamedOpt[] | null) ?? [];
+    trips = (tripRes.data as NamedOpt[] | null) ?? [];
+    commits = (
+      (commitRes.data as
+        | {
+            id: string;
+            kind: CommitmentKind;
+            funding_source: CommitmentFundingSource;
+            number: number;
+            revision: number;
+            vendor: string;
+          }[]
+        | null) ?? []
+    ).map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      name: `${commitmentRefLabel(c.funding_source, c.number, c.revision)} — ${c.vendor}`,
+    }));
 
     if (cats.length > 0) {
       const { data: lineData } = await supabase
@@ -191,315 +251,406 @@ export default async function LedgerPage({
         .order("sort_order", { ascending: true });
       lines = (lineData as LineOpt[] | null) ?? [];
     }
-  }
 
-  const linesByCat = new Map<string, LineOpt[]>();
-  for (const l of lines) {
-    const arr = linesByCat.get(l.category_id) ?? [];
-    arr.push(l);
-    linesByCat.set(l.category_id, arr);
-  }
-  const lineName = new Map(lines.map((l) => [l.id, l.name]));
-  const compName = new Map(comps.map((c) => [c.id, c.name]));
-  const tripName = new Map(trips.map((t) => [t.id, t.name]));
-
-  // ---- Filters --------------------------------------------------------------
-  const includeVoided = sp.voided === "1";
-  const uncategorizedOnly = sp.uncategorized === "1";
-  const dirFilter = (LEDGER_DIRECTIONS as readonly string[]).includes(
-    sp.direction ?? "",
-  )
-    ? (sp.direction as LedgerDirection)
-    : "all";
-
-  let query = supabase
-    .from("ledger_entries")
-    .select(
-      "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, memo, counterparty, receipt_path, voided_at, void_reason, created_at",
-    )
-    .eq("program_id", program.id)
-    .order("entry_date", { ascending: false })
-    .order("created_at", { ascending: false });
-
-  if (season) query = query.eq("season_id", season.id);
-  if (!includeVoided) query = query.is("voided_at", null);
-  if (uncategorizedOnly) query = query.is("budget_line_id", null);
-  if (dirFilter !== "all") query = query.eq("direction", dirFilter);
-  if (sp.from) query = query.gte("entry_date", sp.from);
-  if (sp.to) query = query.lte("entry_date", sp.to);
-  if (sp.line) query = query.eq("budget_line_id", sp.line);
-  if (sp.competition) query = query.eq("competition_id", sp.competition);
-  if (sp.trip) query = query.eq("trip_id", sp.trip);
-
-  const { data: entryData } = await query;
-  const entries = (entryData as EntryRow[] | null) ?? [];
-
-  // Running balance over the displayed non-voided rows, computed chronologically
-  // then rendered date-desc. (With filters applied the balance is "as of this
-  // row within the current view"; voided rows never contribute — Principle V.)
-  const chrono = entries
-    .filter((e) => !e.voided_at)
-    .slice()
-    .sort((a, b) =>
-      a.entry_date === b.entry_date
-        ? a.created_at.localeCompare(b.created_at)
-        : a.entry_date.localeCompare(b.entry_date),
-    );
-  const balanceById = new Map<string, number>();
-  let running = 0;
-  for (const e of chrono) {
-    running += e.direction === "in" ? e.amount_cents : -e.amount_cents;
-    balanceById.set(e.id, running);
-  }
-
-  // ---- Season metric strip + uncategorized nudge ----------------------------
-  // One season-wide fetch drives Balance/In/Out (via sumActuals, which excludes
-  // voids) and the Uncategorized cell (live rows with no budget line).
-  let metrics = { inCents: 0, outCents: 0, netCents: 0 };
-  let unCount = 0;
-  let unTotal = 0;
-  {
-    let mq = supabase
-      .from("ledger_entries")
-      .select("amount_cents, direction, voided_at, budget_line_id")
-      .eq("program_id", program.id);
-    if (season) mq = mq.eq("season_id", season.id);
-    const { data: mData } = await mq;
-    const rows = (mData as LedgerAmountRow[] | null) ?? [];
-    metrics = sumActuals(rows);
-    for (const r of rows) {
-      if (r.voided_at || r.budget_line_id) continue;
-      unCount += 1;
-      unTotal += r.amount_cents;
-    }
-  }
-
-  // ---- Reconciliation card (Wave L) -----------------------------------------
-  // Months (this season) that carry non-voided entries, and which of those the
-  // treasurer has marked reconciled against the bank statement. Reconciliation
-  // rows are program-scoped (not season-scoped) — we look them up by month key.
-  let reconMonths: string[] = [];
-  const reconciledBy = new Map<string, { date: string; note: string | null }>();
-  if (season) {
-    const { data: monthRows } = await supabase
-      .from("ledger_entries")
-      .select("entry_date, voided_at")
-      .eq("program_id", program.id)
-      .eq("season_id", season.id);
-    reconMonths = listMonthsWithEntries(
-      (monthRows as LedgerMonthRow[] | null) ?? [],
-    );
-
-    if (reconMonths.length > 0) {
-      const { data: recRows } = await supabase
-        .from("ledger_reconciliations")
-        .select("month, note, created_at")
-        .eq("program_id", program.id);
-      for (const r of (recRows as
-        { month: string; note: string | null; created_at: string }[] | null) ??
-        []) {
-        const key = monthKeyForDate(r.month);
-        if (key) reconciledBy.set(key, { date: r.created_at, note: r.note });
+    // What is still owed on each of those, in SQL (0022) rather than summed over
+    // whatever ledger rows a fetch returned — a per-document remaining balance
+    // is a money total, and every money total in this app is a SQL aggregate for
+    // the reason the header of this file gives. Only the ids in the picker are
+    // asked about, so the answer is bounded by the picker, not by the season.
+    if (commits.length > 0) {
+      const { data: drawRows } = await supabase.rpc("commitment_drawdown_rows", {
+        p_program_id: program.id,
+        p_season_id: season.id,
+        p_commitment_ids: commits.map((c) => c.id),
+      });
+      for (const [id, d] of commitmentDrawdownFromRows(drawRows)) {
+        commitRemaining.set(id, d.remainingCents);
       }
     }
   }
+
+  // ---- Filters --------------------------------------------------------------
+  const includeVoided = one("voided") === "1";
+  const uncategorizedOnly = one("uncategorized") === "1";
+  const search = ledgerSearchTerm(one("q"));
+  const rawDirection = one("direction") ?? "";
+  const dirFilter = (LEDGER_DIRECTIONS as readonly string[]).includes(
+    rawDirection,
+  )
+    ? (rawDirection as LedgerDirection)
+    : "all";
+  const from = one("from") ?? "";
+  const to = one("to") ?? "";
+  const lineFilter = one("line") ?? "";
+  const compFilter = one("competition") ?? "";
+  const tripFilter = one("trip") ?? "";
+
+  const filterSpec: LedgerFilterSpec = {
+    seasonId: season?.id ?? null,
+    includeVoided,
+    uncategorizedOnly,
+    direction: dirFilter,
+    from,
+    to,
+    line: lineFilter,
+    competition: compFilter,
+    trip: tripFilter,
+    search,
+  };
+
+  // ---- The list: count first, then exactly one page -------------------------
+  const ops = ledgerFilterOps(filterSpec);
+
+  let countQuery = supabase
+    .from("ledger_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("program_id", program.id);
+  for (const op of ops) {
+    if (op.kind === "eq") countQuery = countQuery.eq(op.column, op.value);
+    else if (op.kind === "isNull") countQuery = countQuery.is(op.column, null);
+    else if (op.kind === "gte") countQuery = countQuery.gte(op.column, op.value);
+    else if (op.kind === "lte") countQuery = countQuery.lte(op.column, op.value);
+    else countQuery = countQuery.or(op.filters);
+  }
+  // A DROPPED COUNT ERROR USED TO TRUNCATE THE LEDGER IN SILENCE. `count` comes
+  // back null on failure, ledgerPageRange(0, …) then reports "0 entries" and the
+  // pager renders nothing at all — so a treasurer saw exactly one page and no
+  // indication that anything followed it. The count is now allowed to be
+  // UNKNOWN, which is a different thing from zero.
+  const { count: matchCount, error: countError } = await countQuery;
+  const requestedPage = parsePageParam(one("page"));
+  const countedRange = countError
+    ? null
+    : ledgerPageRange(matchCount ?? 0, requestedPage);
+  const listFrom = countedRange
+    ? countedRange.from
+    : (requestedPage - 1) * LEDGER_PAGE_SIZE;
+
+  let listQuery = supabase
+    .from("ledger_entries")
+    .select(ENTRY_COLUMNS)
+    .eq("program_id", program.id);
+  for (const op of ops) {
+    if (op.kind === "eq") listQuery = listQuery.eq(op.column, op.value);
+    else if (op.kind === "isNull") listQuery = listQuery.is(op.column, null);
+    else if (op.kind === "gte") listQuery = listQuery.gte(op.column, op.value);
+    else if (op.kind === "lte") listQuery = listQuery.lte(op.column, op.value);
+    else listQuery = listQuery.or(op.filters);
+  }
+  const { data: entryData } = await listQuery
+    .order("entry_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    // The unique tiebreaker. Two entries sharing a date AND a created_at (a
+    // bulk insert, or the void + replacement a filing writes) have no defined
+    // order without it, and an ambiguous ORDER BY across .range() calls can hand
+    // the same row back on two pages while another is never shown at all. The
+    // board-snapshot pager already learned this.
+    .order("id", { ascending: false })
+    .range(listFrom, listFrom + LEDGER_PAGE_SIZE - 1);
+  const entries = (entryData as EntryRow[] | null) ?? [];
+  const range = countedRange ?? ledgerPageRangeUnknownTotal(requestedPage, entries.length);
+
+  // Running balance for the rows on THIS page — computed in SQL over the whole
+  // season, so it is the season balance as of each entry rather than a total
+  // that restarts at zero on page 2 or shifts when a filter is applied.
+  //
+  // A MISSING BALANCE IS NOT ZERO. This map used to be read with `?? 0`, so a
+  // failed rpc printed a full column of $0.00 next to a metric strip that was
+  // still correct — the same "a zero balance is a number a treasurer would read
+  // aloud to a board" rule the totals already follow. The map is now the only
+  // authority: an id it does not carry renders "—".
+  const balanceById = new Map<string, number>();
+  let balanceError = false;
+  if (season && entries.length > 0) {
+    const { data: balRows, error: balErr } = await supabase.rpc(
+      "ledger_running_balance",
+      {
+        p_program_id: program.id,
+        p_season_id: season.id,
+        p_entry_ids: entries.filter((e) => !e.voided_at).map((e) => e.id),
+      },
+    );
+    balanceError = !!balErr;
+    for (const r of (balRows as
+      | { entry_id: string; balance_cents: number }[]
+      | null) ?? []) {
+      balanceById.set(r.entry_id, Number(r.balance_cents));
+    }
+  }
+  // With no active season there is no season balance to be "as of" — the column
+  // would be a blank claim on every row, so it does not appear at all.
+  const showBalance = !!season;
+  const balancesUnavailable =
+    showBalance &&
+    (balanceError ||
+      entries.some((e) => !e.voided_at && !balanceById.has(e.id)));
+
+  // ---- Season metric strip + uncategorized nudge ----------------------------
+  // One SQL aggregate drives Balance/In/Out, the Uncategorized cell, and the
+  // reconciliation month list. A failed read renders as "—", never as $0.00: a
+  // zero balance is a number a treasurer would read aloud to a board.
+  let totals: LedgerSeasonTotals | null = null;
+  // The middle layer (spec 006): money this season has already promised. It is
+  // on THIS page because the balance above it is the number a director reads as
+  // "what we have" — and what a program has is not what it can spend.
+  let committed: CommitmentTotals | null = null;
+  if (season) {
+    const [totalsRes, committedRes] = await Promise.all([
+      supabase.rpc("ledger_season_totals", {
+        p_program_id: program.id,
+        p_season_id: season.id,
+      }),
+      supabase.rpc("commitment_totals", {
+        p_program_id: program.id,
+        p_season_id: season.id,
+      }),
+    ]);
+    const row = Array.isArray(totalsRes.data) ? totalsRes.data[0] : totalsRes.data;
+    totals = totalsRes.error ? null : seasonTotalsFromRow(row);
+    const committedRow = Array.isArray(committedRes.data)
+      ? committedRes.data[0]
+      : committedRes.data;
+    committed = committedRes.error
+      ? null
+      : commitmentTotalsFromRow(committedRow);
+  }
+  const totalsUnavailable = !!season && !totals;
+
+  // ---- Reconciliation (Wave L) ----------------------------------------------
+  // Months (this season) that carry non-voided entries, and which of those the
+  // treasurer has marked reconciled against the bank statement. Reconciliation
+  // rows are program-scoped (not season-scoped) — we look them up by month key.
+  const reconMonths = totals?.months ?? [];
+  const reconciledBy = new Map<string, { date: string; note: string | null }>();
+  if (reconMonths.length > 0) {
+    const { data: recRows } = await supabase
+      .from("ledger_reconciliations")
+      .select("month, note, created_at")
+      .eq("program_id", program.id);
+    for (const r of (recRows as
+      { month: string; note: string | null; created_at: string }[] | null) ??
+      []) {
+      const key = monthKeyForDate(r.month);
+      if (key) reconciledBy.set(key, { date: r.created_at, note: r.note });
+    }
+  }
+  const confirmParam = one("confirm");
   const unmarkConfirmMonth =
-    canWrite && sp.confirm?.startsWith("unmark_")
-      ? sp.confirm.slice("unmark_".length)
+    canWrite && confirmParam?.startsWith("unmark_")
+      ? confirmParam.slice("unmark_".length)
       : null;
 
-  // ---- Re-enter prefill (from a just-voided entry) --------------------------
-  let prefill: EntryRow | null = null;
-  if (canWrite && sp.reenter) {
+  // ---- Prefill: the two ways the drawer opens already filled in -------------
+  // `?reenter=` is a "Void & redo" (spec 005 §7); `?commit=` is "record a
+  // payment against this" from a commitment's page (spec 006 R3), which is what
+  // keeps most entries from ever touching the drawdown select. Neither id is
+  // trusted: each is re-read in THIS program, and the commitment must also be in
+  // THIS season — an id from another season would be frozen onto the entry by
+  // the void-only trigger and would decrement a balance on the wrong year's
+  // books.
+  let prefill: EntryPrefill | null = null;
+  const reenterId = one("reenter");
+  const payCommitmentId = one("commit");
+  if (canWrite && reenterId) {
     const { data } = await supabase
       .from("ledger_entries")
-      .select(
-        "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, memo, counterparty, receipt_path, voided_at, void_reason, created_at",
-      )
-      .eq("id", sp.reenter)
+      .select(ENTRY_COLUMNS)
+      .eq("id", reenterId)
       .eq("program_id", program.id)
       .maybeSingle();
-    prefill = (data as EntryRow | null) ?? null;
+    const row = data as EntryRow | null;
+    if (row) {
+      prefill = {
+        redoOf: reenterId,
+        entry_date: row.entry_date,
+        direction: row.direction,
+        amount_cents: row.amount_cents,
+        budget_line_id: row.budget_line_id,
+        competition_id: row.competition_id,
+        trip_id: row.trip_id,
+        commitment_id: row.commitment_id,
+        memo: row.memo,
+        counterparty: row.counterparty,
+        hadReceipt: !!row.receipt_path,
+        againstCommitment: null,
+      };
+    }
+  } else if (canWrite && season && payCommitmentId) {
+    const { data } = await supabase
+      .from("commitments")
+      .select(
+        "id, kind, funding_source, number, revision, vendor, purpose, budget_line_id",
+      )
+      .eq("id", payCommitmentId)
+      .eq("program_id", program.id)
+      .eq("season_id", season.id)
+      .maybeSingle();
+    const c = data as {
+      id: string;
+      kind: CommitmentKind;
+      funding_source: CommitmentFundingSource;
+      number: number;
+      revision: number;
+      vendor: string;
+      purpose: string;
+      budget_line_id: string;
+    } | null;
+    if (c) {
+      const label = `${commitmentRefLabel(c.funding_source, c.number, c.revision)} — ${c.vendor}`;
+      prefill = {
+        redoOf: null,
+        entry_date: zonedDateKey(new Date(), program.timezone),
+        // A spending commitment is paid down by money OUT and expected money by
+        // money IN — the same rule the aggregates apply, so the form opens on the
+        // direction that will actually draw it down.
+        direction: c.kind === "spending" ? "out" : "in",
+        // What is still owed, when we could read it. Zero rather than a guess
+        // when we could not: an amount is a required field the treasurer is
+        // about to check anyway, and a wrong number in it is worse than an empty
+        // one.
+        amount_cents: commitRemaining.get(c.id) ?? 0,
+        budget_line_id: c.budget_line_id,
+        competition_id: null,
+        trip_id: null,
+        commitment_id: c.id,
+        memo: c.purpose,
+        counterparty: c.vendor,
+        hadReceipt: false,
+        againstCommitment: label,
+      };
+    }
   }
 
-  const dollarsValue = (cents: number) => (cents / 100).toFixed(2);
+  // A DEFAULT VALUE A SELECT DOES NOT CONTAIN IS A DROPPED LINK. The picker
+  // offers OPEN commitments, and both prefills can carry one that isn't: "record
+  // a payment against this" from a closed purchase order (a late invoice is a
+  // real fact about the money, which is why the database accepts it), and a
+  // "Void & redo" of an entry whose commitment has been closed since. Without
+  // its option present the select falls back to "Not against one" and the redo
+  // silently releases money back into the available balance — the same class of
+  // defect as dropping the receipt. So the prefill's own commitment joins the
+  // list, once, at the end.
+  if (season && prefill?.commitment_id) {
+    const known = commits.some((c) => c.id === prefill!.commitment_id);
+    if (!known) {
+      const { data } = await supabase
+        .from("commitments")
+        .select("id, kind, funding_source, number, revision, vendor, status")
+        .eq("id", prefill.commitment_id)
+        .eq("program_id", program.id)
+        .eq("season_id", season.id)
+        .maybeSingle();
+      const c = data as {
+        id: string;
+        kind: CommitmentKind;
+        funding_source: CommitmentFundingSource;
+        number: number;
+        revision: number;
+        vendor: string;
+        status: string;
+      } | null;
+      if (c) {
+        // Own-property lookup, not a bare index. The value is a database enum
+        // and can only be one of the eight — but every map in this app that is
+        // keyed by a value from outside the module reads this way, because
+        // `LABELS["constructor"]` hands React a function to render.
+        const statusLabel = Object.hasOwn(COMMITMENT_STATUS_LABELS, c.status)
+          ? COMMITMENT_STATUS_LABELS[c.status as CommitmentStatus]
+          : c.status;
+        commits = [
+          ...commits,
+          {
+            id: c.id,
+            kind: c.kind,
+            name: `${commitmentRefLabel(c.funding_source, c.number, c.revision)} — ${c.vendor} (${statusLabel})`,
+          },
+        ];
+      } else {
+        // It is not this program's, or not this season's. Drop the prefilled
+        // link rather than posting an id the server would refuse: the entry
+        // itself is still worth saving, and the drawer says nothing is tagged.
+        prefill = { ...prefill, commitment_id: null, againstCommitment: null };
+      }
+    }
+  }
 
-  const lineSelect = (name: string, defaultValue: string) => (
-    <select name={name} defaultValue={defaultValue}>
-      <option value="">(uncategorized)</option>
-      {cats.map((c) => (
-        <optgroup
-          key={c.id}
-          label={`${c.direction === "income" ? "Income" : "Expense"} — ${c.name}`}
-        >
-          {(linesByCat.get(c.id) ?? []).map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
-  );
+  const options: TagOptions = { cats, lines, comps, trips, commits };
+
+  // A row's popover reopens on `?edit=<entryId>` and carries its own error —
+  // but only when that row is really on this page and still live. A voided row
+  // renders as inert text with no popover (and is filtered out entirely by the
+  // default "live rows only" filter), so a message aimed at it would render
+  // nowhere at all. Fail OPEN to the page banner in that case.
+  const flash = readFlash<LedgerSection>(sp, LEDGER_FLASH_MAPS);
+  const openId = canWrite ? one("edit") : null;
+  const rowWillRender =
+    !!openId && entries.some((e) => e.id === openId && !e.voided_at);
+  const rowOwned = flash.error?.section === "row";
+  const rowError = rowOwned && rowWillRender ? flash.error!.message : null;
+  // A row-owned message with nowhere to land falls open to the page banner.
+  const pageFlash: PageFlash<LedgerSection> =
+    rowOwned && !rowWillRender
+      ? { ok: flash.ok, error: { section: "page", message: flash.error!.message } }
+      : flash;
+
+  // Paging links keep every filter and drop the one-shot params (a flash, an
+  // error, a reopened popover) so page 2 is not still shouting about page 1.
+  const ONE_SHOT = ["edit", "error", "ok", "confirm", "reenter", "commit"];
+  const TRANSIENT = new Set(["page", ...ONE_SHOT]);
+  const keepFilters = (drop: Set<string>): URLSearchParams => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      if (typeof value !== "string" || drop.has(key)) continue;
+      qs.set(key, value);
+    }
+    return qs;
+  };
+  const ledgerHref = (qs: URLSearchParams, hash = ""): string => {
+    const query = qs.toString();
+    return `/${slug}/treasury${query ? `?${query}` : ""}${hash}`;
+  };
+  const pageHref = (target: number): string => {
+    const qs = keepFilters(TRANSIENT);
+    if (target > 1) qs.set("page", String(target));
+    return ledgerHref(qs);
+  };
+  // Open (or close) ONE row's fix panel without losing the filters or the page
+  // the treasurer is looking at. `?edit=` is the same param a refused write comes
+  // back on, so the link and the redirect land in exactly the same place.
+  const rowHref = (entryId: string | null): string => {
+    const qs = keepFilters(new Set(ONE_SHOT));
+    if (entryId) qs.set("edit", entryId);
+    return ledgerHref(qs, entryId ? `#${entryAnchor(entryId)}` : "");
+  };
+
+  const metric = (value: string | null): string => value ?? "—";
 
   return (
-    <section className="stack money">
+    <section className="stack">
       <div className="page-head">
         <div className="page-head-titles">
           <p className="eyebrow">
             Tracked, never touched — entries void, never delete
           </p>
-          <div className="page-title-row">
-            <h1 className="page-h1">Money</h1>
-            {showGuide && <HelpDot href={`/${slug}/treasury?help=1`} />}
-          </div>
+          <h1 className="page-h1">Money</h1>
         </div>
         {canWrite && season && (
           <div className="page-head-actions">
-            <details className="drawer" open={!!prefill}>
-              <summary className="button-link accent">+ Add entry</summary>
-              <div className="drawer-panel" id="add-entry">
-                <h2 className="drawer-title">
-                  {prefill ? "Re-enter (from voided entry)" : "Add an entry"}
-                </h2>
-                <form
-                  action={addEntry}
-                  className="stack"
-                  encType="multipart/form-data"
-                >
-                  <input type="hidden" name="programId" value={program.id} />
-                  <input type="hidden" name="slug" value={slug} />
-                  <input type="hidden" name="seasonId" value={season.id} />
-                  <div className="row-inline">
-                    <label>
-                      Date
-                      <input
-                        type="date"
-                        name="entry_date"
-                        required
-                        defaultValue={prefill?.entry_date ?? todayDateKey()}
-                      />
-                    </label>
-                    <label>
-                      Direction
-                      <select
-                        name="direction"
-                        required
-                        defaultValue={prefill?.direction ?? "out"}
-                      >
-                        {LEDGER_DIRECTIONS.map((d) => (
-                          <option key={d} value={d}>
-                            {d === "in" ? "In (income)" : "Out (expense)"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Amount $
-                      <input
-                        type="text"
-                        name="amount"
-                        inputMode="decimal"
-                        required
-                        placeholder="1,234.56"
-                        defaultValue={
-                          prefill ? dollarsValue(prefill.amount_cents) : ""
-                        }
-                      />
-                    </label>
-                    <label>
-                      Paid to / received from
-                      <input
-                        type="text"
-                        name="counterparty"
-                        placeholder="Payee or source"
-                        defaultValue={prefill?.counterparty ?? ""}
-                      />
-                    </label>
-                  </div>
-                  <div className="row-inline">
-                    <label>
-                      Budget line
-                      {lineSelect(
-                        "budget_line_id",
-                        prefill?.budget_line_id ?? "",
-                      )}
-                    </label>
-                    <label>
-                      Competition tag
-                      <select
-                        name="competition_id"
-                        defaultValue={prefill?.competition_id ?? ""}
-                      >
-                        <option value="">(none)</option>
-                        {comps.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Trip tag
-                      <select
-                        name="trip_id"
-                        defaultValue={prefill?.trip_id ?? ""}
-                      >
-                        <option value="">(none)</option>
-                        {trips.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <label style={{ width: "100%" }}>
-                    Memo
-                    <input
-                      type="text"
-                      name="memo"
-                      defaultValue={prefill?.memo ?? ""}
-                    />
-                  </label>
-                  <label>
-                    Receipt (PDF or image)
-                    <input
-                      type="file"
-                      name="receipt"
-                      accept="application/pdf,image/*"
-                    />
-                  </label>
-                  <p className="muted">{NO_HEALTH_LABEL}</p>
-                  <button type="submit">
-                    {prefill ? "Save re-entry" : "Add entry"}
-                  </button>
-                </form>
-              </div>
-            </details>
+            <AddEntry
+              programId={program.id}
+              slug={slug}
+              seasonId={season.id}
+              today={zonedDateKey(new Date(), program.timezone)}
+              options={options}
+              prefill={prefill}
+            />
           </div>
         )}
       </div>
 
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="treasury"
-          programId={program.id}
-          selfPath={`/${slug}/treasury`}
-          guideState={guideState}
-          help={sp.help === "1"}
-          canWrite={canWrite}
-        />
-      )}
+      <SubTabs strip={treasuryTabs(slug, "ledger")} />
 
-      <TreasuryTabs slug={slug} active="ledger" />
-
-      {sp.saved && <p className="alert-ok">Saved.</p>}
-      {sp.error && (
-        <p className="alert-error">
-          {ERR[sp.error] ?? "Something went wrong."}
-        </p>
-      )}
+      <Flash flash={pageFlash} section="page" />
 
       {!season && (
         <p className="alert-error">
@@ -509,32 +660,95 @@ export default async function LedgerPage({
         </p>
       )}
 
+      {totalsUnavailable && (
+        <p className="alert-error">
+          The season totals could not be read just now, so Balance, In, Out and
+          Uncategorized are blank rather than wrong. The entries below are
+          unaffected — reload to try again.
+        </p>
+      )}
+
+      {balancesUnavailable && (
+        <p className="alert-error">
+          The running balance could not be read just now, so the Balance column
+          is blank rather than wrong. Each entry&apos;s own amount is unaffected
+          — reload to try again.
+        </p>
+      )}
+
+      {countError && (
+        <p className="alert-error">
+          How many entries match these filters could not be read just now, so
+          this page says which entries it is showing but not how many there are
+          in total. Keep paging with Older to see the rest.
+        </p>
+      )}
+
       {/* Metric strip */}
       <div className="metric-strip">
         <div className="metric-cell">
           <div className="metric-label">Balance</div>
-          <div className="metric-value">{formatCents(metrics.netCents)}</div>
+          <div className="metric-value">
+            {metric(totals && formatCents(totals.netCents))}
+          </div>
           <div className="metric-sub">this season · voids excluded</div>
         </div>
         <div className="metric-cell">
           <div className="metric-label">In</div>
-          <div className="metric-value ok">{formatCents(metrics.inCents)}</div>
+          <div className="metric-value ok">
+            {metric(totals && formatCents(totals.inCents))}
+          </div>
           <div className="metric-sub">income received</div>
         </div>
         <div className="metric-cell">
           <div className="metric-label">Out</div>
           <div className="metric-value alert">
-            {formatCents(metrics.outCents)}
+            {metric(totals && formatCents(totals.outCents))}
           </div>
           <div className="metric-sub">expenses paid</div>
         </div>
-        <div className={`metric-cell${unCount > 0 ? " warn" : ""}`}>
-          <div className="metric-label">Uncategorized</div>
-          <div className="metric-value">{unCount}</div>
+        {/* THE MIDDLE LAYER, ON THE PAGE THAT SHOWS THE BALANCE (spec 006).
+            Balance is money that has moved; this is money that has been
+            promised and has not. A director reading a $3,200 balance beside
+            $3,200 already committed to a costume vendor has $0, and until this
+            cell existed nothing on any screen said so. Same aggregate as Budget
+            vs Actual and the board snapshot; "—" when it could not be read. */}
+        <div className={`metric-cell${committed?.openCommittedCents ? " warn" : ""}`}>
+          <div className="metric-label">Committed</div>
+          <div className="metric-value">
+            {metric(committed && formatCents(committed.openCommittedCents))}
+          </div>
           <div className="metric-sub">
-            {unCount > 0 ? (
+            {!committed ? (
+              "could not be read"
+            ) : (
               <>
-                {formatCents(unTotal)} ·{" "}
+                promised, not yet paid ·{" "}
+                <Link
+                  href={`/${slug}/treasury/commitments`}
+                  className="metric-link"
+                >
+                  {committed.openCount === 1
+                    ? "1 open"
+                    : `${committed.openCount} open`}
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+        <div
+          className={`metric-cell${totals && totals.uncategorizedCount > 0 ? " warn" : ""}`}
+        >
+          <div className="metric-label">Uncategorized</div>
+          <div className="metric-value">
+            {metric(totals && String(totals.uncategorizedCount))}
+          </div>
+          <div className="metric-sub">
+            {!totals ? (
+              "count unavailable"
+            ) : totals.uncategorizedCount > 0 ? (
+              <>
+                {formatCents(totals.uncategorizedCents)} ·{" "}
                 <Link
                   href={`/${slug}/treasury?uncategorized=1`}
                   className="metric-link"
@@ -549,343 +763,53 @@ export default async function LedgerPage({
         </div>
       </div>
 
-      {/* Reconciliation (Wave L) — the monthly bank-statement check. */}
       {season && reconMonths.length > 0 && (
-        <div className="confirm-box stack" style={{ width: "100%" }}>
-          <h2 style={{ margin: 0 }}>Reconciliation</h2>
-          <p className="muted" style={{ marginTop: 0 }}>
-            Each month, compare the ledger to the bank statement, then mark it
-            reconciled here. The board can see how current the books are — that
-            protects you.
-          </p>
-          <table className="members">
-            <thead>
-              <tr>
-                <th>Month</th>
-                <th>Status</th>
-                {canWrite && <th></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {reconMonths.map((mKey) => {
-                const rec = reconciledBy.get(mKey);
-                return (
-                  <tr key={mKey}>
-                    <td>{formatMonthKey(mKey)}</td>
-                    <td>
-                      {rec ? (
-                        <span>
-                          <strong>Reconciled ✓</strong>{" "}
-                          {formatDateOnly(rec.date)}
-                          {rec.note ? (
-                            <span className="muted"> · {rec.note}</span>
-                          ) : null}
-                        </span>
-                      ) : (
-                        <span className="muted">Not reconciled</span>
-                      )}
-                    </td>
-                    {canWrite && (
-                      <td>
-                        {rec ? (
-                          unmarkConfirmMonth === mKey ? (
-                            <span className="row-inline">
-                              <form action={unmarkReconciled}>
-                                <input
-                                  type="hidden"
-                                  name="programId"
-                                  value={program.id}
-                                />
-                                <input type="hidden" name="slug" value={slug} />
-                                <input
-                                  type="hidden"
-                                  name="month"
-                                  value={mKey}
-                                />
-                                <button
-                                  type="submit"
-                                  className="linklike danger"
-                                >
-                                  Confirm un-mark
-                                </button>
-                              </form>
-                              <Link href={`/${slug}/treasury`}>Cancel</Link>
-                            </span>
-                          ) : (
-                            <Link
-                              href={`/${slug}/treasury?confirm=unmark_${mKey}`}
-                              className="linklike danger"
-                            >
-                              Un-mark
-                            </Link>
-                          )
-                        ) : (
-                          <form action={markReconciled} className="row-inline">
-                            <input
-                              type="hidden"
-                              name="programId"
-                              value={program.id}
-                            />
-                            <input type="hidden" name="slug" value={slug} />
-                            <input type="hidden" name="month" value={mKey} />
-                            <input
-                              type="text"
-                              name="note"
-                              placeholder="Note (optional)"
-                              aria-label={`Reconciliation note for ${formatMonthKey(mKey)}`}
-                            />
-                            <button type="submit" className="secondary">
-                              Mark reconciled
-                            </button>
-                          </form>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Reconciliation
+          programId={program.id}
+          slug={slug}
+          months={reconMonths}
+          reconciledBy={reconciledBy}
+          canWrite={canWrite}
+          confirmMonth={unmarkConfirmMonth}
+          timeZone={program.timezone}
+        />
       )}
 
-      {/* Filters */}
-      <form method="get" className="row-inline money-filters">
-        <label>
-          From
-          <input type="date" name="from" defaultValue={sp.from ?? ""} />
-        </label>
-        <label>
-          To
-          <input type="date" name="to" defaultValue={sp.to ?? ""} />
-        </label>
-        <label>
-          Direction
-          <select name="direction" defaultValue={dirFilter}>
-            <option value="all">All</option>
-            {LEDGER_DIRECTIONS.map((d) => (
-              <option key={d} value={d}>
-                {d === "in" ? "In" : "Out"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Budget line
-          <select name="line" defaultValue={sp.line ?? ""}>
-            <option value="">All lines</option>
-            {cats.map((c) => (
-              <optgroup key={c.id} label={c.name}>
-                {(linesByCat.get(c.id) ?? []).map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-        <label>
-          Competition
-          <select name="competition" defaultValue={sp.competition ?? ""}>
-            <option value="">All</option>
-            {comps.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Trip
-          <select name="trip" defaultValue={sp.trip ?? ""}>
-            <option value="">All</option>
-            {trips.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="row-inline">
-          <input
-            type="checkbox"
-            name="voided"
-            value="1"
-            defaultChecked={includeVoided}
-          />
-          Include voided
-        </label>
-        {uncategorizedOnly && (
-          <input type="hidden" name="uncategorized" value="1" />
-        )}
-        <button type="submit" className="secondary">
-          Filter
-        </button>
-        <Link href={`/${slug}/treasury`} className="linklike">
-          Clear
-        </Link>
-      </form>
+      <LedgerFilters
+        slug={slug}
+        options={options}
+        // The sanitized term, not the raw one: the box shows what was actually
+        // searched for rather than punctuation that never reached the query.
+        q={search ?? ""}
+        direction={dirFilter}
+        from={from}
+        to={to}
+        line={lineFilter}
+        competition={compFilter}
+        trip={tripFilter}
+        includeVoided={includeVoided}
+        uncategorizedOnly={uncategorizedOnly}
+      />
 
-      {/* Ledger table */}
-      <table className="members money-ledger">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th className="right">Amount</th>
-            <th>Line</th>
-            <th>Paid to / from · memo</th>
-            <th>Receipt</th>
-            <th className="right">Balance</th>
-            {canWrite && <th></th>}
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((e) => {
-            const voided = !!e.voided_at;
-            const tag = e.competition_id
-              ? (compName.get(e.competition_id) ?? "competition")
-              : e.trip_id
-                ? (tripName.get(e.trip_id) ?? "trip")
-                : "";
-            const uncategorized = !e.budget_line_id;
-            const party = [e.counterparty, e.memo].filter(Boolean).join(" · ");
-            const rowClass = voided
-              ? "ledger-voided"
-              : uncategorized
-                ? "ledger-uncat"
-                : undefined;
-            return (
-              <tr key={e.id} className={rowClass}>
-                <td>{formatDateOnly(e.entry_date)}</td>
-                <td className="right">
-                  {voided ? (
-                    <span className="money-amt">
-                      {e.direction === "in" ? "+ " : "− "}
-                      {formatCents(e.amount_cents)}
-                    </span>
-                  ) : (
-                    <span
-                      className={`money-amt ${e.direction === "in" ? "in" : "out"}`}
-                    >
-                      {e.direction === "in" ? "+ " : "− "}
-                      {formatCents(e.amount_cents)}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  {uncategorized ? (
-                    <>
-                      <span className="money-uncat">uncategorized</span>
-                      {" · "}
-                      <Link
-                        href={`/${slug}/treasury?uncategorized=1`}
-                        className="money-fix"
-                      >
-                        fix
-                      </Link>
-                    </>
-                  ) : (
-                    <>
-                      {lineName.get(e.budget_line_id!) ?? "—"}
-                      {tag && <span className="muted"> · {tag}</span>}
-                    </>
-                  )}
-                </td>
-                <td>{party || <span className="muted">—</span>}</td>
-                <td>
-                  {e.receipt_path ? "📎" : <span className="muted">—</span>}
-                </td>
-                <td className="right">
-                  {voided ? (
-                    <span className="muted">—</span>
-                  ) : (
-                    formatCents(balanceById.get(e.id) ?? 0)
-                  )}
-                </td>
-                {canWrite && (
-                  <td>
-                    {voided ? (
-                      <span
-                        className="muted"
-                        title={e.void_reason ?? undefined}
-                      >
-                        voided
-                      </span>
-                    ) : (
-                      <details>
-                        <summary>Correct</summary>
-                        <div className="stack">
-                          {uncategorized && cats.length > 0 && (
-                            <form
-                              action={categorizeEntry}
-                              className="row-inline"
-                            >
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="entryId"
-                                value={e.id}
-                              />
-                              {lineSelect("budget_line_id", "")}
-                              <button type="submit" className="secondary">
-                                Categorize
-                              </button>
-                            </form>
-                          )}
-                          <form action={voidEntry} className="row-inline">
-                            <input
-                              type="hidden"
-                              name="programId"
-                              value={program.id}
-                            />
-                            <input type="hidden" name="slug" value={slug} />
-                            <input type="hidden" name="entryId" value={e.id} />
-                            <input
-                              type="text"
-                              name="reason"
-                              placeholder="Reason (required)"
-                              required
-                              aria-label="Void reason"
-                            />
-                            <button type="submit" className="linklike danger">
-                              Void
-                            </button>
-                            <button
-                              type="submit"
-                              name="reenter"
-                              value="1"
-                              className="linklike"
-                            >
-                              Void &amp; re-enter
-                            </button>
-                          </form>
-                        </div>
-                      </details>
-                    )}
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-          {entries.length === 0 && (
-            <tr>
-              <td colSpan={canWrite ? 7 : 6} className="muted">
-                No entries match.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      <LedgerTable
+        programId={program.id}
+        slug={slug}
+        entries={entries}
+        balanceById={balanceById}
+        showBalance={showBalance}
+        options={options}
+        canWrite={canWrite}
+        openId={rowWillRender ? openId : null}
+        error={rowError}
+        range={range}
+        pageHref={pageHref}
+        rowHref={rowHref}
+      />
 
       <p className="page-foot">
-        Corrections are void + re-enter with a required reason — the audit log
-        keeps everything. Voided rows never count toward balances.
+        A mistake is voided and redone with a reason — the audit log keeps both.
+        Voided rows never count toward balances. Balance is the season total as
+        of that entry, so it reads the same whichever filter or page you are on.
       </p>
     </section>
   );

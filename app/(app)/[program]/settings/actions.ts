@@ -8,11 +8,88 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRole, type Role } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { supportAccessUntilFromNow } from "@/lib/support";
+import { isValidTimeZone } from "@/lib/datetime";
+import { parseDollarsToCents } from "@/lib/treasury";
 import { revokeShareLink } from "@/lib/tokens";
+import { programPath } from "@/lib/return-path";
+import {
+  isMemberRowError,
+  settingsErrorAnchor,
+  settingsOkAnchor,
+  staffMemberAnchor,
+  type MemberErrorKey,
+  type MemberOkKey,
+  type SettingsErrorKey,
+  type SettingsOkKey,
+} from "./shared";
+import {
+  rolloverErrorAnchor,
+  rolloverOkAnchor,
+  type RolloverErrorKey,
+  type RolloverOkKey,
+} from "./rollover/shared";
+
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/settings",
+// which every browser reads as a different ORIGIN and follows off-site.
+// programPath validates the slug shape and fails closed to "/" (spec 005 T143a).
+function settingsPath(slug: string, sub = ""): string {
+  return programPath(slug, sub ? `settings/${sub}` : "settings") ?? "/";
+}
+
+// Where a message goes is the MAP's answer, not this file's (./shared) — the
+// anchor a redirect scrolls to and the block that renders the message are read
+// from the same place, so they cannot drift (spec 005 Wave 13 / T164).
+function settingsDone(slug: string, key: SettingsOkKey): string {
+  return `${settingsPath(slug)}?ok=${key}#${settingsOkAnchor(key)}`;
+}
+
+function settingsFail(slug: string, key: SettingsErrorKey): string {
+  return `${settingsPath(slug)}?error=${key}#${settingsErrorAnchor(key)}`;
+}
+
+// A member failure that belongs to ONE row goes back to that row: `?edit=` names
+// it, and the page renders the message inside the panel that produced it instead
+// of at the top of a list the director then has to scan to find their person.
+function memberFail(
+  slug: string,
+  key: MemberErrorKey,
+  memberId?: string,
+): string {
+  const base = settingsPath(slug, "members");
+  if (isMemberRowError(key) && memberId) {
+    const id = encodeURIComponent(memberId);
+    return `${base}?edit=${id}&error=${key}#${staffMemberAnchor(id)}`;
+  }
+  return `${base}?error=${key}`;
+}
+
+function memberDone(slug: string, key: MemberOkKey): string {
+  return `${settingsPath(slug, "members")}?ok=${key}`;
+}
+
+function seasonsDone(slug: string, key: RolloverOkKey): string {
+  return `${settingsPath(slug, "rollover")}?ok=${key}#${rolloverOkAnchor(key)}`;
+}
+
+function seasonsFail(slug: string, key: RolloverErrorKey): string {
+  return `${settingsPath(slug, "rollover")}?error=${key}#${rolloverErrorAnchor(key)}`;
+}
 
 // Season archive/unarchive + support access are director-only (unarchive and the
 // support-consent toggle are the most consequential lifecycle switches; §10, §9.4).
 const DIRECTOR_ONLY: readonly Role[] = ["director"];
+
+// …and so is HANDING OUT that seat. Both member writes below are open to
+// director/admin, which is right for the four ordinary seats — but `director` is
+// the seat every DIRECTOR_ONLY control answers to, so an admin who could grant
+// it (to a colleague, to a second address of their own, or by naming their own
+// memberId) would have defeated every one of those gates in a single click. The
+// rule is one line, enforced HERE rather than by which options the dropdown
+// renders: the UI hiding a control is not authorization (Constitution I).
+function mayGrant(callerRole: Role, granted: Role): boolean {
+  return granted !== "director" || callerRole === "director";
+}
 
 // Settings mutations. Every action re-checks director/admin against
 // program_members via requireRole (Constitution I, defense in depth) even though
@@ -73,7 +150,14 @@ export async function updateProgram(formData: FormData): Promise<void> {
   const name = String(formData.get("name") ?? "").trim();
   const timezone = String(formData.get("timezone") ?? "").trim();
   if (!name || !timezone) {
-    redirect(`/${slug}/settings?error=missing`);
+    redirect(settingsFail(slug, "missing"));
+  }
+  // The dropdown offers a fixed list, but the value arrives as a form field and
+  // is written straight onto the row every renderer reads. An unknown zone makes
+  // Intl.DateTimeFormat throw — on this page, on Today, and on the tokenized
+  // family surface, which has no staff to notice and no way back.
+  if (!isValidTimeZone(timezone)) {
+    redirect(settingsFail(slug, "timezone"));
   }
 
   const supabase = await createClient();
@@ -89,10 +173,50 @@ export async function updateProgram(formData: FormData): Promise<void> {
     .eq("id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings?error=save`);
+    redirect(settingsFail(slug, "save"));
   }
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(settingsDone(slug, "saved"));
+}
+
+// The three spending rules (spec 006 D6 / T177). director/admin — deliberately
+// NOT the treasurer, and that is the point: a treasurer who could raise her own
+// second-approver amount would not be held to one. programs_write (0002) draws
+// the same line in the database.
+//
+// Every amount is parsed to integer cents by the ONE parser the money layer uses
+// (parseDollarsToCents), and a value that will not parse is refused rather than
+// coerced: zero means "this rule is off", so a typo that silently became zero
+// would remove the control the director came here to set.
+export async function updateCommitmentThresholds(formData: FormData): Promise<void> {
+  const programId = String(formData.get("programId") ?? "");
+  const slug = String(formData.get("slug") ?? "");
+  await requireRole(programId, SETTINGS_ROLES);
+
+  const cents = (field: string): number | null =>
+    parseDollarsToCents(String(formData.get(field) ?? ""));
+  const second = cents("second_approver");
+  const board = cents("board_approval");
+  const quotes = cents("three_quotes");
+  if (second === null || board === null || quotes === null) {
+    redirect(settingsFail(slug, "rules_amount"));
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("programs")
+    .update({
+      commitment_second_approver_cents: second,
+      commitment_board_approval_cents: board,
+      commitment_three_quotes_cents: quotes,
+    })
+    .eq("id", programId);
+
+  if (error) {
+    redirect(settingsFail(slug, "rules_save"));
+  }
+  revalidatePath(settingsPath(slug));
+  redirect(settingsDone(slug, "rules"));
 }
 
 // Invite a member: create an `invited` program_members row, then best-effort
@@ -101,12 +225,15 @@ export async function updateProgram(formData: FormData): Promise<void> {
 export async function inviteMember(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
-  await requireRole(programId, SETTINGS_ROLES);
+  const { membership } = await requireRole(programId, SETTINGS_ROLES);
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const role = String(formData.get("role") ?? "") as Role;
   if (!email || !VALID_ROLES.includes(role)) {
-    redirect(`/${slug}/settings/members?error=invite`);
+    redirect(memberFail(slug, "invite"));
+  }
+  if (!mayGrant(membership.role, role)) {
+    redirect(memberFail(slug, "invite_director_only"));
   }
 
   const supabase = await createClient();
@@ -122,7 +249,7 @@ export async function inviteMember(formData: FormData): Promise<void> {
     .single();
 
   if (error || !created) {
-    redirect(`/${slug}/settings/members?error=invite`);
+    redirect(memberFail(slug, "invite"));
   }
 
   // Best-effort transactional invite email. Failure is non-fatal — the members
@@ -148,8 +275,13 @@ export async function inviteMember(formData: FormData): Promise<void> {
     // Ignore — link is surfaced in the UI regardless.
   }
 
-  revalidatePath(`/${slug}/settings/members`);
-  redirect(`/${slug}/settings/members?invited=${created.id}`);
+  revalidatePath(settingsPath(slug, "members"));
+  // `?invited=` is DATA, not a message: it is the one moment the full invite URL
+  // is knowable, and the page shows it once so onboarding works even where email
+  // delivery isn't configured.
+  redirect(
+    `${settingsPath(slug, "members")}?invited=${encodeURIComponent(created.id)}`,
+  );
 }
 
 // Re-role a member (single dropdown per §2). Blocks demoting the last director.
@@ -158,10 +290,15 @@ export async function reRoleMember(formData: FormData): Promise<void> {
   const slug = String(formData.get("slug") ?? "");
   const memberId = String(formData.get("memberId") ?? "");
   const role = String(formData.get("role") ?? "") as Role;
-  await requireRole(programId, SETTINGS_ROLES);
+  const { membership } = await requireRole(programId, SETTINGS_ROLES);
 
   if (!VALID_ROLES.includes(role)) {
-    redirect(`/${slug}/settings/members?error=role`);
+    redirect(memberFail(slug, "role", memberId));
+  }
+  // Before anything is read or written: an admin may not hand out `director`,
+  // to anyone — including the row that is their own (see mayGrant).
+  if (!mayGrant(membership.role, role)) {
+    redirect(memberFail(slug, "director_only", memberId));
   }
 
   const supabase = await createClient();
@@ -178,7 +315,7 @@ export async function reRoleMember(formData: FormData): Promise<void> {
     role !== "director" &&
     (await activeDirectorCount(programId)) <= 1
   ) {
-    redirect(`/${slug}/settings/members?error=last_director`);
+    redirect(memberFail(slug, "last_director", memberId));
   }
 
   const { error } = await supabase
@@ -188,10 +325,10 @@ export async function reRoleMember(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings/members?error=role`);
+    redirect(memberFail(slug, "role", memberId));
   }
-  revalidatePath(`/${slug}/settings/members`);
-  redirect(`/${slug}/settings/members?saved=1`);
+  revalidatePath(settingsPath(slug, "members"));
+  redirect(memberDone(slug, "saved"));
 }
 
 // Remove a member (status = 'removed'). Blocks removing the last director.
@@ -214,7 +351,7 @@ export async function removeMember(formData: FormData): Promise<void> {
     target.role === "director" &&
     (await activeDirectorCount(programId)) <= 1
   ) {
-    redirect(`/${slug}/settings/members?error=last_director`);
+    redirect(memberFail(slug, "last_director", memberId));
   }
 
   const { error } = await supabase
@@ -224,15 +361,15 @@ export async function removeMember(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings/members?error=remove`);
+    redirect(memberFail(slug, "remove", memberId));
   }
-  revalidatePath(`/${slug}/settings/members`);
-  redirect(`/${slug}/settings/members?saved=1`);
+  revalidatePath(settingsPath(slug, "members"));
+  redirect(memberDone(slug, "removed"));
 }
 
 // ---------------------------------------------------------------------------
 // Support access (§10, T030). Director grants a 7-day read-only window to
-// support staff, or revokes it immediately. RLS (0004) is the real gate; this just
+// support staff, or ends it immediately. RLS (0004) is the real gate; this just
 // sets/clears programs.support_access_until.
 // ---------------------------------------------------------------------------
 
@@ -248,10 +385,10 @@ export async function grantSupportAccess(formData: FormData): Promise<void> {
     .eq("id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings?error=support`);
+    redirect(settingsFail(slug, "support"));
   }
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(settingsDone(slug, "granted"));
 }
 
 export async function revokeSupportAccess(formData: FormData): Promise<void> {
@@ -266,17 +403,17 @@ export async function revokeSupportAccess(formData: FormData): Promise<void> {
     .eq("id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings?error=support`);
+    redirect(settingsFail(slug, "support"));
   }
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(settingsDone(slug, "ended"));
 }
 
 // ---------------------------------------------------------------------------
 // Share links (FR-002 / §8a). director/admin revoke a broadcast link from the
 // Settings listing. Minting happens where the resource lives (itinerary page,
-// shifts page); revocation is centralized here. RLS (share_links_write) is the
-// real gate; requireRole re-checks (Constitution I).
+// shifts page, season page); revocation is centralized here. RLS
+// (share_links_write) is the real gate; requireRole re-checks (Constitution I).
 // ---------------------------------------------------------------------------
 
 export async function revokeShareLinkAction(formData: FormData): Promise<void> {
@@ -285,11 +422,18 @@ export async function revokeShareLinkAction(formData: FormData): Promise<void> {
   const shareLinkId = String(formData.get("shareLinkId") ?? "");
   await requireRole(programId, SETTINGS_ROLES);
 
+  // revokeShareLink is program-scoped, so a link id from another program matches
+  // nothing and this is a no-op rather than a cross-tenant write (Constitution I).
+  // It reports whether the URL is actually dead, and the message here is
+  // "That URL stops working immediately" — so it is only said when it is true.
   const supabase = await createClient();
-  await revokeShareLink(supabase, { programId, shareLinkId });
+  const { ok } = await revokeShareLink(supabase, { programId, shareLinkId });
+  if (!ok) {
+    redirect(settingsFail(slug, "revoke"));
+  }
 
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(settingsDone(slug, "revoked"));
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +450,31 @@ export async function archiveSeason(formData: FormData): Promise<void> {
   await requireRole(programId, SETTINGS_ROLES);
 
   const supabase = await createClient();
+
+  // The guard the header above has always claimed, actually enforced. It lived
+  // only in the Seasons table, which renders no Archive button on the active
+  // row — and a hidden control is not a guard (Constitution I): this is a form
+  // POST with a season id in it. Archiving the ACTIVE season freezes every
+  // season-scoped write in the program at once, on the one season every page
+  // reads, with no other season to fall back to and no screen left that can
+  // undo it except this one — and only a director may unarchive.
+  //
+  // `seasonId` is resolved inside this program first, so a season id from
+  // another program is a refusal here rather than a write RLS silently drops.
+  const { data: targetRow } = await supabase
+    .from("seasons")
+    .select("id, is_active")
+    .eq("id", seasonId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  const target = targetRow as { id: string; is_active: boolean } | null;
+  if (!target) {
+    redirect(seasonsFail(slug, "archive"));
+  }
+  if (target.is_active) {
+    redirect(seasonsFail(slug, "archive_active"));
+  }
+
   const { error } = await supabase
     .from("seasons")
     .update({ archived_at: new Date().toISOString() })
@@ -314,10 +483,10 @@ export async function archiveSeason(formData: FormData): Promise<void> {
     .is("archived_at", null);
 
   if (error) {
-    redirect(`/${slug}/settings/rollover?error=archive`);
+    redirect(seasonsFail(slug, "archive"));
   }
-  revalidatePath(`/${slug}/settings/rollover`);
-  redirect(`/${slug}/settings/rollover?archived=1`);
+  revalidatePath(settingsPath(slug, "rollover"));
+  redirect(seasonsDone(slug, "archived"));
 }
 
 export async function unarchiveSeason(formData: FormData): Promise<void> {
@@ -334,8 +503,8 @@ export async function unarchiveSeason(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings/rollover?error=unarchive`);
+    redirect(seasonsFail(slug, "unarchive"));
   }
-  revalidatePath(`/${slug}/settings/rollover`);
-  redirect(`/${slug}/settings/rollover?unarchived=1`);
+  revalidatePath(settingsPath(slug, "rollover"));
+  redirect(seasonsDone(slug, "unarchived"));
 }

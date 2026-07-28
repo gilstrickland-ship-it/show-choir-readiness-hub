@@ -29,11 +29,33 @@ test.describe("staff journey (demo director)", () => {
       page.getByRole("link", { name: "Central Illinois Invitational" }),
     ).toBeVisible();
 
-    // --- Itinerary is published -------------------------------------------
+    // --- Itinerary is published, and reads as a schedule --------------------
+    // The status line says who can see it in words now, not a `published` enum
+    // badge (spec 005 T156). Scoped by its own sentence: "published" alone also
+    // appears in the publish-gate copy.
     await page.goto(`/demo/competitions/${DEMO.competitionId}/itinerary`);
+    await expect(page.getByText("Families can see this")).toBeVisible();
+
+    // Adding is a drawer off the page head, and each row's fields live behind
+    // that row's own Edit — no permanently-open form anywhere on the page.
     await expect(
-      page.locator(".badge", { hasText: "published" }),
+      page.locator("summary", { hasText: "Add an item" }),
     ).toBeVisible();
+    const itinRows = page.locator("table.members tbody tr td.table-action a");
+    await expect(itinRows.first()).toBeVisible();
+    // The row is facts until you open it: no schedule inputs are on screen.
+    await expect(
+      page.locator('table.members input[name="starts_at"]'),
+    ).toHaveCount(0);
+
+    // --- Packet pipeline strip (spec 005 US7-4): the same five steps on the
+    // packet surface, derived from existing status fields ---------------------
+    await page.goto(`/demo/competitions/${DEMO.competitionId}/packet`);
+    const steps = page.getByRole("navigation", { name: "Packet steps" });
+    await expect(steps).toBeVisible();
+    await expect(steps.locator("li")).toHaveCount(5);
+    // Nothing uploaded for this comp, so step one is where you are.
+    await expect(steps.locator("li.now")).toContainText("Uploaded");
 
     // --- Staff parent packet PDF (auth cookies via page.request) -----------
     const packet = await page.request.get(
@@ -44,19 +66,27 @@ test.describe("staff journey (demo director)", () => {
 
     // --- Attendance: toggle a student absent, then back (net zero) ---------
     // Use Liam Carter — Ava is the parent-token spec's subject, keep them apart.
+    // The state each student is in is a WORD now, not the raw enum in lowercase
+    // parens (spec 005 T157). The parens keep these assertions off the three
+    // buttons on the same line, which carry the same three words.
     await page.goto(`/demo/competitions/${DEMO.competitionId}/attendance`);
     const liam = () => page.locator("li", { hasText: "Carter, Liam" });
-    await expect(liam()).toContainText("(expected)");
+    await expect(liam()).toContainText("(Expected)");
     await liam().getByRole("button", { name: "Absent" }).click();
-    await expect(liam()).toContainText("(absent)");
+    await expect(liam()).toContainText("(Absent)");
     await liam().getByRole("button", { name: "Expected" }).click();
-    await expect(liam()).toContainText("(expected)");
+    await expect(liam()).toContainText("(Expected)");
 
     // --- Meals: headcounts render -----------------------------------------
+    // `exact` on both headings on purpose: "Meal count" is also the start of the
+    // "Meal count (PDF)" download that now sits in the page head, and a role
+    // change on either one would otherwise let a substring match pass.
     await page.goto(`/demo/competitions/${DEMO.competitionId}/meals`);
-    await expect(page.getByRole("heading", { name: "Meal count" })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Headcount by ensemble" }),
+      page.getByRole("heading", { name: "Meal count", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "By ensemble", exact: true }),
     ).toBeVisible();
     await expect(page.getByText("Total meals needed")).toBeVisible();
 
@@ -73,12 +103,55 @@ test.describe("staff journey (demo director)", () => {
     // Lands on the new competition; attendance seeded expected for all 12.
     await page.waitForURL(/\/demo\/competitions\/[0-9a-f-]+\?created=1/);
     await expect(page.getByRole("heading", { name: compName })).toBeVisible();
-    // Exact summary string — "12 expected" alone also matches the readiness rail.
-    await expect(page.getByText("12 expected · 0 partial · 0 absent")).toBeVisible();
+    // The hub is a hub (spec 005 US7): one glance card per area, no inline
+    // attendance grid. Scoped to the card — the readiness rail says "12
+    // expected, 0 absent" too, and an unscoped getByText would match both.
+    const attendanceCard = page.locator(".comp-glance-card", {
+      hasText: "Attendance",
+    });
+    await expect(attendanceCard).toContainText("12 expected · 0 absent");
+    await expect(attendanceCard).toHaveAttribute("href", /\/attendance$/);
+    // The toggles live on the attendance route now, not here.
+    await expect(page.locator("form button", { hasText: "Partial" })).toHaveCount(
+      0,
+    );
     // Both participating ensembles are shown in the header.
     await expect(
       page.locator(".chip", { hasText: "Varsity Mixed" }).first(),
     ).toBeVisible();
     await expect(page.locator(".chip", { hasText: "Prep" }).first()).toBeVisible();
+
+    // --- Season quick-add (spec 005 US1): two fields, and you land back on the
+    // spine rather than on a module list --------------------------------------
+    // ?add=comp opens the drawer on its competition section server-side — the
+    // same URL a failed create comes back on, so this exercises the real path.
+    await page.goto("/demo/season?add=comp");
+    const quickName = `Quick Add ${Date.now()}`;
+    const quickAdd = page.locator("form", { hasText: "Add competition" });
+    await quickAdd.getByLabel("Name").fill(quickName);
+    // A past date on purpose: it keeps this row off the "next comp" slot, so it
+    // disturbs neither the spine's feature row nor any other spec.
+    await quickAdd.getByLabel("Date").fill("2020-03-07");
+    await quickAdd.getByRole("button", { name: "Add competition" }).click();
+
+    await page.waitForURL(/\/demo\/season\?created=comp-[0-9a-f-]+/);
+    await expect(
+      page.getByText("Competition added to your season."),
+    ).toBeVisible();
+    // Scoped to the spine row's title link on purpose: a plain getByText would
+    // also match this competition's <option> in the trip section of the (closed)
+    // + Add drawer — options in a closed <details> are still in the DOM.
+    await expect(page.getByRole("link", { name: quickName })).toBeVisible();
+
+    // --- Spine row edit (spec 005 US2): fix the date without navigating ------
+    const createdKey = new URL(page.url()).searchParams.get("created") ?? "";
+    await page.goto(`/demo/season?edit=${createdKey}`);
+    const editPanel = page.locator("details[open] .drawer-panel");
+    await editPanel.getByLabel("Date").fill("2020-03-14");
+    await editPanel.getByRole("button", { name: "Save" }).click();
+
+    // Still on Season, row re-rendered in its new position.
+    await page.waitForURL(new RegExp(`/demo/season\\?saved=${createdKey}`));
+    await expect(page.getByRole("link", { name: quickName })).toBeVisible();
   });
 });

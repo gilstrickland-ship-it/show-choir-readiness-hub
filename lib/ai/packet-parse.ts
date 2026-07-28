@@ -208,16 +208,23 @@ export async function runPacketParse(
     .eq("id", parseId);
 
   try {
+    // This client is SERVICE ROLE — RLS does not filter it, so every lookup is
+    // scoped to the parse row's own program by hand. Without that, a parse row
+    // pointing at another tenant's document would have us download their PDF
+    // and feed their competition into the prompt (Constitution I). A poisoned
+    // row resolves to nothing here and lands in 'failed' with nothing read.
     const [{ data: docData }, { data: compData }] = await Promise.all([
       supabase
         .from("documents")
         .select("storage_path")
         .eq("id", parse.document_id)
+        .eq("program_id", parse.program_id)
         .maybeSingle(),
       supabase
         .from("competitions")
         .select("name, host_school, date")
         .eq("id", parse.competition_id)
+        .eq("program_id", parse.program_id)
         .maybeSingle(),
     ]);
     const doc = docData as DocRow | null;

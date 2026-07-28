@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { brand } from "@/lib/brand";
+import { flag, type FlagKey, type FlaggableProgram } from "@/lib/flags";
 
 // ============================================================================
 // §8a Tokenized link layer — the parents' entire surface (Constitution II).
@@ -44,6 +45,20 @@ export const GUARDIAN_CAPABILITIES = [
 ] as const;
 
 // Share links are read-only views of their one resource. Nothing else.
+//
+// "Their ONE resource" is literal, and it is the sharpest edge on this surface.
+// A share link is a broadcast credential — a director pastes it into a booster
+// Facebook post — so `resource:view` grants exactly the thing the link is named
+// after and nothing derived from it. In particular an `itinerary` link opens the
+// TIMES: the /itinerary page and that competition's .ics, and nothing else.
+//
+// It used to also open /packet. The parent packet PDF (lib/pdf/documents) prints
+// bus and hotel-ROOM assignments listing students by name, plus chaperone and
+// volunteer names — so one link the director was told shared "times" published a
+// rooming list for minors to whoever read the post. The packet is now GUARDIAN
+// TOKENS ONLY: a family that is already entitled to see its own child's room
+// pulls it from their personal link, and no broadcast link reaches it at all
+// (Constitution III — directory-tier only on anything anyone can open).
 export const SHARE_CAPABILITIES = ["resource:view"] as const;
 
 export const CAPABILITIES = {
@@ -111,7 +126,7 @@ export function verifyToken(raw: string, storedHash: string): boolean {
   }
 }
 
-// ---- The three canonical footer links (email + staff display) --------------
+// ---- The canonical footer links (email + staff display) --------------------
 
 // Base URL for tokenized links (used in emails, so it MUST resolve to a real
 // host). Fallback chain:
@@ -138,23 +153,75 @@ export function appBaseUrl(): string {
   return `https://${brand.domain}`;
 }
 
-// Every generated email footers the same three links so parents learn one
-// pattern: everything is always in the latest email (§8a).
+// Every generated email footers the same links so parents learn one pattern:
+// everything is always in the latest email (§8a).
+//
+// WHICH links is the program's own feature answer — the same PARENT_SURFACE_FLAGS
+// rule the routes apply (stated in full further down this file). A program with
+// `shifts` off used to be emailed "sign up to volunteer" anyway, and the link
+// landed on the page that can only say "not available": the parent cannot tell
+// that apart from a broken app, and nothing they do fixes it. So the footer is
+// built from what this program actually has, exactly like the on-page footer
+// (app/(public)/t/[token]/parts.tsx).
+//
+// Unsubscribe is the one link that is ALWAYS there, whatever the flags say —
+// CAN-SPAM and RFC 8058 make "stop emailing me" unconditional (rule 5 below).
+
+// The surfaces a footer can link to, in the order parents read them. Every entry
+// is a ParentSurface, so the flag question is asked in exactly one place, and
+// each name is also its path segment under /t/<token>.
+export const GUARDIAN_LINK_SURFACES = [
+  "itinerary",
+  "signup",
+  "absence",
+] as const satisfies readonly ParentSurface[];
+
+export type GuardianLinkSurface = (typeof GUARDIAN_LINK_SURFACES)[number];
+
+// What each link is CALLED, and what it lets a family DO. Both live here for the
+// same reason SHARE_RESOURCE_LABELS does: the footer prints the label and the
+// family-links email lists the actions in a sentence, and those two must never
+// name a different set of things.
+const GUARDIAN_LINK_COPY: Record<
+  GuardianLinkSurface,
+  { label: string; action: string }
+> = {
+  itinerary: { label: "Itinerary", action: "view the itinerary" },
+  signup: { label: "Volunteer signup", action: "sign up to volunteer" },
+  absence: { label: "Report an absence", action: "report an absence" },
+};
+
+export interface GuardianLink {
+  surface: GuardianLinkSurface;
+  label: string;
+  action: string;
+  url: string;
+}
+
 export interface GuardianLinks {
-  itinerary: string;
-  signup: string;
-  absence: string;
+  // Only the surfaces this program has turned on, in footer order. Can be empty
+  // — a program that has turned every family feature off has nothing to link to,
+  // and callers must render that honestly rather than assume three links.
+  links: GuardianLink[];
   // Per-recipient unsubscribe page (CAN-SPAM footer link; §8a). Populated off the
-  // same raw token so a leaked footer link still exposes one family only.
+  // same raw token so a leaked footer link still exposes one family only, and
+  // never filtered out.
   unsubscribe: string;
 }
 
-export function guardianLinks(rawToken: string): GuardianLinks {
+export function guardianLinks(
+  rawToken: string,
+  program: FlaggableProgram,
+): GuardianLinks {
   const base = `${appBaseUrl()}/t/${rawToken}`;
   return {
-    itinerary: `${base}/itinerary`,
-    signup: `${base}/signup`,
-    absence: `${base}/absence`,
+    links: GUARDIAN_LINK_SURFACES.filter((surface) =>
+      parentSurfaceAvailable(program, surface),
+    ).map((surface) => ({
+      surface,
+      ...GUARDIAN_LINK_COPY[surface],
+      url: `${base}/${surface}`,
+    })),
     unsubscribe: `${base}/unsubscribe`,
   };
 }
@@ -178,11 +245,17 @@ export function listUnsubscribeHeaders(rawToken: string): Record<string, string>
 
 // ---- Resolution (service-role; the anonymous surface's entry point) ---------
 
-export interface ResolvedProgram {
+// The program a token belongs to. It carries `tier` + `feature_overrides` (and
+// so satisfies FlaggableProgram) because the anonymous surface has to evaluate
+// the SAME feature flags the staff half does — see PARENT_SURFACE_FLAGS below.
+// Both columns already exist on `programs`; this is one wider select, no schema.
+export interface ResolvedProgram extends FlaggableProgram {
   id: string;
   name: string;
   slug: string;
   timezone: string;
+  tier: "prep" | "varsity" | "program";
+  feature_overrides: Record<string, boolean> | null;
 }
 
 export interface ResolvedStudent {
@@ -211,11 +284,32 @@ export interface ResolvedGuardianToken {
 // Share-link resource kinds. `season_calendar` (Wave G / G1) resolves to a season
 // and drives the subscribable /t/<token>/calendar feed; it is minted, listed, and
 // revoked exactly like the others — no new capability, still `resource:view`.
+//
+// `packet` is an enum value 0001 shipped and NOTHING mints or accepts. That is
+// deliberate, not an oversight: it would be a broadcast link to the document that
+// names which hotel room each child sleeps in, and no amount of warning copy
+// makes that a link worth handing a director a button for. It stays out of
+// MintableShareResource (so no surface can mint one), no route accepts it, and
+// the resolve-time guard below still refuses any row carrying it because
+// nothing downstream will serve it. Removing the enum value would need a
+// migration; leaving it unreachable costs nothing.
 export type ShareResource =
   | "itinerary"
   | "packet"
   | "signup_page"
   | "season_calendar";
+
+// What each kind of link is CALLED, in the words the app already uses for it
+// (spec 005 Wave 13 / T164). Exhaustive over ShareResource, so adding a kind is
+// a type error here rather than a raw enum value ("signup_page") reaching a
+// director reading the Settings listing — which is what the page's own private
+// copy of this map did for `packet` before it moved here.
+export const SHARE_RESOURCE_LABELS: Record<ShareResource, string> = {
+  itinerary: "Itinerary",
+  packet: "Parent packet",
+  signup_page: "Volunteer signup",
+  season_calendar: "Season calendar",
+};
 
 export interface ResolvedShareLink {
   kind: "share";
@@ -226,6 +320,61 @@ export interface ResolvedShareLink {
 }
 
 export type ResolvedToken = ResolvedGuardianToken | ResolvedShareLink | null;
+
+// ---- Cross-program resource guard (Constitution I) -------------------------
+// share_links.resource_id is a POLYMORPHIC soft reference — it names a
+// competition for one resource kind and a season for another, so no foreign key
+// can express it and the database cannot stop a link minted in program A from
+// pointing at program B's competition. That matters more here than anywhere
+// else in the schema: the token surfaces are anonymous, so they run on the
+// service-role client where RLS does not apply, and a link is the whole
+// credential. Both ends are therefore closed in code — mintShareLink refuses to
+// WRITE a link at another program's resource, and resolveToken refuses to
+// RETURN one, so a row that predates this guard (or one written by any future
+// path) is inert.
+
+type ShareResourceTable = "competitions" | "seasons";
+
+// The parent table each share resource points at. Exhaustive over
+// ShareResource, so adding a resource kind is a type error here rather than a
+// resource that quietly skips the program check.
+const SHARE_RESOURCE_TABLES: Record<ShareResource, ShareResourceTable> = {
+  itinerary: "competitions",
+  packet: "competitions",
+  signup_page: "seasons",
+  season_calendar: "seasons",
+};
+
+// Undefined for anything not in the map — `resource` is read back from a
+// Postgres enum, so callers must treat "no table" as "cannot verify".
+export function shareResourceTable(
+  resource: ShareResource,
+): ShareResourceTable | undefined {
+  return SHARE_RESOURCE_TABLES[resource];
+}
+
+// True only when resource_id names a row of that resource's parent table which
+// lives in this program. Fails closed — a missing row, a blank id, or a query
+// error all read as "not this program's".
+async function shareResourceInProgram(
+  supabase: SupabaseClient,
+  args: { programId: string; resource: ShareResource; resourceId: string },
+): Promise<boolean> {
+  if (!args.programId || !args.resourceId) return false;
+  // `resource` is a Postgres enum, so a value can appear in the database before
+  // it appears in the map above (a migration adds it, the type lags). Unknown =
+  // uncheckable = refused, never "allowed by default".
+  const table = shareResourceTable(args.resource);
+  if (!table) return false;
+
+  const { data, error } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", args.resourceId)
+    .eq("program_id", args.programId)
+    .maybeSingle();
+  return !error && Boolean(data);
+}
 
 // Resolve an opaque raw token to a family (guardian) or resource (share). Checks
 // revoked_at / expires_at. Returns null for anything invalid, revoked, or
@@ -295,6 +444,19 @@ export async function resolveToken(raw: string): Promise<ResolvedToken> {
       expires_at: string | null;
     };
     if (link.expires_at && link.expires_at <= nowIso) return null;
+
+    // The resource must live in the link's OWN program. Every downstream surface
+    // derives its scope from what we return here, and one of them (the parent
+    // packet) keys off resource_id alone — so this check is what keeps a link
+    // from reaching across tenants. 404 (null) on a mismatch, like any other
+    // unusable link.
+    const ownsResource = await shareResourceInProgram(supabase, {
+      programId: link.program_id,
+      resource: link.resource,
+      resourceId: link.resource_id,
+    });
+    if (!ownsResource) return null;
+
     const program = await loadProgram(supabase, link.program_id);
     if (!program) return null;
     return {
@@ -315,7 +477,9 @@ async function loadProgram(
 ): Promise<ResolvedProgram | null> {
   const { data } = await supabase
     .from("programs")
-    .select("id, name, slug, timezone")
+    // tier + feature_overrides ride along so every parent route can evaluate the
+    // owning program's flags without a second query (see PARENT_SURFACE_FLAGS).
+    .select("id, name, slug, timezone, tier, feature_overrides")
     .eq("id", programId)
     .maybeSingle();
   return (data as ResolvedProgram | null) ?? null;
@@ -360,10 +524,25 @@ async function loadFamilyStudents(
 // Insert a fresh guardian token, returning the RAW token (shown/embedded once).
 // Caller supplies the client: staff mint uses the RLS client (director/admin
 // write policy); the email pipeline uses the service-role client.
+//
+// The guardian is resolved INSIDE the program first. guardian_id carries only a
+// single-column foreign key, and the write policy checks only the row's own
+// program_id, so without this a token row could name another program's guardian:
+// unreadable to that program, yet enough to block them from ever deleting the
+// family. Doing it here covers every mint path — staff rotate, the email
+// pipeline, and anything added later — instead of once per caller.
 export async function mintGuardianToken(
   supabase: SupabaseClient,
   args: { programId: string; guardianId: string },
 ): Promise<{ raw: string } | { error: string }> {
+  const { data: guardian } = await supabase
+    .from("guardians")
+    .select("id")
+    .eq("id", args.guardianId)
+    .eq("program_id", args.programId)
+    .maybeSingle();
+  if (!guardian) return { error: "That family is not in this program." };
+
   const { raw, hash } = generateToken();
   const { error } = await supabase.from("guardian_tokens").insert({
     program_id: args.programId,
@@ -451,6 +630,11 @@ export interface ActiveShareLink {
 // Staff mint uses the caller's RLS client (director/admin share_links write
 // policy). Append-only — it never revokes prior links; use revokeShareLink to
 // retire one. `expiresAt` is optional (null = no expiry).
+//
+// resourceId arrives from a form, so it is resolved inside the program before
+// anything is written (see the cross-program guard above). Every mint path —
+// itinerary publish/rotate, signup page, season calendar — goes through here, so
+// one check covers them all, and callers already handle the {error} return.
 export async function mintShareLink(
   supabase: SupabaseClient,
   args: {
@@ -460,6 +644,13 @@ export async function mintShareLink(
     expiresAt?: string | null;
   },
 ): Promise<{ raw: string } | { error: string }> {
+  const owned = await shareResourceInProgram(supabase, {
+    programId: args.programId,
+    resource: args.resource,
+    resourceId: args.resourceId,
+  });
+  if (!owned) return { error: "That resource is not part of this program." };
+
   const { raw, hash } = generateToken();
   const { error } = await supabase.from("share_links").insert({
     program_id: args.programId,
@@ -473,16 +664,43 @@ export async function mintShareLink(
 }
 
 // Revoke one share link by id (idempotent; scoped to the program).
+//
+// RETURNS WHETHER THE URL IS ACTUALLY DEAD. This used to be `Promise<void>`, and
+// the caller told the director "That URL stops working immediately" whatever
+// happened — including when the write was refused, or when the id belonged to
+// another program and matched nothing. Revocation is the one control a director
+// has over a link they have already handed out; being told a live URL is dead is
+// worse than being told nothing.
+//
+// Zero rows is not automatically a failure, though: the update is filtered on
+// `revoked_at is null`, so a second press of a button on a stale page matches
+// nothing while the link IS dead. That case is confirmed with one read rather
+// than guessed at in either direction.
 export async function revokeShareLink(
   supabase: SupabaseClient,
   args: { programId: string; shareLinkId: string },
-): Promise<void> {
-  await supabase
+): Promise<{ ok: boolean }> {
+  const { data, error } = await supabase
     .from("share_links")
     .update({ revoked_at: new Date().toISOString() })
     .eq("id", args.shareLinkId)
     .eq("program_id", args.programId)
-    .is("revoked_at", null);
+    .is("revoked_at", null)
+    .select("id");
+  if (error) return { ok: false };
+  if (((data as { id: string }[] | null) ?? []).length > 0) return { ok: true };
+
+  // Nothing matched. Either it was already revoked — the URL is dead, which is
+  // what the message claims — or it is not this program's link at all, and
+  // nothing was revoked by anyone.
+  const { data: already } = await supabase
+    .from("share_links")
+    .select("id")
+    .eq("id", args.shareLinkId)
+    .eq("program_id", args.programId)
+    .not("revoked_at", "is", null)
+    .maybeSingle();
+  return { ok: Boolean(already) };
 }
 
 // Revoke every active share link for one resource (used to "rotate": retire the
@@ -503,19 +721,155 @@ export async function revokeShareLinksForResource(
 // Active (non-revoked, non-expired) share links for a program — the Settings
 // listing. Metadata only (resource / created / expires); the raw URL is never
 // stored, so it cannot be re-shown here — staff rotate to get a fresh URL.
+//
+// `unavailable` is the read having FAILED, and it is a separate answer from an
+// empty list on purpose: an empty list renders as "Nothing is shared right now.
+// Anyone outside your staff sees nothing until you make a link", which is a
+// statement about what this program has handed out — and it is exactly wrong
+// when what actually happened is that we could not look.
+export interface ActiveShareLinksResult {
+  links: ActiveShareLink[];
+  unavailable: boolean;
+}
+
 export async function activeShareLinks(
   supabase: SupabaseClient,
   programId: string,
-): Promise<ActiveShareLink[]> {
+): Promise<ActiveShareLinksResult> {
   const nowIso = new Date().toISOString();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("share_links")
     .select("id, resource, resource_id, created_at, expires_at")
     .eq("program_id", programId)
     .is("revoked_at", null)
     .order("created_at", { ascending: false });
+  if (error) return { links: [], unavailable: true };
   const rows = (data as ActiveShareLink[] | null) ?? [];
-  return rows.filter((r) => !r.expires_at || r.expires_at > nowIso);
+  return {
+    links: rows.filter((r) => !r.expires_at || r.expires_at > nowIso),
+    unavailable: false,
+  };
+}
+
+// ---- Which token kinds may open which document (Constitution III) ----------
+//
+// The table this file did not have, and whose absence was the bug: publishing an
+// itinerary auto-mints a BROADCAST link, the director is told they shared the
+// times, and the same URL also served the parent packet PDF — a document that
+// prints bus and hotel-ROOM assignments student by student, plus chaperone and
+// volunteer names. Every route decided its own answer in its own `if`, so the
+// two documents behind one link drifted apart without anyone deciding they
+// should.
+//
+// It is stated once here, exhaustively, and the routes ask it rather than
+// deciding. A document that lists people by name is guardian-only; a document
+// that lists TIMES may ride a broadcast link.
+export type ParentDocument =
+  | "itinerary_page"
+  | "itinerary_ics"
+  | "packet_pdf"
+  | "season_feed";
+
+export const DOCUMENT_TOKEN_KINDS: Record<ParentDocument, readonly TokenKind[]> = {
+  // The published schedule. Times, titles, locations — no person is named.
+  itinerary_page: ["guardian", "share"],
+  // The same schedule as a calendar file. Same content, so the same answer.
+  itinerary_ics: ["guardian", "share"],
+  // The parent packet. NAMES STUDENTS AGAINST ROOMS. A family may pull their
+  // own; a link made to be posted publicly may not pull anyone's.
+  packet_pdf: ["guardian"],
+  // The season calendar feed is addressed by a season, which a per-family token
+  // never names.
+  season_feed: ["share"],
+};
+
+export function documentAllowsToken(
+  document: ParentDocument,
+  kind: TokenKind,
+): boolean {
+  return DOCUMENT_TOKEN_KINDS[document].includes(kind);
+}
+
+// ---- Feature flags on the anonymous surface (Constitution VIII) -------------
+//
+// THE RULE, written down once, because it was written down nowhere and so was
+// evaluated nowhere: no route under /t/<token> checked a flag at all. Turning
+// `shifts` off hid the staff half and left families still claiming volunteer
+// slots nobody could see or manage — a feature that is "off" must be genuinely
+// unreachable, not merely unlinked.
+//
+//   1. A parent surface is available only when EVERY flag its STAFF half
+//      requires is on for the token's own program — the same keys, in the same
+//      combinations. That is what keeps the two halves from disagreeing:
+//      /comms/shifts gates on comms AND shifts, so parent signup does too.
+//   2. A token that does not resolve answers exactly as it always did — 404 /
+//      "link no longer active". Nothing here changes what an unknown token
+//      learns.
+//   3. A VALID family token pointed at a flag-off surface gets a calm "this
+//      isn't available" page, not a hard 404. A parent holding a link that works
+//      everywhere else deserves a sentence rather than a dead end, and the
+//      sentence names no feature — so it discloses nothing about what this or
+//      any other program has turned on. The file routes (packet PDF, .ics,
+//      calendar feed) have no page to render, so they say the same sentence as
+//      a plain-text 404 body.
+//   4. Actions RE-CHECK. A page that hides a form is not a gate: every write on
+//      this surface resolves the token itself, so it re-evaluates the flag
+//      itself.
+//   5. Unsubscribe is DELIBERATELY UNGATED, and is the only entry with no flags.
+//      CAN-SPAM and RFC 8058 make "stop emailing me" unconditional; a program
+//      that turned `comms` off after sending mail must still honour the footer
+//      link in the mail it already sent.
+//
+// The map is exhaustive over the surfaces and asserted in tests/unit/tokens —
+// adding a parent route means adding a line here, which is the point.
+export type ParentSurface =
+  | "itinerary"
+  | "packet"
+  | "signup"
+  | "absence"
+  | "costumes"
+  | "welcome"
+  | "unsubscribe";
+
+export const PARENT_SURFACE_FLAGS: Record<ParentSurface, readonly FlagKey[]> = {
+  // /t/<token>/itinerary + the per-competition .ics — staff half is
+  // /competitions/<id>/itinerary (requireFlag 'competitions').
+  itinerary: ["competitions"],
+  // /t/<token>/packet — the same competition document, same flag.
+  packet: ["competitions"],
+  // /t/<token>/signup + claim/cancel — staff half is /comms/shifts, which gates
+  // on BOTH (lib/readiness, lib/nav and the season page all say so).
+  signup: ["comms", "shifts"],
+  // /t/<token>/absence — staff half is /competitions/absences ('competitions').
+  absence: ["competitions"],
+  // The per-student costume cards on the family home; staff half is /costumes.
+  costumes: ["costumes"],
+  // The first-visit welcome card. flagRegistry's `guide` description names the
+  // "parent welcome card" in as many words, and nothing evaluated it.
+  welcome: ["guide"],
+  // Unconditional — see rule 5.
+  unsubscribe: [],
+};
+
+// The season-calendar feed is the one ANY-OF surface, because the season page
+// that mints it is: it 404s only when competitions, events AND travel are all
+// off. The feed mirrors that, and each section inside it is filtered by its own
+// flag, so a program with events off never has an event in its feed.
+export const SEASON_CALENDAR_FLAGS: readonly FlagKey[] = [
+  "competitions",
+  "events",
+  "travel",
+];
+
+export function parentSurfaceAvailable(
+  program: FlaggableProgram,
+  surface: ParentSurface,
+): boolean {
+  return PARENT_SURFACE_FLAGS[surface].every((key) => flag(program, key));
+}
+
+export function seasonCalendarAvailable(program: FlaggableProgram): boolean {
+  return SEASON_CALENDAR_FLAGS.some((key) => flag(program, key));
 }
 
 // ---- Token event logging (§10 security audit) ------------------------------

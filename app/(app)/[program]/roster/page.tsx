@@ -3,7 +3,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
-import { RosterTabs } from "./RosterTabs";
+import { SubTabs } from "../SubTabs";
+import { rosterTabs } from "@/lib/subnav";
 import { addStudent, emailAllGuardianLinks } from "./actions";
 
 // People (season-workflow redesign, "People" design ref) — the roster directory
@@ -31,13 +32,10 @@ export default async function RosterPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    q?: string;
-    status?: string;
-    ensemble?: string;
-    error?: string;
-    bulk?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?q=a&q=b), so every read
+  // goes through `one()`. Without it a hand-typed URL reached `sanitizeSearch`
+  // with an array and threw on `.replace` — a 500 on the directory.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -47,7 +45,16 @@ export default async function RosterPage({
     );
   }
   const canWrite = ROSTER_WRITE_ROLES.includes(role);
-  const { q, status, ensemble, error, bulk } = await searchParams;
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const q = one("q");
+  const status = one("status");
+  const ensemble = one("ensemble");
+  const error = one("error");
+  const bulk = one("bulk");
 
   // Bulk email result, encoded "sent.skipped.failed".
   const bulkCounts = bulk?.match(/^(\d+)\.(\d+)\.(\d+)$/);
@@ -195,7 +202,7 @@ export default async function RosterPage({
         </div>
       </div>
 
-      <RosterTabs slug={slug} active="directory" canWrite={canWrite} />
+      <SubTabs strip={rosterTabs(slug, "directory", canWrite)} />
 
       {!season && (
         <p className="muted">
@@ -207,6 +214,12 @@ export default async function RosterPage({
         <p className="alert-error">A student needs a first and last name.</p>
       )}
       {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
+      {error === "student" && (
+        <p className="alert-error">
+          We couldn&apos;t find that student in this program. Pick them from the
+          roster below and try again.
+        </p>
+      )}
       {bulkCounts && (
         <p className={Number(bulkCounts[1]) > 0 ? "alert-ok" : "alert-error"}>
           Family links: {bulkCounts[1]} emailed, {bulkCounts[2]} skipped

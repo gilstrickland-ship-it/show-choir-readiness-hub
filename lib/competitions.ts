@@ -72,6 +72,87 @@ export const COMMON_CAPTIONS: readonly string[] = [
 ];
 
 // ============================================================================
+// Cross-tenant reference guards (Constitution I, defense in depth).
+// ----------------------------------------------------------------------------
+// A server action proving the CALLER is a director of the program they claimed
+// does not prove the uuids they posted belong to that program. Every action that
+// accepts a competition id / ensemble id from a form resolves it here first, so
+// a hand-edited hidden field can never stamp this program's rows onto another
+// program's records. RLS still gates the write; this is the layer that makes the
+// failure a friendly message instead of an invisible poisoned row.
+// ============================================================================
+
+// The competition row an action is allowed to touch: its id AND the season it
+// belongs to, read off the stored row. Callers that need the season take it from
+// here rather than from a hidden field — a posted season is one more id to check,
+// and a form that doesn't carry one (the slim ensemble-change confirm) would
+// otherwise silently skip the season-scoped cleanup.
+export interface ResolvedCompetition {
+  id: string;
+  season_id: string;
+}
+
+export async function resolveCompetition(
+  supabase: SupabaseClient,
+  programId: string,
+  competitionId: string,
+): Promise<ResolvedCompetition | null> {
+  if (!programId || !competitionId) return null;
+  const { data } = await supabase
+    .from("competitions")
+    .select("id, season_id")
+    .eq("id", competitionId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as ResolvedCompetition | null) ?? null;
+}
+
+// The competition id, only when it belongs to `programId`. Null otherwise —
+// callers redirect to their surface's existing error state.
+export async function resolveCompetitionId(
+  supabase: SupabaseClient,
+  programId: string,
+  competitionId: string,
+): Promise<string | null> {
+  return (await resolveCompetition(supabase, programId, competitionId))?.id ?? null;
+}
+
+// True when every posted ensemble id belongs to `programId`. A partial match is
+// a rejection, not a silent drop: quietly ignoring an id would change who a
+// competition/event is for without saying so.
+export async function ensemblesInProgram(
+  supabase: SupabaseClient,
+  programId: string,
+  ensembleIds: string[],
+): Promise<boolean> {
+  if (ensembleIds.length === 0) return true;
+  const { data } = await supabase
+    .from("ensembles")
+    .select("id")
+    .eq("program_id", programId)
+    .in("id", ensembleIds);
+  return ((data as { id: string }[] | null) ?? []).length === ensembleIds.length;
+}
+
+// The season id, only when it belongs to `programId`. Seasons are the parent of
+// competitions, events, hosted events, budgets and costume sets, so the same
+// guard is needed on every one of those create paths.
+export async function resolveSeasonId(
+  supabase: SupabaseClient,
+  programId: string,
+  seasonId: string,
+): Promise<string | null> {
+  if (!programId || !seasonId) return null;
+  const { data } = await supabase
+    .from("seasons")
+    .select("id")
+    .eq("id", seasonId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+// ============================================================================
 // Multi-ensemble eligibility helpers (Feature 004, research D5).
 // ----------------------------------------------------------------------------
 // A competition's participating ensembles live in the `competition_ensembles`
@@ -91,6 +172,32 @@ export async function competitionEnsembleIds(
     .select("ensemble_id")
     .eq("competition_id", competitionId);
   return ((data as { ensemble_id: string }[] | null) ?? []).map((r) => r.ensemble_id);
+}
+
+// A short, order-independent fingerprint of an ensemble SET.
+//
+// Removing an ensemble is destructive (it deletes attendance rows and
+// comp-scoped costume checkouts), so it is confirmed on a screen that names the
+// students who lose eligibility. That screen is a round trip: the set can move
+// under the director between the page rendering and the button being pressed,
+// and the old confirm applied the removal anyway — so an ensemble somebody else
+// added in between was dropped without ever appearing in what was approved.
+//
+// The confirm form carries this fingerprint of the set it DISPLAYED; the action
+// recomputes it from the set it re-reads and refuses when they differ. Cheap
+// enough to ride in a form field (FNV-1a, plus the count, so two sets of
+// different sizes cannot collide) — the guard is against concurrency, not
+// against an attacker: forging it only forces the confirmation you were already
+// entitled to see.
+export function ensembleSetFingerprint(ensembleIds: readonly string[]): string {
+  const joined = [...new Set(ensembleIds)].sort().join(",");
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < joined.length; i++) {
+    hash ^= joined.charCodeAt(i);
+    // FNV prime, via Math.imul so the multiply stays 32-bit.
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${new Set(ensembleIds).size}-${hash.toString(36)}`;
 }
 
 // competition_id → its participating ensemble ids, for a batch of competitions

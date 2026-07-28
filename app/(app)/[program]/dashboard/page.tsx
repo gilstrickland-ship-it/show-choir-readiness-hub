@@ -8,16 +8,24 @@ import {
 } from "@/lib/nav";
 import {
   ATTENDANCE_WRITE_ROLES,
+  COMPETITION_WRITE_ROLES,
   activeCaptions,
 } from "@/lib/competitions";
 import { DIGEST_WRITE_ROLES } from "@/lib/comms";
 import { OPEN_ALTERATION_STATUSES } from "@/lib/costumes";
 import { loadGuideState, loadJourneyPanel } from "@/lib/guide";
 import { JourneyPanel } from "../JourneyPanel";
-import { formatCents, sumActuals, type LedgerAmountRow } from "@/lib/treasury";
+import { StartSeasonCard } from "../StartSeasonCard";
+import {
+  COMMITMENT_CREATE_ROLES,
+  commitmentTotalsFromRow,
+  formatCents,
+  seasonTotalsFromRow,
+} from "@/lib/treasury";
 import { loadCompReadiness, type ReadinessCheck } from "@/lib/readiness";
 import {
   zonedWallToUtc,
+  zonedDateKey,
   formatDateInTz,
   formatTimeInTz,
   calendarDaysBetween,
@@ -72,16 +80,27 @@ export default async function DashboardPage({
 
   // Per-block gates (flag on AND role has read access). The comp-readiness
   // block's own shift/packet sub-gates live inside loadCompReadiness.
+  //
+  // A gate here is a promise about a DESTINATION, so it has to be the gate the
+  // destination actually enforces (spec 005 T160). /comms/digest 404s on the
+  // `comms` flag, not on `digest` — a program with the weekly digest overridden
+  // on and the comms surface off got an inbox row whose "Review & send" was a
+  // 404. Both flags, the same pair lib/readiness already requires for the
+  // shifts check and lib/guide for the announcement step.
   const show = {
     comp: flags.competitions,
     costumes: flags.costumes && COSTUMES_ROLES.includes(role),
     treasury: flags.treasury && TREASURY_ROLES.includes(role),
     roster: ROSTER_ROLES.includes(role),
     absence: flags.competitions && ATTENDANCE_WRITE_ROLES.includes(role),
-    digest: flags.digest && DIGEST_WRITE_ROLES.includes(role),
+    digest: flags.comms && flags.digest && DIGEST_WRITE_ROLES.includes(role),
     results: flags.competitions,
     events: flags.events,
   };
+  // Who may CREATE a competition — the empty hero offers a way to add one, and
+  // adding is Season's job since Wave 1 (US1/P6), so a reader is offered
+  // nothing rather than a drawer with no section in it.
+  const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
 
   // ---- Next competition + comp-week readiness (shared helper) ---------------
   interface NextComp {
@@ -96,7 +115,12 @@ export default async function DashboardPage({
   let readinessDone = 0;
   let readinessTotal = 0;
   if (show.comp && seasonId) {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // TODAY IS THE PROGRAM'S TODAY. `competitions.date` is a plain calendar day,
+    // so the key it is compared against has to be the day it IS in the program's
+    // timezone — not in UTC. In Central, every evening after 6pm a UTC key reads
+    // as tomorrow, which walked the program's own competition off its home page
+    // on the evening before it (Wave 14 fixed this on the parent routes).
+    const todayStr = zonedDateKey(now, tz);
     const { data: compRow } = await supabase
       .from("competitions")
       .select("id, name, date, host_school")
@@ -263,7 +287,9 @@ export default async function DashboardPage({
           ? `Alterations open before ${nextComp.name}`
           : "Alterations open",
         desc: `${names.join(", ")}${extra > 0 ? ` + ${extra} more` : ""}`,
-        href: `${base}/costumes/alterations`,
+        // The queue IS the Wardrobe landing; /costumes/alterations was a route
+        // that only redirected here, and it went with Wave W.
+        href: `${base}/costumes`,
         action: "Open queue",
       });
     }
@@ -284,6 +310,47 @@ export default async function DashboardPage({
         desc: `${n} guardian address${n === 1 ? " is" : "es are"} missing every announcement.`,
         href: `${base}/roster/email-issues`,
         action: "Fix addresses",
+      });
+    }
+  }
+
+  // Open commitments whose need-by has already passed (spec 006 R7). An open
+  // purchase order from a date that has gone by is money held out of the budget
+  // for something that may never happen, and it is a NAMED audit finding — a
+  // prior year's open POs are the first thing an auditor lists.
+  //
+  // NOTHING HERE CLOSES ANYTHING. Closing releases the remainder back to a
+  // budget line, and a balance that re-inflates on its own hides under-delivery;
+  // an explicit release is the moment the director learns what the number meant.
+  //
+  // The seat gate is the seats that can DO something: a treasurer closes it, and
+  // a director or admin is who chases the vendor or restates the amount. A board
+  // member reads the same count on the board snapshot instead.
+  if (
+    flags.treasury &&
+    COMMITMENT_CREATE_ROLES.includes(role) &&
+    !isSupport &&
+    seasonId
+  ) {
+    // The same SQL aggregate the commitments page and the board snapshot read
+    // (0021), so the three cannot disagree about how many are overdue. A failed
+    // read leaves the row out entirely rather than claiming "0 overdue".
+    const { data, error } = await supabase.rpc("commitment_totals", {
+      p_program_id: program.id,
+      p_season_id: seasonId,
+    });
+    const totals = error
+      ? null
+      : commitmentTotalsFromRow(Array.isArray(data) ? data[0] : data);
+    const n = totals?.staleCount ?? 0;
+    if (n > 0) {
+      inbox.push({
+        count: n,
+        tone: "warn",
+        title: `Commitment${n === 1 ? "" : "s"} past the date ${n === 1 ? "it was" : "they were"} needed`,
+        desc: "Still holding money out of the budget. Close each one to release what is left, or restate it.",
+        href: `${base}/treasury/commitments`,
+        action: "Review",
       });
     }
   }
@@ -315,18 +382,21 @@ export default async function DashboardPage({
   let uncatCount = 0;
   let uncatCents = 0;
   if (show.treasury && seasonId) {
-    const { data: ledger } = await supabase
-      .from("ledger_entries")
-      .select("direction, amount_cents, voided_at, budget_line_id")
-      .eq("program_id", program.id)
-      .eq("season_id", seasonId);
-    const rows = (ledger as LedgerAmountRow[] | null) ?? [];
-    balanceCents = sumActuals(rows).netCents;
-    for (const r of rows) {
-      if (!r.voided_at && r.budget_line_id == null) {
-        uncatCount += 1;
-        uncatCents += r.amount_cents;
-      }
+    // One SQL aggregate (0019), not a sum over a fetched row list: PostgREST
+    // caps a response at 1000 rows, so the old fetch quietly turned "Balance"
+    // into "balance of the first thousand entries" on a busy season. A failed
+    // read leaves this null, and the card renders "—" rather than "$0.00".
+    const { data, error } = await supabase.rpc("ledger_season_totals", {
+      p_program_id: program.id,
+      p_season_id: seasonId,
+    });
+    const totals = error
+      ? null
+      : seasonTotalsFromRow(Array.isArray(data) ? data[0] : data);
+    if (totals) {
+      balanceCents = totals.netCents;
+      uncatCount = totals.uncategorizedCount;
+      uncatCents = totals.uncategorizedCents;
     }
   }
 
@@ -375,10 +445,18 @@ export default async function DashboardPage({
       {!takeover && (
         <>
       {!season && (
-        <p className="alert-error">
-          No active season yet.{" "}
-          <Link href={`${base}/settings/rollover`}>Start a season</Link> to begin.
-        </p>
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={tz}
+          from="dashboard"
+          error={typeof sp.seasonError === "string" ? sp.seasonError : null}
+        />
+      )}
+
+      {sp.seasonStarted && season && (
+        <p className="alert-ok">{season.label} is now your active season.</p>
       )}
 
       {show.comp && (
@@ -442,7 +520,12 @@ export default async function DashboardPage({
               <p className="today-kicker">Next competition</p>
               <p className="muted">
                 No upcoming competition on the calendar.{" "}
-                <Link href={`${base}/competitions`}>Add one</Link>.
+                {canAddComp && (
+                  <>
+                    <Link href={`${base}/season?add=comp`}>Add one</Link> on
+                    Season.
+                  </>
+                )}
               </p>
             </div>
           )}

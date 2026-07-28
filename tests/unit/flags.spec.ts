@@ -69,9 +69,9 @@ describe("varsity tier — most on", () => {
 
 describe("program tier — all product features on", () => {
   test("every product flag resolves on", () => {
-    // support_access and hosting are deliberately NOT tier-driven (per-program
-    // pilot capabilities); every other flag is a product surface the top tier ships.
-    const nonTierDriven: FlagKey[] = ["support_access", "hosting"];
+    // hosting is deliberately NOT tier-driven (a per-program pilot capability);
+    // every other flag is a product surface the top tier ships.
+    const nonTierDriven: FlagKey[] = ["hosting"];
     const productKeys = (Object.keys(flagRegistry) as FlagKey[]).filter(
       (k) => !nonTierDriven.includes(k),
     );
@@ -81,16 +81,21 @@ describe("program tier — all product features on", () => {
   });
 });
 
-describe("support_access is never tier-driven", () => {
-  test("stays at its registry default (off) for every tier", () => {
-    for (const tier of ["prep", "varsity", "program"] as ProgramTier[]) {
-      expect(TIER_BUNDLES[tier].support_access).toBeUndefined();
-      expect(flag(prog(tier), "support_access")).toBe(false);
-    }
+describe("support access is not a flag at all (T143)", () => {
+  test("the registry does not carry one", () => {
+    // It did, and nothing ever read it. The real gate is director consent
+    // (programs.support_access_until) plus profiles.is_support, enforced by
+    // 0004's policies — a flag beside them would be a second, weaker answer.
+    expect(Object.keys(flagRegistry)).not.toContain("support_access");
   });
 
-  test("a per-program override can still turn it on", () => {
-    expect(flag(prog("prep", { support_access: true }), "support_access")).toBe(true);
+  test("no tier bundle sets one either", () => {
+    for (const tier of ["prep", "varsity", "program"] as ProgramTier[]) {
+      expect(
+        (TIER_BUNDLES[tier] as Record<string, boolean | undefined>)
+          .support_access,
+      ).toBeUndefined();
+    }
   });
 });
 

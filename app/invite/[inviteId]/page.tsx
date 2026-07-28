@@ -3,31 +3,35 @@ import { brand } from "@/lib/brand";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { signOut } from "@/app/auth/actions";
+import { Flash } from "@/app/(app)/[program]/Flash";
+import { readFlash } from "@/lib/flash";
+import { ROLE_LABELS, type Role } from "@/lib/auth";
 import { acceptInvite } from "./actions";
+import { INVITE_FLASH_MAPS, type InviteSection } from "./shared";
 
 // Invite acceptance. The invite link is /invite/<program_members.id>. The row is
 // read with the service-role client (the invitee isn't a member yet). Flow:
 //   not signed in → prompt sign-in, returning here afterward
 //   signed in, wrong email → explain the mismatch, offer sign-out
 //   signed in, matching email → accept button (server action)
-
-const ROLE_LABELS: Record<string, string> = {
-  director: "Director",
-  admin: "Admin",
-  treasurer: "Treasurer",
-  costume_manager: "Costume manager",
-  board_member: "Board member",
-};
+//   used, withdrawn, or unknown → an honest "invite unavailable" screen
+//
+// The role a seat carries is named on every one of those screens, in the app's
+// one set of role words (lib/auth's ROLE_LABELS) — this page kept a private copy
+// of that map until spec 005 Wave 13 / T165, which is how "Costume manager" and
+// "Costume Manager" both came to exist.
 
 export default async function InvitePage({
   params,
   searchParams,
 }: {
   params: Promise<{ inviteId: string }>;
-  searchParams: Promise<{ error?: string }>;
+  // A duplicated param (?error=a&error=b) arrives as an ARRAY, so the read goes
+  // through lib/flash (./shared) rather than trusting the declared string type.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { inviteId } = await params;
-  const { error } = await searchParams;
+  const flash = readFlash<InviteSection>(await searchParams, INVITE_FLASH_MAPS);
 
   const admin = createAdminClient();
   const { data: member } = await admin
@@ -49,7 +53,7 @@ export default async function InvitePage({
   }
 
   const program = member.program as unknown as { name: string } | null;
-  const roleLabel = ROLE_LABELS[member.role] ?? member.role;
+  const roleLabel = ROLE_LABELS[member.role as Role] ?? member.role;
 
   const supabase = await createClient();
   const {
@@ -109,11 +113,7 @@ export default async function InvitePage({
         You&apos;ve been invited as <strong>{roleLabel}</strong>, signed in as{" "}
         {user.email}.
       </p>
-      {error && (
-        <p className="alert-error">
-          We couldn&apos;t accept this invite. It may have been revoked.
-        </p>
-      )}
+      <Flash flash={flash} section="page" />
       <form action={acceptInvite}>
         <input type="hidden" name="inviteId" value={inviteId} />
         <button type="submit">Accept invite</button>

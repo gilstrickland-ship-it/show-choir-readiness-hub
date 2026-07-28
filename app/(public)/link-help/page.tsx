@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { brand } from "@/lib/brand";
+import { oneParam, type SearchParams } from "@/lib/flash";
 import { recoverLinks } from "./actions";
 
 // Self-service link recovery page (§8a, C2-3). A dedicated public page rather
@@ -15,9 +16,10 @@ export const metadata: Metadata = {
 export default async function LinkHelpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sent?: string }>;
+  // What Next actually hands back — `?sent=1&sent=2` arrives as an array.
+  searchParams: Promise<SearchParams>;
 }) {
-  const { sent } = await searchParams;
+  const sent = oneParam(await searchParams, "sent");
 
   return (
     <div className="token-frame">

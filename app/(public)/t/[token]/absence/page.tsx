@@ -1,14 +1,21 @@
 import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { formatDateInTz } from "@/lib/datetime";
-import { TokenFooter } from "../parts";
+import { formatDateInTz, zonedDateKey } from "@/lib/datetime";
+import { oneParam, type SearchParams } from "@/lib/flash";
+import { parentSurfaceAvailable } from "@/lib/tokens";
+import { TokenFooter, TokenUnavailable } from "../parts";
 import { submitAbsence } from "./actions";
 
 // Tokenized absence report (§8a) — guardian tokens ONLY. Pick own student +
 // upcoming competition + optional note; submits a PENDING request to the staff
 // review queue. Confirmation screen on submit. No-health label per Constitution
 // III.
+//
+// Flag-gated on `competitions`, which is what the staff review queue
+// (/competitions/absences) requires (Constitution VIII; rule in lib/tokens): a
+// request submitted into a queue nobody can open is a parent believing they
+// told the school their child would be away.
 
 const NO_HEALTH_LABEL = "Do not enter health or medical information.";
 
@@ -46,12 +53,17 @@ export default async function PublicAbsencePage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ s?: string }>;
+  // What Next actually hands back — `?s=a&s=b` arrives as an array, so the read
+  // goes through oneParam and an array reads as absent.
+  searchParams: Promise<SearchParams>;
 }) {
   const { token } = await params;
-  const { s } = await searchParams;
+  const s = oneParam(await searchParams, "s");
   const resolved = await getResolvedToken(token);
   if (!resolved) notFound();
+  if (!parentSurfaceAvailable(resolved.program, "absence")) {
+    return <TokenUnavailable token={token} resolved={resolved} />;
+  }
 
   // Guardian tokens only — share links have no absence capability.
   if (resolved.kind !== "guardian") {
@@ -62,7 +74,7 @@ export default async function PublicAbsencePage({
           Absence reports need your family&apos;s personal link. Ask your director
           for it.
         </p>
-        <TokenFooter token={token} kind="share" />
+        <TokenFooter token={token} resolved={resolved} />
       </section>
     );
   }
@@ -131,7 +143,10 @@ export default async function PublicAbsencePage({
         .eq("program_id", program.id)
         .eq("season_id", seasonId)
         .in("id", familyCompIds)
-        .gte("date", new Date().toISOString().slice(0, 10))
+        // Program-tz today, not UTC's (Constitution VII) — a UTC key rolls over
+        // at 7pm Central and would hide the competition a parent is reporting an
+        // absence for on the evening before it.
+        .gte("date", zonedDateKey(new Date(), tz))
         .order("date", { ascending: true });
       comps = (data as CompRow[] | null) ?? [];
     }
@@ -203,7 +218,13 @@ export default async function PublicAbsencePage({
       ) : (
         <form action={submitAbsence} className="stack" style={{ width: "100%" }}>
           <input type="hidden" name="token" value={token} />
-          <label>
+          {/* Each label spans the column. `.stack` aligns items to flex-start, so
+              an auto-width label shrink-wraps its widest child — and a <select>
+              is as wide as its longest option, which is a competition name. That
+              pushed the whole page 15px sideways at 375px (measured), the one
+              width this surface exists for. A definite width lets the select's
+              own max-width:100% finally bite. */}
+          <label style={{ width: "100%" }}>
             Student
             <select name="studentId" required>
               {students.map((st) => (
@@ -213,7 +234,7 @@ export default async function PublicAbsencePage({
               ))}
             </select>
           </label>
-          <label>
+          <label style={{ width: "100%" }}>
             Competition
             <select name="competitionId" required>
               {comps.map((c) => (
@@ -233,7 +254,7 @@ export default async function PublicAbsencePage({
         </form>
       )}
 
-      <TokenFooter token={token} kind="guardian" />
+      <TokenFooter token={token} resolved={resolved} />
     </section>
   );
 }

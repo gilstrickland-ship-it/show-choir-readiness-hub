@@ -2,8 +2,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { formatDateInTz, formatTimeInTz, zonedWallToUtc } from "@/lib/datetime";
+import {
+  formatDateInTz,
+  formatTimeInTz,
+  zonedDateKey,
+  calendarDaysBetween,
+} from "@/lib/datetime";
 import { itineraryAnchors } from "@/lib/itinerary-days";
+import { oneParam, type SearchParams } from "@/lib/flash";
+import { parentSurfaceAvailable, GUARDIAN_LINK_SURFACES } from "@/lib/tokens";
 import { TokenFooter } from "./parts";
 
 // Guardian-token home — the family "poster" (§8a, §10). A dark hero counts down
@@ -16,6 +23,12 @@ import { TokenFooter } from "./parts";
 // button rides the existing published-only /packet route, the absence link is
 // guardian-only (TokenFooter), and no new PII beyond costume piece labels/status
 // is read.
+//
+// This page is the one parent surface that is NEVER "not available": it is the
+// family's own landing page and it composes several features, so each SECTION
+// carries its own flag (lib/tokens PARENT_SURFACE_FLAGS) instead of the whole
+// page refusing. With every flag off it degrades to the students' names and the
+// footer, which is the honest floor rather than a dead end.
 
 const ALTERATION_LABEL: Record<string, string> = {
   none: "No alterations",
@@ -31,16 +44,7 @@ const ALTERATION_OPEN = new Set(["needed", "in_progress"]);
 interface AssignmentRow {
   student_id: string;
   alteration_status: string;
-  alteration_notes: string | null;
   piece: { label: string | null; kind: string } | null;
-}
-
-// Whole days from now to a zoned midnight date (future). Past/today clamp to 0.
-function daysUntil(dateKey: string, tz: string): number | null {
-  const target = zonedWallToUtc(`${dateKey}T00:00`, tz);
-  if (!target || Number.isNaN(target.getTime())) return null;
-  const ms = target.getTime() - Date.now();
-  return ms <= 0 ? 0 : Math.floor(ms / 86_400_000);
 }
 
 export default async function TokenHomePage({
@@ -48,7 +52,9 @@ export default async function TokenHomePage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ welcome?: string }>;
+  // What Next actually hands back — a duplicated `?welcome=1&welcome=2` arrives
+  // as an array, so the read goes through oneParam.
+  searchParams: Promise<SearchParams>;
 }) {
   const { token } = await params;
   const sp = await searchParams;
@@ -61,16 +67,29 @@ export default async function TokenHomePage({
         <div className="token-share-card">
           <h1>Welcome</h1>
           <p>
-            This is a shared, read-only link for {resolved.program.name}. Use
-            the links below to view the itinerary and volunteer signup.
+            This is a shared, read-only link for {resolved.program.name}. The
+            links below are everything it opens.
           </p>
         </div>
-        <TokenFooter token={token} kind="share" />
+        <TokenFooter token={token} resolved={resolved} />
       </section>
     );
   }
 
   const { program, students, guardian } = resolved;
+  // Per-section flags (Constitution VIII) — each half of this poster belongs to a
+  // feature whose staff half can be switched off, and a family must never be
+  // shown, or invited to act on, something staff can no longer see or manage.
+  const canCostumes = parentSurfaceAvailable(program, "costumes");
+  const canCompetitions = parentSurfaceAvailable(program, "itinerary");
+  const canSignup = parentSurfaceAvailable(program, "signup");
+  const canWelcome = parentSurfaceAvailable(program, "welcome");
+  // Does the footer hold anything besides the link that reopens the welcome
+  // card? Read off the SAME list TokenFooter and the email footer build from,
+  // so the card's promise and the links under it cannot drift apart.
+  const hasMoreForFamilies = GUARDIAN_LINK_SURFACES.some((surface) =>
+    parentSurfaceAvailable(program, surface),
+  );
   const tz = program.timezone;
   const supabase = createAdminClient();
 
@@ -80,8 +99,11 @@ export default async function TokenHomePage({
   // this family's guardian-token 'view' rows. The layout logs THIS visit before
   // the page renders, so the count already includes it — show the card at ≤ 3.
   // The footer's "How this page works" link force-shows it any time via ?welcome=1.
-  let showWelcome = sp.welcome === "1";
-  if (!showWelcome) {
+  // `guide` gates it either way — flagRegistry's description for that flag names
+  // the "parent welcome card" in as many words, and nothing evaluated it until
+  // now, so ?welcome=1 rendered it for programs that had guidance turned off.
+  let showWelcome = canWelcome && oneParam(sp, "welcome") === "1";
+  if (canWelcome && !showWelcome) {
     // The family's guardian rows (siblings share an email), then their tokens.
     let guardianIds = [guardian.id];
     if (guardian.email) {
@@ -123,14 +145,13 @@ export default async function TokenHomePage({
 
   const studentIds = students.map((s) => s.id);
 
-  // Costume assignments (active season) + piece label per student.
+  // Costume assignments (active season) + piece label per student. Not even READ
+  // when the program has costumes off — there is no staff surface behind them.
   const assignmentsByStudent = new Map<string, AssignmentRow[]>();
-  if (seasonId && studentIds.length > 0) {
+  if (canCostumes && seasonId && studentIds.length > 0) {
     const { data: asgn } = await supabase
       .from("costume_assignments")
-      .select(
-        "student_id, alteration_status, alteration_notes, piece:costume_pieces(label, kind)",
-      )
+      .select("student_id, alteration_status, piece:costume_pieces(label, kind)")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .in("student_id", studentIds);
@@ -141,8 +162,12 @@ export default async function TokenHomePage({
     }
   }
 
-  // Next upcoming competition for the family's ensembles.
-  const todayKey = formatIsoDate(new Date());
+  // Next upcoming competition for the family's ensembles. "Upcoming" is measured
+  // on the PROGRAM's calendar, not UTC's (Constitution VII): a UTC date key flips
+  // to tomorrow at 7pm Central, which would drop TODAY's competition off this
+  // poster while the bus is still on its way home — the one evening a family
+  // needs the return time most.
+  const todayKey = zonedDateKey(new Date(), tz);
   let nextComp: {
     id: string;
     name: string;
@@ -153,7 +178,7 @@ export default async function TokenHomePage({
   } | null = null;
   let openShiftSlots = 0;
 
-  if (seasonId && studentIds.length > 0) {
+  if (seasonId && studentIds.length > 0 && (canCompetitions || canSignup)) {
     const { data: mems } = await supabase
       .from("ensemble_members")
       .select("ensemble_id")
@@ -184,7 +209,7 @@ export default async function TokenHomePage({
       ),
     );
 
-    if (familyCompIds.length > 0) {
+    if (familyCompIds.length > 0 && canCompetitions) {
       const { data: comps } = await supabase
         .from("competitions")
         .select("id, name, date")
@@ -240,10 +265,13 @@ export default async function TokenHomePage({
           returnTime,
         };
       }
+    }
 
-      // Volunteer nudge — open slots on this season's shifts (empty when the
-      // shifts feature is off, so no nudge shows). No new capability: shift data
-      // is already the parent signup surface.
+    // Volunteer nudge — open slots on this season's shifts. Gated on the SAME
+    // two flags as the signup page it points at and the staff /comms/shifts
+    // page behind that: inviting a parent to claim a slot no one can see or
+    // manage is worse than showing no nudge at all.
+    if (familyCompIds.length > 0 && canSignup) {
       const { data: shiftRows } = await supabase
         .from("shifts")
         .select("id, needed_count")
@@ -274,7 +302,12 @@ export default async function TokenHomePage({
     }
   }
 
-  const days = nextComp?.date ? daysUntil(nextComp.date, tz) : null;
+  // The countdown counts CALENDAR days in program tz (calendarDaysBetween), not
+  // elapsed 24-hour blocks: at 11pm the night before, "0 days" is wrong and
+  // "1 day" is what a parent means. Same helper the staff side counts with.
+  const days = nextComp?.date
+    ? calendarDaysBetween(new Date(), new Date(`${nextComp.date}T12:00:00Z`), tz)
+    : null;
 
   return (
     <section className="stack token-poster">
@@ -284,10 +317,17 @@ export default async function TokenHomePage({
           <p>
             This page is your family&apos;s — bookmark it, it works all season.
           </p>
-          <p>
-            The links at the bottom do three things: see the times, sign up to
-            help, and report an absence.
-          </p>
+          {/* Only promise the footer when the footer has something in it. Every
+              other parent link is flag-gated (TokenFooter drops the ones this
+              program has off), so a program running just the poster showed a
+              family a sentence pointing at a footer whose only remaining link
+              was the one that reopens this card (spec 005 Wave 9 / T146). */}
+          {hasMoreForFamilies && (
+            <p>
+              The links at the bottom take you to everything else your program
+              shares with families.
+            </p>
+          )}
           <p>
             Everything also arrives by email. The links in your newest email
             always work.
@@ -346,7 +386,11 @@ export default async function TokenHomePage({
             <h2>
               {student.first_name} {student.last_name}
             </h2>
-            {rows.length === 0 ? (
+            {/* No costume line at all when the program has costumes off — "No
+                costume assignments yet" would promise a thing that is never
+                coming (Constitution VIII). The name stays: it is this family's
+                own roster, and it is what makes the page theirs. */}
+            {!canCostumes ? null : rows.length === 0 ? (
               <p className="token-student-empty">No costume assignments yet.</p>
             ) : (
               rows.map((r, i) => {
@@ -382,11 +426,7 @@ export default async function TokenHomePage({
         </section>
       )}
 
-      <TokenFooter token={token} kind="guardian" />
+      <TokenFooter token={token} resolved={resolved} />
     </section>
   );
-}
-
-function formatIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }

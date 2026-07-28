@@ -74,7 +74,11 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned, not `latest`: resolving "latest" asks the GitHub releases API
+          # on every run and fails the whole job when that rate-limits
+          # ("Failed to resolve latest Supabase CLI release"), which is an
+          # external outage failing a green commit. Bump deliberately.
+          version: 2.110.0
 
       - name: Start Supabase local stack
         # `supabase start` blocks until the stack is healthy. On failure, dump

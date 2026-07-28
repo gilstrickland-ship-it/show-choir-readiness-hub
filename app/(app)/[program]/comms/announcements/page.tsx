@@ -11,13 +11,22 @@ import {
 } from "@/lib/comms";
 import { emailConfigured } from "@/lib/email";
 import { formatDateTimeInTz } from "@/lib/datetime";
-import { CommsTabs } from "../CommsTabs";
+import { SubTabs } from "../../SubTabs";
+import { commsTabs } from "@/lib/subnav";
 import { sendAnnouncement } from "../actions";
 
 // Comms — Announcements tab (§7 redesign; was the old /comms landing). Immediate
 // compose (director/admin) with recipient preview + per-send history. The human
 // writing it IS the approval (no AI, no queue). Comms is hidden from board_member
 // (read-only seat). Flagged-off or role-forbidden → 404.
+//
+// Two flags gate this route (spec 005 US9-4): `comms` for the surface and
+// `announcements` for this channel. The registry has always declared
+// `announcements` as a real product lever — "immediate announcement sends to
+// guardians", the one comms channel that reaches a family the instant it is
+// pressed — but nothing evaluated it, so turning it off did nothing. It is
+// default-on and set by no tier bundle, so wiring it changes no existing
+// program; it just makes the switch mean what it says.
 
 const NO_HEALTH_LABEL = "Do not enter health or medical information.";
 
@@ -54,6 +63,7 @@ export default async function AnnouncementsPage({
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
+  requireFlag(program, "announcements");
   if (!COMMS_ROLES.includes(role)) {
     return (
       <Restricted slug={slug} surface="Comms" role={role} allowed={COMMS_ROLES} />
@@ -141,11 +151,12 @@ export default async function AnnouncementsPage({
         </div>
       </div>
 
-      <CommsTabs
-        slug={slug}
-        active="announcements"
-        shiftsEnabled={flags.shifts}
-        digestEnabled={flags.digest}
+      <SubTabs
+        strip={commsTabs(slug, "announcements", {
+          digestEnabled: flags.digest,
+          announcementsEnabled: true,
+          shiftsEnabled: flags.shifts,
+        })}
       />
 
       {(emailIssueCount ?? 0) > 0 && (
@@ -191,6 +202,17 @@ export default async function AnnouncementsPage({
       )}
       {sp.error === "save" && (
         <p className="alert-error">Couldn&apos;t save the announcement. Try again.</p>
+      )}
+      {sp.error === "season" && (
+        <p className="alert-error">
+          That season isn&apos;t part of this program. Reload the page and try again.
+        </p>
+      )}
+      {sp.error === "ensemble" && (
+        <p className="alert-error">
+          That ensemble isn&apos;t part of this program. Pick one from the list and
+          try again.
+        </p>
       )}
 
       {canSend && (

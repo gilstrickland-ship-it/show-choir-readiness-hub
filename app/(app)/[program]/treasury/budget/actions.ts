@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
+import { programPath } from "@/lib/return-path";
 import {
   TREASURY_WRITE_ROLES,
   BUDGET_TEMPLATE,
@@ -18,13 +19,52 @@ import {
 // treasurer writes; every action re-checks TREASURY_WRITE_ROLES via requireRole
 // (Constitution I + V, defense in depth) even though RLS also gates it.
 
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce "//evil.com/treasury/budget", which every
+// browser reads as protocol-relative and follows off-site. programPath
+// validates the slug and fails closed.
 function budgetPath(slug: string): string {
-  return `/${slug}/treasury/budget`;
+  return programPath(slug, "treasury/budget") ?? "/";
+}
+
+// A failure that belongs to ONE line goes back to that line: `?edit=line-<id>`
+// reopens its edit popover and the page renders the message inside it, rather
+// than at the top of a budget that can run several screens (the Wave-2
+// section-local error contract). Without a line id there is nothing to reopen,
+// so it falls back to the page-level message.
+function lineErrorPath(slug: string, lineId: string, code: string): string {
+  const base = budgetPath(slug);
+  if (!lineId) return `${base}?error=${code}`;
+  const key = `line-${encodeURIComponent(lineId)}`;
+  return `${base}?edit=${key}&error=${code}#${key}`;
 }
 
 function parseSortOrder(raw: string): number {
   const n = Number(String(raw).trim());
   return Number.isInteger(n) ? n : 0;
+}
+
+// The budget hierarchy is season → budget → category → line, and every level's
+// parent id reaches these actions as a form field. requireRole proves the caller
+// runs the program they CLAIMED, not that the parent belongs to it, so each
+// parent is resolved inside this program before a child is written
+// (Constitution I). The stakes are highest one level up: the single-active-
+// budget index is not program-scoped, so an unresolved season id lets one
+// program permanently occupy another's active-budget slot.
+async function resolveOwnedId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: string,
+  programId: string,
+  id: string,
+): Promise<string | null> {
+  if (!id) return null;
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +83,10 @@ export async function createBudget(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "seasons", programId, seasonId))) {
+    redirect(`${budgetPath(slug)}?error=budget`);
+  }
+
   const { error } = await supabase.from("budgets").insert({
     program_id: programId,
     season_id: seasonId,
@@ -67,17 +111,24 @@ export async function activateBudget(formData: FormData): Promise<void> {
   await requireRole(programId, TREASURY_WRITE_ROLES);
 
   const supabase = await createClient();
-  const { error } = await supabase
+  // .select("id") is what proves the write landed. A filter matching nothing —
+  // another program's budget, or one already deleted — returns NO error, so
+  // checking only `error` reported "Saved." for a change that never happened.
+  const { data, error } = await supabase
     .from("budgets")
     .update({ status: "active" })
     .eq("id", budgetId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
 
   if (error) {
     if (error.code === PG_UNIQUE_VIOLATION) {
       redirect(`${budgetPath(slug)}?error=active_exists`);
     }
     redirect(`${budgetPath(slug)}?error=budget`);
+  }
+  if (((data as { id: string }[] | null) ?? []).length === 0) {
+    redirect(`${budgetPath(slug)}?error=budget_gone`);
   }
   revalidatePath(budgetPath(slug));
   redirect(`${budgetPath(slug)}?saved=1`);
@@ -94,6 +145,9 @@ export async function seedTemplate(formData: FormData): Promise<void> {
   await requireRole(programId, TREASURY_WRITE_ROLES);
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "budgets", programId, budgetId))) {
+    redirect(`${budgetPath(slug)}?error=budget`);
+  }
 
   // Guard: only seed when the budget has no categories yet.
   const { count } = await supabase
@@ -159,6 +213,10 @@ export async function addCategory(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "budgets", programId, budgetId))) {
+    redirect(`${budgetPath(slug)}?error=category`);
+  }
+
   const { error } = await supabase.from("budget_categories").insert({
     program_id: programId,
     budget_id: budgetId,
@@ -187,7 +245,7 @@ export async function updateCategory(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("budget_categories")
     .update({
       name,
@@ -195,10 +253,14 @@ export async function updateCategory(formData: FormData): Promise<void> {
       sort_order: parseSortOrder(String(formData.get("sort_order") ?? "0")),
     })
     .eq("id", categoryId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
 
   if (error) {
     redirect(`${budgetPath(slug)}?error=category`);
+  }
+  if (((data as { id: string }[] | null) ?? []).length === 0) {
+    redirect(`${budgetPath(slug)}?error=category_gone`);
   }
   revalidatePath(budgetPath(slug));
   redirect(`${budgetPath(slug)}?saved=1`);
@@ -214,14 +276,18 @@ export async function deleteCategory(formData: FormData): Promise<void> {
   await requireRole(programId, TREASURY_WRITE_ROLES);
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("budget_categories")
     .delete()
     .eq("id", categoryId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
 
   if (error) {
     redirect(`${budgetPath(slug)}?error=cat_in_use`);
+  }
+  if (((data as { id: string }[] | null) ?? []).length === 0) {
+    redirect(`${budgetPath(slug)}?error=category_gone`);
   }
   revalidatePath(budgetPath(slug));
   redirect(`${budgetPath(slug)}?saved=1`);
@@ -246,6 +312,10 @@ export async function addLine(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "budget_categories", programId, categoryId))) {
+    redirect(`${budgetPath(slug)}?error=line`);
+  }
+
   const { error } = await supabase.from("budget_lines").insert({
     program_id: programId,
     category_id: categoryId,
@@ -271,11 +341,11 @@ export async function updateLine(formData: FormData): Promise<void> {
   const plannedRaw = String(formData.get("planned") ?? "").trim();
   const planned = plannedRaw === "" ? 0 : parseDollarsToCents(plannedRaw);
   if (!name || planned === null) {
-    redirect(`${budgetPath(slug)}?error=line`);
+    redirect(lineErrorPath(slug, lineId, "line"));
   }
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("budget_lines")
     .update({
       name,
@@ -283,10 +353,14 @@ export async function updateLine(formData: FormData): Promise<void> {
       sort_order: parseSortOrder(String(formData.get("sort_order") ?? "0")),
     })
     .eq("id", lineId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
 
   if (error) {
-    redirect(`${budgetPath(slug)}?error=line`);
+    redirect(lineErrorPath(slug, lineId, "line"));
+  }
+  if (((data as { id: string }[] | null) ?? []).length === 0) {
+    redirect(lineErrorPath(slug, lineId, "line_gone"));
   }
   revalidatePath(budgetPath(slug));
   redirect(`${budgetPath(slug)}?saved=1`);
@@ -294,7 +368,7 @@ export async function updateLine(formData: FormData): Promise<void> {
 
 // Delete a line. ledger_entries.budget_line_id references it (nullable, no
 // cascade); a line with entries tagged to it raises an FK violation — message
-// the treasurer to re-tag those entries (void + re-enter) first.
+// the treasurer to re-tag those entries (void + redo) first.
 export async function deleteLine(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
@@ -302,14 +376,18 @@ export async function deleteLine(formData: FormData): Promise<void> {
   await requireRole(programId, TREASURY_WRITE_ROLES);
 
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("budget_lines")
     .delete()
     .eq("id", lineId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
 
   if (error) {
-    redirect(`${budgetPath(slug)}?error=line_in_use`);
+    redirect(lineErrorPath(slug, lineId, "line_in_use"));
+  }
+  if (((data as { id: string }[] | null) ?? []).length === 0) {
+    redirect(lineErrorPath(slug, lineId, "line_gone"));
   }
   revalidatePath(budgetPath(slug));
   redirect(`${budgetPath(slug)}?saved=1`);

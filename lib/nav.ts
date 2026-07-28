@@ -100,3 +100,52 @@ export function isNavItemVisible(
   if (item.roles && !item.roles.includes(role)) return false;
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Mobile tab bar (spec 005 Wave 8 / T141)
+// ---------------------------------------------------------------------------
+// The phone gets four tabs plus a More sheet. Which four is a RANKING over the
+// items this viewer can actually see, not a fixed list of slots: the bar used to
+// name dashboard/season/roster/costumes outright and simply drop any of them the
+// role couldn't see, without backfilling — so a treasurer, whose entire job is
+// Money, got "Today · Season · More" and had to open a sheet to reach the one
+// surface she came for. Ranking and taking the first four gives her Money as a
+// tab and leaves a director's bar byte-identical, because a director sees every
+// item and the first four in this order are the four that were hardcoded.
+//
+// The order is a PHONE order, deliberately not NAV's: Wardrobe outranks Money
+// because costume checkout and quick-change are hallway jobs done standing up,
+// while the ledger is a desk task. Every NAV slot appears here — a slot missing
+// from this list would silently rank last, which is how a new surface would come
+// to be unreachable on a phone; the unit spec asserts the two lists agree.
+export const MOBILE_TAB_ORDER: readonly string[] = [
+  "dashboard",
+  "season",
+  "roster",
+  "costumes",
+  "treasury",
+  "comms",
+  "hosting",
+];
+
+// Four tabs + More = the five-slot bar the design ref calls for.
+export const MOBILE_TAB_COUNT = 4;
+
+// Split already-filtered nav items into the tab bar and the More sheet. Callers
+// pass the SAME list the desktop nav renders (layout filters it once through
+// isNavItemVisible), so a seat can never get a mobile tab for a surface its
+// desktop nav hides. The sheet keeps NAV order — it is a list you read, not a
+// bar you aim at — while the bar takes the ranked first four.
+export function splitMobileNav<T extends { slot: string }>(
+  items: readonly T[],
+): { tabs: T[]; more: T[] } {
+  const rank = (slot: string): number => {
+    const i = MOBILE_TAB_ORDER.indexOf(slot);
+    return i === -1 ? MOBILE_TAB_ORDER.length : i;
+  };
+  const tabs = [...items]
+    .sort((a, b) => rank(a.slot) - rank(b.slot))
+    .slice(0, MOBILE_TAB_COUNT);
+  const promoted = new Set(tabs.map((t) => t.slot));
+  return { tabs, more: items.filter((i) => !promoted.has(i.slot)) };
+}

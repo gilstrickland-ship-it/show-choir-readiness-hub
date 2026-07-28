@@ -14,12 +14,17 @@ import { TRAVEL_WRITE_ROLES } from "@/lib/travel";
 import { loadCompReadiness } from "@/lib/readiness";
 import { activeShareLinks, seasonCalendarUrl } from "@/lib/tokens";
 import { regenerateSeasonCalendarShareLink } from "./actions";
+import { ShareLinkCard } from "../ShareLinkCard";
 import {
   zonedWallToUtc,
   zonedDateKey,
+  toZonedInputValue,
   formatTimeInTz,
 } from "@/lib/datetime";
 import { formatHostedDateRange } from "@/lib/hosting";
+import { StartSeasonCard } from "../StartSeasonCard";
+import { QuickAdd, ADD_KINDS, type AddKind } from "./QuickAdd";
+import { RowEdit, type RowEditTarget } from "./RowEdit";
 
 // Season (season-workflow redesign, "Season" design ref) — one chronological
 // spine for the active season, absorbing the old Competitions/Events/Travel/
@@ -52,8 +57,9 @@ function monthAbbr(instant: Date, timeZone: string): string {
 
 type ItemKind = "comp" | "event" | "trip" | "hosting";
 
-interface SeasonItem {
-  key: string;
+// A spine row. The edit-popover payloads (compEdit/eventEdit/tripEdit, built for
+// writer roles only) come from RowEdit, which owns what its forms need.
+interface SeasonItem extends RowEditTarget {
   kind: ItemKind;
   instant: Date;
   dateKey: string; // YYYY-MM-DD in program tz
@@ -63,7 +69,6 @@ interface SeasonItem {
   isPast: boolean;
   tag: string; // pill label
   tagClass: string; // pill variant
-  title: string;
   href: string | null; // title link (comps only)
   meta: string;
   // Right-slot payloads (mutually exclusive; resolved at render).
@@ -89,7 +94,9 @@ export default async function SeasonPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ filter?: string; calShare?: string; calError?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?add=comp&add=trip), so
+  // every read below goes through `one()` — a hand-typed URL must not 500 a page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
@@ -110,10 +117,42 @@ export default async function SeasonPage({
   const base = `/${slug}`;
   const seasonId = season?.id ?? null;
 
-  const { filter: filterParam, calShare, calError } = await searchParams;
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const calShare = one("calShare");
+  const calError = one("calError");
+  const editKey = one("edit");
+  const errorParam = one("error");
+  const created = one("created");
+  const saved = one("saved");
+  const seasonError = one("seasonError");
+  const seasonStarted = one("seasonStarted");
+
+  const filterParam = one("filter");
   const filter: Filter = FILTERS.includes(filterParam as Filter)
     ? (filterParam as Filter)
     : "everything";
+  // Which quick-add section is open (and therefore which error belongs to it).
+  const addParam = one("add");
+  const addKind: AddKind | null = (ADD_KINDS as readonly string[]).includes(
+    addParam ?? "",
+  )
+    ? (addParam as AddKind)
+    : null;
+
+  // Per-kind write affordances — the season spine absorbs the module lists, so
+  // it must also be where a writer adds and corrects. Each is gated by its flag
+  // AND its module's write-role set (re-checked server-side in every action); a
+  // role with no write access sees no "+ Add" and no row Edit at all (the pills
+  // and rows still browse). One "+ Add" drawer holds every kind the viewer may
+  // create; the full forms stay on the module pages behind "More options →".
+  const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
+  const canAddEvent = flags.events && EVENTS_WRITE_ROLES.includes(role);
+  const canAddTrip = flags.travel && TRAVEL_WRITE_ROLES.includes(role);
+  const canAddAny = canAddComp || canAddEvent || canAddTrip;
 
   const supabase = await createClient();
 
@@ -125,7 +164,7 @@ export default async function SeasonPage({
     SETTINGS_ROLES.includes(role) || COMPETITION_WRITE_ROLES.includes(role);
   const activeSeasonCalLinks =
     canManageCalendar && season
-      ? (await activeShareLinks(supabase, program.id)).filter(
+      ? (await activeShareLinks(supabase, program.id)).links.filter(
           (l) => l.resource === "season_calendar" && l.resource_id === season.id,
         )
       : [];
@@ -136,14 +175,18 @@ export default async function SeasonPage({
     ? freshSeasonCalUrl.replace(/^https:\/\//, "webcal://")
     : null;
 
-  // Ensemble names (shared by comp + event meta).
+  // Ensemble names (shared by comp + event meta) — ordered, because the same
+  // list is the quick-add drawer's "who's going" checkboxes.
   const ensembleName = new Map<string, string>();
+  let ensembles: { id: string; name: string }[] = [];
   if (seasonId && (flags.competitions || flags.events)) {
     const { data: ensData } = await supabase
       .from("ensembles")
       .select("id, name")
-      .eq("program_id", program.id);
-    for (const e of (ensData as { id: string; name: string }[] | null) ?? []) {
+      .eq("program_id", program.id)
+      .order("sort_order", { ascending: true });
+    ensembles = (ensData as { id: string; name: string }[] | null) ?? [];
+    for (const e of ensembles) {
       ensembleName.set(e.id, e.name);
     }
   }
@@ -181,6 +224,12 @@ export default async function SeasonPage({
   // pointer. Counted from the comps we already fetch (no extra query), surfaced
   // as a muted note near the top of the spine.
   let undatedCompCount = 0;
+  // DATED competitions with no trip yet — the quick-add drawer's primary trip
+  // path. Filled from the comps we already fetch; no extra query. Undated comps
+  // are excluded because a trip that inherits no dates lands nowhere on the
+  // spine, behind a banner saying it was added (the travel page, which lists
+  // trips regardless of date, still offers them).
+  let compsWithoutTrip: { id: string; name: string; date: string }[] = [];
   if (flags.competitions && seasonId) {
     const { data: compData } = await supabase
       .from("competitions")
@@ -243,6 +292,9 @@ export default async function SeasonPage({
         []) {
         if (t.competition_id) linkedCompIds.add(t.competition_id);
       }
+      compsWithoutTrip = comps
+        .filter((c) => c.date != null && !linkedCompIds.has(c.id))
+        .map((c) => ({ id: c.id, name: c.name, date: c.date as string }));
     }
 
     // Next comp = earliest upcoming planned/confirmed comp (feature row).
@@ -272,6 +324,9 @@ export default async function SeasonPage({
         compStatus: c.status,
         result: c.status === "done" ? placement.get(c.id) ?? null : null,
         needsTrip: flags.travel && !linkedCompIds.has(c.id),
+        compEdit: canAddComp
+          ? { id: c.id, name: c.name, date: c.date, status: c.status }
+          : undefined,
       });
     }
 
@@ -349,15 +404,24 @@ export default async function SeasonPage({
         title: e.title,
         href: null,
         meta,
+        eventEdit: canAddEvent
+          ? {
+              id: e.id,
+              title: e.title,
+              startsWall: toZonedInputValue(e.starts_at, tz),
+              location: e.location ?? "",
+            }
+          : undefined,
       });
     }
   }
 
   // ---- Trips ----------------------------------------------------------------
   if (flags.travel && seasonId) {
+    // ends_on rides along for the row's edit popover, which shows both dates.
     const { data: tripData } = await supabase
       .from("trips")
-      .select("id, name, starts_on, is_overnight")
+      .select("id, name, starts_on, ends_on, is_overnight")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .not("starts_on", "is", null)
@@ -367,6 +431,7 @@ export default async function SeasonPage({
           id: string;
           name: string;
           starts_on: string;
+          ends_on: string | null;
           is_overnight: boolean;
         }[]
       | null) ?? []) {
@@ -380,6 +445,15 @@ export default async function SeasonPage({
         title: t.name,
         href: `${base}/travel/${t.id}`,
         meta: t.is_overnight ? "Overnight trip" : "Day trip",
+        tripEdit: canAddTrip
+          ? {
+              id: t.id,
+              name: t.name,
+              startsOn: t.starts_on,
+              endsOn: t.ends_on ?? "",
+              isOvernight: t.is_overnight,
+            }
+          : undefined,
       });
     }
   }
@@ -460,15 +534,10 @@ export default async function SeasonPage({
   // shifts" link only shows when both are on (otherwise it would 404).
   const canFillShifts = flags.shifts && flags.comms && SHIFT_WRITE_ROLES.includes(role);
 
-  // Per-kind add affordances — the season spine absorbs the module lists, so it
-  // must also be where a writer starts a new item. Each is gated by its flag AND
-  // its module's write-role set (re-checked server-side in each create action);
-  // a role with no write access sees no add buttons (the pills/rows still browse).
-  // Links target the #add anchor on each module's create form.
-  const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
-  const canAddEvent = flags.events && EVENTS_WRITE_ROLES.includes(role);
-  const canAddTrip = flags.travel && TRAVEL_WRITE_ROLES.includes(role);
-  const canAddAny = canAddComp || canAddEvent || canAddTrip;
+  // "Competition added." after a quick add — the created key is `<kind>-<id>`.
+  const createdKind = created?.split("-")[0] ?? null;
+  // A just-added or just-corrected row is the one the eye should land on.
+  const highlightKey = created ?? saved ?? null;
 
   return (
     <section className="season">
@@ -478,20 +547,21 @@ export default async function SeasonPage({
           <h1 className="season-h1">The Season</h1>
         </div>
         <div className="season-actions">
-          {canAddComp && (
-            <Link href={`${base}/competitions#add`} className="button-link accent">
-              + Competition
-            </Link>
-          )}
-          {canAddEvent && (
-            <Link href={`${base}/events#add`} className="button-link secondary">
-              + Event
-            </Link>
-          )}
-          {canAddTrip && (
-            <Link href={`${base}/travel#add`} className="button-link secondary">
-              + Trip
-            </Link>
+          {canAddAny && (
+            <QuickAdd
+              slug={slug}
+              base={base}
+              programId={program.id}
+              seasonId={seasonId}
+              tz={tz}
+              ensembles={ensembles}
+              compsWithoutTrip={compsWithoutTrip}
+              canAddComp={canAddComp}
+              canAddEvent={canAddEvent}
+              canAddTrip={canAddTrip}
+              openKind={addKind}
+              error={errorParam}
+            />
           )}
           {flags.archive && (
             <Link href={`${base}/history`} className="button-link secondary">
@@ -502,9 +572,27 @@ export default async function SeasonPage({
       </div>
 
       {!season && (
-        <p className="alert-error">
-          No active season yet.{" "}
-          <Link href={`${base}/settings/rollover`}>Start a season</Link> to begin.
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={tz}
+          from="season"
+          error={seasonError ?? null}
+        />
+      )}
+
+      {seasonStarted && season && (
+        <p className="alert-ok">{season.label} is now your active season.</p>
+      )}
+
+      {createdKind && (
+        <p className="alert-ok">
+          {createdKind === "comp"
+            ? "Competition added to your season."
+            : createdKind === "event"
+              ? "Event added to your season."
+              : "Trip added to your season."}
         </p>
       )}
 
@@ -525,63 +613,46 @@ export default async function SeasonPage({
       </div>
 
       {/* Subscribe in your calendar (Wave G / G1) — director/admin. One live
-          feed of the whole season for Google Calendar / Apple Calendar. */}
+          feed of the whole season for Google Calendar / Apple Calendar. You set
+          this up once a year, so it is one line until you ask for it — and it
+          opens itself on the two occasions you need to see inside: a freshly
+          minted URL (shown once, never again) and an error. */}
       {canManageCalendar && season && (
-        <div className="confirm-box stack" style={{ width: "100%" }}>
-          <h2>Subscribe in your calendar</h2>
-          {calError === "season" && (
-            <p className="alert-error">Activate a season before creating a calendar link.</p>
-          )}
-          {calError === "mint" && (
-            <p className="alert-error">
-              The old calendar link was retired, but a new one couldn&apos;t be created. Try
-              again.
-            </p>
-          )}
-          {freshSeasonCalUrl ? (
-            <>
-              <p className="muted">
-                A live calendar feed of {season.label} — every competition, event,
-                and trip. Copy it now (for privacy the URL is shown only this once).
-                It stays current all season — new comps and time changes appear
-                automatically.
-              </p>
-              <p className="muted">
-                <strong>Google Calendar:</strong> use the https link (Other calendars →
-                From URL).
-              </p>
-              <code style={{ wordBreak: "break-all" }}>{freshSeasonCalUrl}</code>
-              <p className="muted">
-                <strong>Apple Calendar:</strong> the webcal link opens Subscribe directly.
-              </p>
-              <code style={{ wordBreak: "break-all" }}>{freshSeasonCalWebcal}</code>
-            </>
-          ) : activeSeasonCalLinks.length > 0 ? (
-            <p className="muted">
-              A season calendar link is active for {season.label}. For privacy the
-              URL is only shown once at creation — regenerate to get a fresh copyable
-              link (the old one stops working). Active links are listed in{" "}
-              <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
-            </p>
-          ) : (
-            <p className="muted">
-              Create a live calendar feed of the whole season. Paste it into Google
-              Calendar (<strong>Other calendars → From URL</strong>) or Apple
-              Calendar — it updates itself as the season changes, so you never
-              re-enter a date.
-            </p>
-          )}
-          <form action={regenerateSeasonCalendarShareLink}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="seasonId" value={season.id} />
-            <button type="submit" className="secondary">
-              {activeSeasonCalLinks.length > 0
-                ? "Regenerate calendar link"
-                : "Create calendar link"}
-            </button>
-          </form>
-        </div>
+        <details
+          className="season-subscribe"
+          open={Boolean(calShare || calError)}
+        >
+          <summary>📅 Subscribe in your calendar</summary>
+          <ShareLinkCard
+            resource="season_calendar"
+            programId={program.id}
+            slug={slug}
+            subject={season.label}
+            resourceIdField={{ name: "seasonId", value: season.id }}
+            action={regenerateSeasonCalendarShareLink}
+            liveCount={activeSeasonCalLinks.length}
+            freshUrls={
+              freshSeasonCalUrl && freshSeasonCalWebcal
+                ? [freshSeasonCalUrl, freshSeasonCalWebcal]
+                : null
+            }
+            message={
+              <>
+                {calError === "season" && (
+                  <p className="alert-error">
+                    Activate a season before creating a calendar link.
+                  </p>
+                )}
+                {calError === "mint" && (
+                  <p className="alert-error">
+                    The old calendar link was retired, but a new one couldn&apos;t be
+                    created. Try again.
+                  </p>
+                )}
+              </>
+            }
+          />
+        </details>
       )}
 
       {undatedCompCount > 0 && (
@@ -607,15 +678,15 @@ export default async function SeasonPage({
               {" "}
               Add{" "}
               {canAddComp && (
-                <Link href={`${base}/competitions#add`}>a competition</Link>
+                <Link href={`${base}/season?add=comp`}>a competition</Link>
               )}
               {canAddComp && (canAddEvent || canAddTrip) &&
                 (canAddEvent && canAddTrip ? ", " : " or ")}
               {canAddEvent && (
-                <Link href={`${base}/events#add`}>an event</Link>
+                <Link href={`${base}/season?add=event`}>an event</Link>
               )}
               {canAddEvent && canAddTrip && " or "}
-              {canAddTrip && <Link href={`${base}/travel#add`}>a trip</Link>}
+              {canAddTrip && <Link href={`${base}/season?add=trip`}>a trip</Link>}
               {" to get started."}
             </>
           )}
@@ -633,7 +704,11 @@ export default async function SeasonPage({
               </div>
               {g.rows.map((it) =>
                 it.compId && it.compId === nextCompId ? (
-                  <div className="season-feature" key={it.key}>
+                  <div
+                    className={`season-feature${it.key === highlightKey ? " just-added" : ""}`}
+                    id={`item-${it.key}`}
+                    key={it.key}
+                  >
                     <div className="season-feature-date">
                       <div className="season-feature-num">{it.dayNum}</div>
                       <div className="season-date-dow">{it.weekday}</div>
@@ -683,12 +758,25 @@ export default async function SeasonPage({
                             Fill shifts
                           </Link>
                         )}
+                        <RowEdit
+                          item={it}
+                          variant="feature"
+                          slug={slug}
+                          base={base}
+                          programId={program.id}
+                          tz={tz}
+                          openKey={editKey}
+                          error={errorParam}
+                        />
                       </div>
                     </div>
                   </div>
                 ) : (
                   <div
-                    className={`season-row${it.isPast ? " past" : ""}`}
+                    className={`season-row${it.isPast ? " past" : ""}${
+                      it.key === highlightKey ? " just-added" : ""
+                    }`}
+                    id={`item-${it.key}`}
                     key={it.key}
                   >
                     <div className="season-date">
@@ -738,6 +826,16 @@ export default async function SeasonPage({
                           Open
                         </Link>
                       )}
+                      <RowEdit
+                        item={it}
+                        variant="row"
+                        slug={slug}
+                        base={base}
+                        programId={program.id}
+                        tz={tz}
+                        openKey={editKey}
+                        error={errorParam}
+                      />
                     </div>
                   </div>
                 ),

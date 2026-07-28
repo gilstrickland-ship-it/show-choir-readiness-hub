@@ -21,15 +21,67 @@ test.describe("board member role gating", () => {
     await expect(nav.getByRole("link", { name: "Money" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Comms" })).toHaveCount(0);
 
-    // Money is readable but read-only — no add-entry affordance.
+    // Money is READABLE — and this has to be proved, not assumed. A `name`
+    // passed to getByRole matches a SUBSTRING by default, so "Money" also
+    // matched the Restricted notice's "Money is outside your seat": the
+    // assertion passed whether the board member got the ledger or the door.
+    // Rule out the notice, then assert something only the real page ships.
     await page.goto("/demo/treasury");
-    await expect(page.getByRole("heading", { name: "Money" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /outside your seat/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Money", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".metric-strip")).toBeVisible();
+
+    // ...but read-only: no add-entry affordance.
     await expect(
       page.getByRole("heading", { name: "Add an entry" }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Add entry" }),
     ).toHaveCount(0);
+
+    // The two reporting surfaces are the same seat's, and they are the two a
+    // board actually reads (spec 005 Wave 12). `exact` on every name below,
+    // because a name match is a SUBSTRING match by default and this surface is
+    // full of near-prefixes: an unanchored "Money in" would also match "Money
+    // in (money received)" if the ledger's direction labels ever land here, and
+    // an unanchored "Money" matches both section headings at once.
+    await page.goto("/demo/treasury/budget-vs-actual");
+    await expect(
+      page.getByRole("heading", { name: "Budget vs Actual", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Money in", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Money out", exact: true }),
+    ).toBeVisible();
+    // A pure read surface: it holds no form at all, for any seat. This is the
+    // assertion that catches a write growing here later.
+    await expect(page.locator("main form")).toHaveCount(0);
+
+    await page.goto("/demo/treasury/reports");
+    await expect(
+      page.getByRole("heading", { name: "Reports", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Board snapshot", exact: true }),
+    ).toBeVisible();
+    // The one form on Reports is the event picker, and it GETs — the URL is the
+    // report. Nothing on either page may post.
+    await expect(page.locator('main form:not([method="get"])')).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Show it", exact: true }),
+    ).toBeVisible();
+
+    // A duplicated param arrives as an ARRAY, which used to 500 this page.
+    const dupEvent = await page.request.get(
+      "/demo/treasury/reports?event=comp%3Aone&event=trip%3Atwo",
+    );
+    expect(dupEvent.status()).toBe(200);
 
     // Comms is off the board's surface entirely. The direct URL no longer 404s
     // for an authenticated member — it renders the data-free Restricted notice
@@ -43,5 +95,70 @@ test.describe("board member role gating", () => {
     await expect(
       page.getByRole("heading", { name: "Add an entry" }),
     ).toHaveCount(0);
+
+    // The absence queue used to be the one role-denied surface that answered
+    // with a bare 404 (spec 005 T157). It answers like every other one now —
+    // and, like every other one, ships none of the queue: no table, no student
+    // name, no guardian email.
+    await page.goto("/demo/competitions/absences");
+    await expect(
+      page.getByRole("heading", { name: /outside your seat/i }),
+    ).toBeVisible();
+    await expect(page.locator("table.members")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /^Confirm/ }),
+    ).toHaveCount(0);
+  });
+});
+
+// The phone's tab bar backfills by role (spec 005 T141). It used to name four
+// slots outright — Today/Season/People/Wardrobe — and simply drop any the seat
+// couldn't see, so a treasurer got "Today · Season · More" and had to open the
+// sheet to reach Money, the one surface her seat exists for. These journeys
+// assert the bar per seat, at a phone width, because that is where it renders.
+
+test.describe("mobile tab bar backfills by role", () => {
+  test.beforeAll(async () => {
+    await ensureMembershipActive(DEMO.treasurerMembershipId, USERS.treasurer.email);
+    await ensureMembershipActive(DEMO.boardMembershipId, USERS.board.email);
+  });
+
+  test("a treasurer gets Money as a tab, not a sheet entry", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await signIn(page, USERS.treasurer.email, USERS.treasurer.password);
+    await page.waitForURL("**/demo/dashboard");
+
+    const bar = page.getByRole("navigation", { name: "Mobile navigation" });
+    await expect(bar).toBeVisible();
+    // People and Wardrobe are not this seat's surfaces; the two slots they used
+    // to hold empty go to the two surfaces she does have.
+    await expect(bar.getByRole("link", { name: "Money" })).toBeVisible();
+    await expect(bar.getByRole("link", { name: "Comms" })).toBeVisible();
+    await expect(bar.getByRole("link", { name: "People" })).toHaveCount(0);
+    await expect(bar.getByRole("link", { name: "Wardrobe" })).toHaveCount(0);
+
+    // ...and it is a real tab: it navigates straight to the ledger.
+    await bar.getByRole("link", { name: "Money" }).click();
+    await page.waitForURL("**/demo/treasury");
+    await expect(
+      page.getByRole("heading", { name: "Money", exact: true }),
+    ).toBeVisible();
+  });
+
+  test("a director's bar is unchanged by the backfill", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await signIn(page, USERS.director.email, USERS.director.password);
+    await page.waitForURL("**/demo/dashboard");
+
+    const bar = page.getByRole("navigation", { name: "Mobile navigation" });
+    for (const label of ["Today", "Season", "People", "Wardrobe"]) {
+      await expect(bar.getByRole("link", { name: label })).toBeVisible();
+    }
+    // Money stays in the sheet for a director — she sees every surface, so the
+    // four slots are full and nothing is owed a promotion.
+    await expect(bar.getByRole("link", { name: "Money" })).toHaveCount(0);
+    await bar.getByRole("button", { name: "More" }).click();
+    const sheet = page.locator(".mobile-nav-sheet");
+    await expect(sheet.getByRole("menuitem", { name: "Money" })).toBeVisible();
   });
 });

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
@@ -6,36 +5,42 @@ import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
 import {
   COSTUME_WRITE_ROLES,
-  PIECE_KINDS,
-  PIECE_CONDITIONS,
-  PIECE_KIND_LABELS,
-  PIECE_CONDITION_LABELS,
-  NO_HEALTH_LABEL,
-  type PieceKind,
-  type PieceCondition,
+  parsePieceKind,
+  parsePieceCondition,
+  pieceSearchTerm,
 } from "@/lib/costumes";
-import { CostumeTabs } from "../CostumeTabs";
-import { addPiece, retirePiece } from "../actions";
+import { SubTabs } from "../../SubTabs";
+import { costumeTabs } from "@/lib/subnav";
+import { AddPiece } from "./AddPiece";
+import { InventoryFilters } from "./InventoryFilters";
+import { PieceRow, type PieceListRow } from "./PieceRow";
 
-// Inventory (Wardrobe sub-tab). Program-level piece inventory (persists across
-// seasons), filterable by kind / set / condition. Props and set pieces are just
-// kinds here — one inventory, no extra screens (§4). Moved off the Wardrobe
-// landing (which now shows the Alterations queue) into its own sub-route.
+// Inventory — everything the program owns. Program-level, so pieces persist
+// across seasons: this is the data the departing costume parent currently takes
+// with them, and its persistence IS the continuity feature (§4). Props and set
+// pieces are kinds in the same list, not a second screen.
 
-interface PieceRow {
-  id: string;
-  kind: PieceKind;
-  label: string;
-  size_label: string | null;
-  color: string | null;
-  condition: PieceCondition;
-  storage_location: string | null;
-  set_id: string | null;
-}
+// Messages the page owns — the add drawer and the filter row, neither of which
+// belongs to a particular piece.
+const ERR: Record<string, string> = {
+  piece: "A piece needs a name and a kind.",
+  set: "That set isn't part of this program. Reload the page and pick one from the list.",
+  save: "Couldn't save. Try again.",
+};
 
-interface SetOption {
-  id: string;
-  name: string;
+// Messages that belong to ONE row. They arrive with `?edit=<pieceId>`, which is
+// also what reopens that row's panel.
+const ROW_ERR: Record<string, string> = {
+  piece: "A piece needs a name and a kind.",
+  set: "That set isn't part of this program. Reload the page and pick one from the list.",
+  save: "Couldn't save. Try again.",
+};
+
+// The code rides in the URL, so the lookup must be a lookup and not a walk up
+// Object.prototype — `?error=constructor` would otherwise hand React a function.
+function message(map: Record<string, string>, code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(map, code) ? map[code] : null;
 }
 
 export default async function CostumesInventoryPage({
@@ -43,13 +48,10 @@ export default async function CostumesInventoryPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    kind?: string;
-    set?: string;
-    condition?: string;
-    saved?: string;
-    error?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?kind=a&kind=b), so every
+  // read goes through `one()` — a hand-typed URL must not 500 the page or
+  // smuggle an array into a query filter.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
@@ -60,29 +62,34 @@ export default async function CostumesInventoryPage({
     );
   }
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
-  const { kind, set, condition, saved, error } = await searchParams;
 
-  const kindFilter = (PIECE_KINDS as readonly string[]).includes(kind ?? "")
-    ? (kind as PieceKind)
-    : "all";
-  const conditionFilter = (PIECE_CONDITIONS as readonly string[]).includes(
-    condition ?? "",
-  )
-    ? (condition as PieceCondition)
-    : "all";
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+
+  const search = pieceSearchTerm(one("q"));
+  const kindFilter = parsePieceKind(one("kind"));
+  const conditionFilter = parsePieceCondition(one("condition"));
 
   const supabase = await createClient();
 
-  // Sets for the filter dropdown + resolving each piece's current set name.
+  // Sets for the filter + both edit surfaces, and for naming each piece's set.
   const { data: setData } = await supabase
     .from("costume_sets")
     .select("id, name")
     .eq("program_id", program.id)
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
-  const sets = (setData as SetOption[] | null) ?? [];
+  const sets = (setData as { id: string; name: string }[] | null) ?? [];
   const setName = new Map(sets.map((s) => [s.id, s.name]));
-  const setFilter = set && setName.has(set) ? set : "all";
+
+  // "none" is the pieces that aren't in a set yet — a real answer, and one the
+  // old blank-valued option silently dropped on the floor.
+  const setParam = one("set");
+  const setFilter =
+    setParam === "none" ? "none" : setParam && setName.has(setParam) ? setParam : "all";
 
   let query = supabase
     .from("costume_pieces")
@@ -90,197 +97,132 @@ export default async function CostumesInventoryPage({
     .eq("program_id", program.id)
     .order("label", { ascending: true });
 
-  if (kindFilter !== "all") query = query.eq("kind", kindFilter);
-  if (conditionFilter !== "all") query = query.eq("condition", conditionFilter);
-  if (setFilter !== "all") query = query.eq("set_id", setFilter);
+  if (kindFilter) query = query.eq("kind", kindFilter);
+  if (conditionFilter) query = query.eq("condition", conditionFilter);
+  if (setFilter === "none") query = query.is("set_id", null);
+  else if (setFilter !== "all") query = query.eq("set_id", setFilter);
+  if (search) {
+    query = query.or(
+      `label.ilike.%${search}%,color.ilike.%${search}%,storage_location.ilike.%${search}%`,
+    );
+  }
 
   const { data: pieceData } = await query;
-  const pieces = (pieceData as PieceRow[] | null) ?? [];
+  const pieces = (pieceData as PieceListRow[] | null) ?? [];
+
+  const inSet = pieces.filter((p) => p.set_id != null).length;
+  const eyebrow = `${pieces.length} piece${pieces.length === 1 ? "" : "s"} · ${inSet} in a set`;
+
+  // A row's panel reopens on `?edit=<pieceId>` carrying its own message; without
+  // an `edit` the code belongs to the page (the add drawer).
+  const errorCode = one("error");
+  const openId = canWrite ? one("edit") : null;
+  const rowError = openId ? message(ROW_ERR, errorCode) : null;
+  const pageError = openId ? null : message(ERR, errorCode);
+  const unknownError = !!errorCode && !rowError && !pageError;
+  // A create that came back rejected reopens the drawer with its message inside.
+  const drawerOpen = canWrite && (one("add") === "piece" || !!pageError);
+
+  // Open (or close) ONE row's Edit panel without losing the filters. `?edit=` is
+  // the same param a refused save comes back on, so the link and the redirect
+  // land in exactly the same place.
+  const columns = canWrite ? 8 : 7;
+  const rowHref = (pieceId: string | null): string => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      if (typeof value !== "string") continue;
+      if (key === "edit" || key === "error" || key === "saved" || key === "add") {
+        continue;
+      }
+      qs.set(key, value);
+    }
+    if (pieceId) qs.set("edit", pieceId);
+    const query = qs.toString();
+    return `/${slug}/costumes/inventory${query ? `?${query}` : ""}${
+      pieceId ? `#piece-${pieceId}` : ""
+    }`;
+  };
 
   return (
     <section className="stack">
-      <CostumeTabs slug={slug} active="inventory" />
-      <h1>Inventory</h1>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">{eyebrow}</p>
+          <h1 className="page-h1">Inventory</h1>
+        </div>
+        {canWrite && (
+          <div className="page-head-actions">
+            <AddPiece
+              programId={program.id}
+              slug={slug}
+              sets={sets}
+              open={drawerOpen}
+              error={pageError}
+            />
+          </div>
+        )}
+      </div>
+
+      <SubTabs strip={costumeTabs(slug, "inventory")} />
+
       <p className="muted">
-        Program inventory — pieces persist across seasons. Props and set pieces
-        live here too; group them into sets and they flow through checkout like
-        any costume.
+        Everything the program owns, kept from year to year. Props and set pieces
+        live here too — put them in a set and they ride through checkout like any
+        costume.
       </p>
 
-      {saved && <p className="alert-ok">Saved.</p>}
-      {error === "piece" && (
-        <p className="alert-error">A piece needs a kind and a label.</p>
+      {one("saved") && <p className="alert-ok">Saved.</p>}
+      {((pageError && !drawerOpen) || unknownError) && (
+        <p className="alert-error">{pageError ?? "Something went wrong."}</p>
       )}
 
-      <form method="get" className="row-inline">
-        <label>
-          Kind
-          <select name="kind" defaultValue={kindFilter}>
-            <option value="all">All kinds</option>
-            {PIECE_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {PIECE_KIND_LABELS[k]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Set
-          <select name="set" defaultValue={setFilter}>
-            <option value="all">All sets</option>
-            <option value="">(no set)</option>
-            {sets.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Condition
-          <select name="condition" defaultValue={conditionFilter}>
-            <option value="all">All conditions</option>
-            {PIECE_CONDITIONS.map((c) => (
-              <option key={c} value={c}>
-                {PIECE_CONDITION_LABELS[c]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit" className="secondary">
-          Filter
-        </button>
-      </form>
+      <InventoryFilters
+        slug={slug}
+        sets={sets}
+        q={one("q") ?? ""}
+        kind={kindFilter ?? "all"}
+        set={setFilter}
+        condition={conditionFilter ?? "all"}
+      />
 
       <table className="members">
         <thead>
           <tr>
-            <th>Label</th>
-            <th>Kind</th>
+            <th>Name</th>
+            <th>What it is</th>
             <th>Size</th>
-            <th>Color</th>
+            <th>Colour</th>
             <th>Condition</th>
-            <th>Storage</th>
+            <th>Where it lives</th>
             <th>Set</th>
-            {canWrite && <th></th>}
+            {canWrite && <th className="table-action"></th>}
           </tr>
         </thead>
         <tbody>
           {pieces.map((p) => (
-            <tr key={p.id}>
-              <td>
-                {canWrite ? (
-                  <Link href={`/${slug}/costumes/pieces/${p.id}`}>{p.label}</Link>
-                ) : (
-                  p.label
-                )}
-              </td>
-              <td>{PIECE_KIND_LABELS[p.kind]}</td>
-              <td>{p.size_label ?? "—"}</td>
-              <td>{p.color ?? "—"}</td>
-              <td>
-                {p.condition === "retire" ? (
-                  <span className="muted">Retired</span>
-                ) : (
-                  PIECE_CONDITION_LABELS[p.condition] ?? p.condition
-                )}
-              </td>
-              <td>{p.storage_location ?? "—"}</td>
-              <td>{p.set_id ? (setName.get(p.set_id) ?? "—") : <span className="muted">—</span>}</td>
-              {canWrite && (
-                <td>
-                  {p.condition !== "retire" && (
-                    <form action={retirePiece}>
-                      <input type="hidden" name="programId" value={program.id} />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="pieceId" value={p.id} />
-                      <button
-                        type="submit"
-                        className="linklike danger"
-                        aria-label={`Retire ${p.label}`}
-                      >
-                        Retire
-                      </button>
-                    </form>
-                  )}
-                </td>
-              )}
-            </tr>
+            <PieceRow
+              key={p.id}
+              programId={program.id}
+              slug={slug}
+              piece={p}
+              setName={p.set_id ? setName.get(p.set_id) ?? null : null}
+              sets={sets}
+              canWrite={canWrite}
+              open={openId === p.id}
+              error={openId === p.id ? rowError : null}
+              rowHref={rowHref}
+              columns={columns}
+            />
           ))}
           {pieces.length === 0 && (
             <tr>
-              <td colSpan={canWrite ? 8 : 7} className="muted">
-                No pieces match.
+              <td colSpan={columns} className="muted">
+                Nothing matches those filters.
               </td>
             </tr>
           )}
         </tbody>
       </table>
-
-      {canWrite && (
-        <>
-          <h2>Add a piece</h2>
-          <form action={addPiece} className="stack">
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <div className="row-inline">
-              <label>
-                Kind
-                <select name="kind" required defaultValue="dress">
-                  {PIECE_KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {PIECE_KIND_LABELS[k]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Label
-                <input type="text" name="label" required placeholder="Dress #14, Riser 3" />
-              </label>
-              <label>
-                Size label
-                <input type="text" name="size_label" placeholder="M, 10, 32W" />
-              </label>
-              <label>
-                Color
-                <input type="text" name="color" />
-              </label>
-              <label>
-                Condition
-                <select name="condition" defaultValue="good">
-                  {PIECE_CONDITIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {PIECE_CONDITION_LABELS[c]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Storage location
-                <input type="text" name="storage_location" placeholder="Bin 3, Rack A" />
-              </label>
-              <label>
-                Set
-                <select name="set_id" defaultValue="">
-                  <option value="">(no set)</option>
-                  {sets.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label style={{ width: "100%" }}>
-              Notes
-              <input type="text" name="notes" />
-            </label>
-            <p className="muted">{NO_HEALTH_LABEL}</p>
-            <button type="submit">Add piece</button>
-          </form>
-        </>
-      )}
     </section>
   );
 }

@@ -4,7 +4,12 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
-import { ATTENDANCE_WRITE_ROLES, ATTENDANCE_STATUSES } from "@/lib/competitions";
+import {
+  ATTENDANCE_WRITE_ROLES,
+  ATTENDANCE_STATUSES,
+  resolveCompetitionId,
+} from "@/lib/competitions";
+import { programPath } from "@/lib/return-path";
 
 // Attendance edit (§5, T012). Writers: director/admin/costume_manager (matrix
 // "Attendance edit"). Upsert one row per (competition, student); the note rides
@@ -22,8 +27,29 @@ export async function setAttendance(formData: FormData): Promise<void> {
     : "expected";
   const note = String(formData.get("note") ?? "").trim() || null;
 
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  const path =
+    programPath(slug, `competitions/${competitionId}/attendance`) ?? "/";
   const supabase = await createClient();
-  await supabase
+
+  // Both ids come off the form. The row's unique key is (competition, student)
+  // with no program column, so an unresolved pair here squats a slot in another
+  // program's roster that they can neither see nor clear (Constitution I).
+  const [comp, { data: student }] = await Promise.all([
+    resolveCompetitionId(supabase, programId, competitionId),
+    supabase
+      .from("students")
+      .select("id")
+      .eq("id", studentId)
+      .eq("program_id", programId)
+      .maybeSingle(),
+  ]);
+  if (!comp || !student) redirect(`${path}?error=save`);
+
+  const { error } = await supabase
     .from("attendance")
     .upsert(
       {
@@ -35,7 +61,9 @@ export async function setAttendance(formData: FormData): Promise<void> {
       },
       { onConflict: "competition_id,student_id" },
     );
+  // A swallowed error here is a tap that silently does nothing, forever.
+  if (error) redirect(`${path}?error=save`);
 
-  revalidatePath(`/${slug}/competitions/${competitionId}/attendance`);
-  redirect(`/${slug}/competitions/${competitionId}/attendance`);
+  revalidatePath(path);
+  redirect(path);
 }

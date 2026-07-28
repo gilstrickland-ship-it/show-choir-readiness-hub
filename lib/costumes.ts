@@ -33,6 +33,15 @@ export const PIECE_KINDS = [
 ] as const;
 export type PieceKind = (typeof PIECE_KINDS)[number];
 
+// One parser per enum, shared by the pages that read them off the URL and the
+// actions that read them off a form. Two copies of "is this a real kind?" is how
+// a filter and a write drift into disagreeing about what the enum contains.
+export function parsePieceKind(raw: string | null | undefined): PieceKind | null {
+  return raw != null && (PIECE_KINDS as readonly string[]).includes(raw)
+    ? (raw as PieceKind)
+    : null;
+}
+
 // Props and set pieces ride the same inventory + checkout rails but skip student
 // assignment (§4) — they flow through checkout via a direct piece_id row.
 export const DIRECT_KINDS: readonly PieceKind[] = ["prop", "set_piece"];
@@ -62,6 +71,33 @@ export const PIECE_CONDITION_LABELS: Record<PieceCondition, string> = {
   retire: "Retire",
 };
 
+export function parsePieceCondition(
+  raw: string | null | undefined,
+): PieceCondition | null {
+  return raw != null && (PIECE_CONDITIONS as readonly string[]).includes(raw)
+    ? (raw as PieceCondition)
+    : null;
+}
+
+// Free-text inventory search ("where is dress 14?"). PostgREST's `or()` takes a
+// comma-separated FILTER STRING, so whatever is typed has to be neutralized
+// before it becomes part of that grammar: a comma would start a new filter, a
+// paren would close the group, and `%`, `*` and `_` are all ilike wildcards we
+// add ourselves (`_` matches any ONE character, so "dress_1" would quietly match
+// "dress-1" too). Strip that punctuation, collapse whitespace, and cap the
+// length — an inventory search is a label or a colour, never an expression.
+// Returns null for anything that leaves nothing to search on.
+export function pieceSearchTerm(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw
+    .replace(/[,()*%_\\"']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60)
+    .trim();
+  return cleaned || null;
+}
+
 export const ALTERATION_STATUSES = [
   "none",
   "needed",
@@ -83,18 +119,47 @@ export const OPEN_ALTERATION_STATUSES: readonly AlterationStatus[] = [
   "in_progress",
 ];
 
-// Quick status-advance on the alterations queue: needed → in_progress → done.
-export function nextAlterationStatus(
-  current: AlterationStatus,
-): AlterationStatus {
-  switch (current) {
-    case "needed":
-      return "in_progress";
-    case "in_progress":
-      return "done";
-    default:
-      return current;
-  }
+export function parseAlterationStatus(
+  raw: string | null | undefined,
+): AlterationStatus | null {
+  return raw != null && (ALTERATION_STATUSES as readonly string[]).includes(raw)
+    ? (raw as AlterationStatus)
+    : null;
+}
+
+// ---------------------------------------------------------------------------
+// Costume changes (the quick-change model)
+// ---------------------------------------------------------------------------
+
+// A quick-change column is the gap BETWEEN two costume sets, in performance
+// order: what comes off, what goes on. The sheet used to head each column with
+// the raw pair and nothing else, which reads as jargon to everyone except the
+// person who built the sets — so the label is derived here, once, and carries
+// its position ("Change 2") alongside the human names ("Opener → Ballad").
+export interface CostumeSetOrder {
+  id: string;
+  name: string;
+}
+
+export interface CostumeChange {
+  /** 1-based position in the show — what the sheet calls "Change N". */
+  number: number;
+  from: CostumeSetOrder;
+  to: CostumeSetOrder;
+  /** "Opener → Ballad" — the two set names, never their sort numbers. */
+  label: string;
+}
+
+// Consecutive pairs of an already-ordered set list. Fewer than two sets means
+// there is no change to staff, and the caller says so instead of drawing an
+// empty grid.
+export function costumeChanges(
+  sets: readonly CostumeSetOrder[],
+): CostumeChange[] {
+  return sets.slice(0, -1).map((from, i) => {
+    const to = sets[i + 1];
+    return { number: i + 1, from, to, label: `${from.name} → ${to.name}` };
+  });
 }
 
 // ---------------------------------------------------------------------------

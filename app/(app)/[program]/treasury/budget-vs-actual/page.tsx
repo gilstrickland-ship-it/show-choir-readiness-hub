@@ -5,32 +5,41 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { TREASURY_ROLES } from "@/lib/nav";
 import {
-  formatCents,
-  actualForLine,
-  lineVariance,
-  sumActuals,
+  lineActualsFromRows,
+  seasonTotalsFromRow,
+  commitmentTotalsFromRow,
+  commitmentLineTotalsFromRows,
+  pickSeasonBudget,
   type CategoryDirection,
-  type LedgerAmountRow,
+  type LineActual,
+  type LineCommitment,
+  type LedgerSeasonTotals,
+  type CommitmentTotals,
 } from "@/lib/treasury";
-import { TreasuryTabs } from "../TreasuryTabs";
+import { SubTabs } from "../../SubTabs";
+import { treasuryTabs } from "@/lib/subnav";
+import {
+  SeasonSummary,
+  StillAvailableStrip,
+  LineSection,
+  type CatRow,
+  type LineRow,
+} from "./PlanTables";
 
-// Budget vs Actual (T020). Per line: planned / actual (non-voided ledger sum) /
-// variance, grouped income then expense, category subtotals, and a season header
-// with planned in/out, actual in/out, and net. Read-only — no writes here.
-
-interface CatRow {
-  id: string;
-  name: string;
-  direction: CategoryDirection;
-  sort_order: number;
-}
-interface LineRow {
-  id: string;
-  category_id: string;
-  name: string;
-  planned_cents: number;
-  sort_order: number;
-}
+// Budget vs Actual (T020, replanned in spec 005 Wave 12): what the season
+// planned beside what actually cleared the ledger, line by line. Read-only —
+// no writes here, for any seat.
+//
+// A load-and-compose page: this file reads, the tables render (PlanTables), the
+// vocabulary lives with them. What it says out loud is the ledger's vocabulary
+// — money in, money out, spent so far, still available — because a treasurer
+// moving between the two screens should not have to translate.
+//
+// Actuals come from the same 0019 SQL aggregates the ledger page reads
+// (ledger_season_totals for the header, ledger_line_actuals per line), not from
+// a fetched entry list. Summing fetched rows meant both pages silently stopped
+// at PostgREST's 1000-row cap — and could stop at DIFFERENT rows, so the two
+// money screens could disagree with each other and neither would say so.
 
 export default async function BudgetVsActualPage({
   params,
@@ -51,42 +60,92 @@ export default async function BudgetVsActualPage({
   let budgetName: string | null = null;
   let cats: CatRow[] = [];
   let lines: LineRow[] = [];
-  let ledger: LedgerAmountRow[] = [];
+  let actualByLine = new Map<string, LineActual>();
+  let totals: LedgerSeasonTotals | null = null;
+  // The middle layer (spec 006): what each line has already promised, and the
+  // season roll-up of the same. Two more aggregates that fail on their own, so
+  // two more figures that go blank on their own rather than reading as "nothing
+  // is committed" — which on THIS page is the precise sentence the feature
+  // exists to stop a director believing.
+  let committedByLine = new Map<string, LineCommitment>();
+  let commitmentTotals: CommitmentTotals | null = null;
+  let commitmentsUnavailable = false;
+  // The per-line aggregate fails independently of the header aggregate, and its
+  // failure used to collapse into an empty map while the only banner keyed on
+  // the OTHER rpc — so every line printed "$0.00 actual" against a real planned
+  // figure, and every variance read as a full-budget underspend.
+  let actualsUnavailable = false;
+  // And the budget's own shape can fail on its own too. An empty category list
+  // renders as "No money-in categories yet." — which is a statement about the
+  // budget, not about the read, and it is false when the read is what failed.
+  let structureUnavailable = false;
 
   if (season) {
-    const { data: budget } = await supabase
+    // The season's budget: the ACTIVE one, else the newest. Chosen here rather
+    // than by `.order("status")`, which sorts the enum by declaration order and
+    // so preferred the DRAFT — the opposite of what the board PDF prints
+    // (lib/treasury pickSeasonBudget).
+    const { data: budgetRows } = await supabase
       .from("budgets")
-      .select("id, name")
+      .select("id, name, status")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
-      .order("status", { ascending: true })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const b = budget as { id: string; name: string } | null;
+      .order("created_at", { ascending: false });
+    const b = pickSeasonBudget(
+      (budgetRows as { id: string; name: string; status: string }[] | null) ?? [],
+    );
     budgetName = b?.name ?? null;
 
     if (b) {
-      const [{ data: catData }, { data: ledgerData }] = await Promise.all([
-        supabase
-          .from("budget_categories")
-          .select("id, name, direction, sort_order")
-          .eq("program_id", program.id)
-          .eq("budget_id", b.id)
-          .order("direction", { ascending: true })
-          .order("sort_order", { ascending: true }),
-        supabase
-          .from("ledger_entries")
-          .select("direction, amount_cents, voided_at, budget_line_id")
-          .eq("program_id", program.id)
-          .eq("season_id", season.id)
-          .is("voided_at", null),
-      ]);
-      cats = (catData as CatRow[] | null) ?? [];
-      ledger = (ledgerData as LedgerAmountRow[] | null) ?? [];
+      const [catRes, lineActualsRes, totalsRes, lineCommitRes, commitTotalsRes] =
+        await Promise.all([
+          supabase
+            .from("budget_categories")
+            .select("id, name, direction, sort_order")
+            .eq("program_id", program.id)
+            .eq("budget_id", b.id)
+            .order("direction", { ascending: true })
+            .order("sort_order", { ascending: true }),
+          supabase.rpc("ledger_line_actuals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+          supabase.rpc("ledger_season_totals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+          supabase.rpc("commitment_line_totals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+          supabase.rpc("commitment_totals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+        ]);
+      cats = (catRes.data as CatRow[] | null) ?? [];
+      structureUnavailable = !!catRes.error;
+      actualsUnavailable = !!lineActualsRes.error;
+      actualByLine = lineActualsRes.error
+        ? new Map()
+        : lineActualsFromRows(lineActualsRes.data);
+      const totalsRow = Array.isArray(totalsRes.data)
+        ? totalsRes.data[0]
+        : totalsRes.data;
+      totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
+      commitmentsUnavailable = !!lineCommitRes.error || !!commitTotalsRes.error;
+      committedByLine = lineCommitRes.error
+        ? new Map()
+        : commitmentLineTotalsFromRows(lineCommitRes.data);
+      const commitRow = Array.isArray(commitTotalsRes.data)
+        ? commitTotalsRes.data[0]
+        : commitTotalsRes.data;
+      commitmentTotals = commitTotalsRes.error
+        ? null
+        : commitmentTotalsFromRow(commitRow);
 
       if (cats.length > 0) {
-        const { data: lineData } = await supabase
+        const { data: lineData, error: lineError } = await supabase
           .from("budget_lines")
           .select("id, category_id, name, planned_cents, sort_order")
           .eq("program_id", program.id)
@@ -96,6 +155,7 @@ export default async function BudgetVsActualPage({
           )
           .order("sort_order", { ascending: true });
         lines = (lineData as LineRow[] | null) ?? [];
+        if (lineError) structureUnavailable = true;
       }
     }
   }
@@ -107,100 +167,24 @@ export default async function BudgetVsActualPage({
     linesByCat.set(l.category_id, arr);
   }
 
-  // Header totals: planned per direction (sum of line planned), actual per
-  // direction (non-voided ledger, tagged or not), net = actual in − actual out.
+  // Planned per direction — the sum of the budget's own line amounts, which are
+  // rows we have in hand and are always known.
   const plannedByDir: Record<CategoryDirection, number> = { income: 0, expense: 0 };
   for (const c of cats) {
     for (const l of linesByCat.get(c.id) ?? []) {
       plannedByDir[c.direction] += l.planned_cents;
     }
   }
-  const actual = sumActuals(ledger);
-
-  const section = (dir: CategoryDirection) => {
-    const secCats = cats.filter((c) => c.direction === dir);
-    return (
-      <div className="stack">
-        <h2>{dir === "income" ? "Income" : "Expense"}</h2>
-        <table className="members">
-          <thead>
-            <tr>
-              <th>Line</th>
-              <th className="num">Planned</th>
-              <th className="num">Actual</th>
-              <th className="num">Variance</th>
-            </tr>
-          </thead>
-          {secCats.map((c) => {
-              const catLines = linesByCat.get(c.id) ?? [];
-              let cPlanned = 0;
-              let cActual = 0;
-              const rows = catLines.map((l) => {
-                const a = actualForLine(l.id, dir, ledger);
-                cPlanned += l.planned_cents;
-                cActual += a;
-                return { l, a, v: lineVariance(l.planned_cents, a, dir) };
-              });
-              return (
-                <tbody key={c.id}>
-                  <tr>
-                    <td colSpan={4}>
-                      <strong>{c.name}</strong>
-                    </td>
-                  </tr>
-                  {rows.map(({ l, a, v }) => (
-                    <tr key={l.id}>
-                      <td style={{ paddingLeft: "1.5rem" }}>{l.name}</td>
-                      <td className="num">{formatCents(l.planned_cents)}</td>
-                      <td className="num">{formatCents(a)}</td>
-                      <td className="num">{formatCents(v)}</td>
-                    </tr>
-                  ))}
-                  {catLines.length === 0 && (
-                    <tr>
-                      <td className="muted" style={{ paddingLeft: "1.5rem" }}>
-                        No lines.
-                      </td>
-                      <td className="num">{formatCents(0)}</td>
-                      <td className="num">{formatCents(0)}</td>
-                      <td className="num">{formatCents(0)}</td>
-                    </tr>
-                  )}
-                  <tr>
-                    <td style={{ paddingLeft: "1.5rem" }} className="muted">
-                      {c.name} subtotal
-                    </td>
-                    <td className="num">{formatCents(cPlanned)}</td>
-                    <td className="num">{formatCents(cActual)}</td>
-                    <td className="num">
-                      {formatCents(lineVariance(cPlanned, cActual, dir))}
-                    </td>
-                  </tr>
-                </tbody>
-              );
-            })}
-            {secCats.length === 0 && (
-              <tbody>
-                <tr>
-                  <td colSpan={4} className="muted">
-                    No {dir} categories.
-                  </td>
-                </tr>
-              </tbody>
-            )}
-        </table>
-      </div>
-    );
-  };
 
   return (
     <section className="stack">
-      <TreasuryTabs slug={slug} active="bva" />
+      <SubTabs strip={treasuryTabs(slug, "bva")} />
       <h1>Budget vs Actual</h1>
       <p className="muted">
-        Planned versus what actually cleared the ledger (voided entries excluded).
-        Positive variance is favorable: under budget on expense, ahead of plan on
-        income.
+        What you planned, next to what actually happened. Voided entries never
+        count. Positive numbers are good news — money still available to spend,
+        or more taken in than planned; a negative number means the season has
+        gone past its plan.
       </p>
 
       {!season && <p className="alert-error">No active season.</p>}
@@ -211,68 +195,82 @@ export default async function BudgetVsActualPage({
         </p>
       )}
 
+      {/* Two aggregates and the budget's own shape feed this page and each can
+          fail alone. The banner names whichever one is missing, because the
+          figures it explains are blanks — and a blank nobody explained reads as
+          "there is no money here". */}
+      {season && budgetName && (!totals || actualsUnavailable) && (
+        <p className="alert-error">
+          {!totals && actualsUnavailable
+            ? "The season actuals could not be read just now, so the totals and every line's figures below are blank rather than wrong."
+            : !totals
+              ? "The season actuals could not be read just now, so the header totals below are blank rather than wrong."
+              : "The per-line actuals could not be read just now, so each line's figures below are blank rather than wrong."}{" "}
+          Reload to try again.
+        </p>
+      )}
+
+      {season && budgetName && structureUnavailable && (
+        <p className="alert-error">
+          The budget&apos;s categories and lines could not be read just now, so
+          this page is showing less of the budget than it has — not an empty
+          one. Reload to try again.
+        </p>
+      )}
+
+      {season && budgetName && commitmentsUnavailable && (
+        <p className="alert-error">
+          What this season has already committed could not be read just now, so
+          the committed and still-available figures are blank rather than wrong.
+          Treat &ldquo;spent so far&rdquo; as what has moved, not as what is
+          free — money already promised to a vendor is missing from this page
+          until it reloads.
+        </p>
+      )}
+
       {season && budgetName && (
         <>
-          <div className="detail-list">
-            <div>
-              <span className="muted">Budget</span>
-              <span>{budgetName}</span>
-            </div>
-            <div>
-              <span className="muted">Season</span>
-              <span>{season.label}</span>
-            </div>
-          </div>
+          <dl className="detail-list">
+            <dt>Budget</dt>
+            <dd>{budgetName}</dd>
+            <dt>Season</dt>
+            <dd>{season.label}</dd>
+          </dl>
 
-          <table className="members">
-            <thead>
-              <tr>
-                <th></th>
-                <th className="num">Planned</th>
-                <th className="num">Actual</th>
-                <th className="num">Variance</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Income</td>
-                <td className="num">{formatCents(plannedByDir.income)}</td>
-                <td className="num">{formatCents(actual.inCents)}</td>
-                <td className="num">
-                  {formatCents(
-                    lineVariance(plannedByDir.income, actual.inCents, "income"),
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>Expense</td>
-                <td className="num">{formatCents(plannedByDir.expense)}</td>
-                <td className="num">{formatCents(actual.outCents)}</td>
-                <td className="num">
-                  {formatCents(
-                    lineVariance(plannedByDir.expense, actual.outCents, "expense"),
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <strong>Net</strong>
-                </td>
-                <td className="num">
-                  <strong>
-                    {formatCents(plannedByDir.income - plannedByDir.expense)}
-                  </strong>
-                </td>
-                <td className="num">
-                  <strong>{formatCents(actual.netCents)}</strong>
-                </td>
-                <td className="num">—</td>
-              </tr>
-            </tbody>
-          </table>
+          {/* Planned is the sum of budget-line amounts — real numbers, unless
+              the read that fetched those lines is the thing that failed, in
+              which case the sum is zero for a reason that has nothing to do
+              with the budget. Then it is a blank, like every other figure this
+              page could not read. */}
+          {/* The headline, before the tables: planned → committed → spent →
+              still available. It is first because it is the question a director
+              arrives with, and because the tables underneath are the working
+              that produced it. */}
+          <StillAvailableStrip
+            slug={slug}
+            plannedOut={structureUnavailable ? null : plannedByDir.expense}
+            spentOut={totals?.outCents ?? null}
+            commitments={commitmentTotals}
+          />
 
-          {section("income")}
-          {section("expense")}
+          <SeasonSummary
+            plannedIn={structureUnavailable ? null : plannedByDir.income}
+            plannedOut={structureUnavailable ? null : plannedByDir.expense}
+            totals={totals}
+          />
+
+          {(["income", "expense"] as CategoryDirection[]).map((dir) => (
+            <LineSection
+              key={dir}
+              direction={dir}
+              cats={cats}
+              linesByCat={linesByCat}
+              actualByLine={actualByLine}
+              committedByLine={committedByLine}
+              unavailable={actualsUnavailable}
+              commitmentsUnavailable={commitmentsUnavailable}
+            />
+          ))}
         </>
       )}
     </section>

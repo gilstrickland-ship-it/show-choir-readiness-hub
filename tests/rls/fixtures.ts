@@ -68,6 +68,10 @@ const SLOT = {
   ledger_reconciliation: 53,
   competition_ensemble: 54,
   event_ensemble: 55,
+  // Commitments (0021): one spending purchase order and one expected-money row
+  // per program, both still 'requested' — the state a commitment is born in.
+  commitment: 56,
+  commitment_expected: 57,
   // A-only archived-season extras + ledger states (slots ≥ 60)
   competition_archived: 60,
   costume_set_archived: 61,
@@ -77,10 +81,18 @@ const SLOT = {
   ledger_voided: 65,
   ledger_audit_extra: 66,
   hosted_event_archived: 67,
+  // A live entry with NO budget line — what categorize_ledger_entry operates on.
+  ledger_uncategorized: 68,
   // Octv support user (is_support = true, NOT a member of any program). Slot in
   // both A and B id-spaces resolves to the same person only via the `S` export;
   // kept ≥ 70 so it never collides with per-program slots.
   support_user: 70,
+  // A-only commitment states (slots ≥ 71, clear of the support slot): one
+  // approved by the treasurer against the director's request — the shape the
+  // self-approval and revise-an-approved-document rules are proved on — and one
+  // on the archived season.
+  commitment_approved: 71,
+  commitment_archived: 72,
 } as const;
 
 type Slot = keyof typeof SLOT;
@@ -115,6 +127,7 @@ export interface ProgramIds {
   budgetCategory: string;
   budgetLine: string;
   ledgerLive: string;
+  ledgerUncategorized: string;
   ledgerAudit: string;
   shift: string;
   shiftSignup: string;
@@ -141,7 +154,11 @@ export interface ProgramIds {
   ledgerReconciliation: string;
   competitionEnsemble: string;
   eventEnsemble: string;
+  commitment: string;
+  commitmentExpected: string;
   // A-only
+  commitmentApproved: string;
+  commitmentArchived: string;
   competitionArchived: string;
   costumeSetArchived: string;
   budgetArchived: string;
@@ -184,6 +201,7 @@ function build(prefix: 'a' | 'b'): ProgramIds {
     budgetCategory: g('budget_category'),
     budgetLine: g('budget_line'),
     ledgerLive: g('ledger_live'),
+    ledgerUncategorized: g('ledger_uncategorized'),
     ledgerAudit: g('ledger_audit'),
     shift: g('shift'),
     shiftSignup: g('shift_signup'),
@@ -210,6 +228,10 @@ function build(prefix: 'a' | 'b'): ProgramIds {
     ledgerReconciliation: g('ledger_reconciliation'),
     competitionEnsemble: g('competition_ensemble'),
     eventEnsemble: g('event_ensemble'),
+    commitment: g('commitment'),
+    commitmentExpected: g('commitment_expected'),
+    commitmentApproved: g('commitment_approved'),
+    commitmentArchived: g('commitment_archived'),
     competitionArchived: g('competition_archived'),
     costumeSetArchived: g('costume_set_archived'),
     budgetArchived: g('budget_archived'),

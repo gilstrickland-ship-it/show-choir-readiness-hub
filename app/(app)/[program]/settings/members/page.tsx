@@ -1,52 +1,55 @@
-import Link from "next/link";
 import { headers } from "next/headers";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
-import type { Role } from "@/lib/auth";
-import { inviteMember, reRoleMember, removeMember } from "../actions";
-import { SettingsTabs } from "../SettingsTabs";
+import { ROLE_LABELS, type Role } from "@/lib/auth";
+import { readFlash, oneParam } from "@/lib/flash";
+import { inviteMember } from "../actions";
+import { SubTabs } from "../../SubTabs";
+import { settingsTabs } from "@/lib/subnav";
+import { Flash } from "../../Flash";
+import { StaffMemberRow, type StaffMember } from "./StaffMemberRow";
+import {
+  MEMBER_FLASH_MAPS,
+  staffMemberAnchor,
+  type MemberSection,
+} from "../shared";
 
-const ROLE_OPTIONS: readonly { value: Role; label: string }[] = [
-  { value: "director", label: "Director" },
-  { value: "admin", label: "Admin" },
-  { value: "treasurer", label: "Treasurer" },
-  { value: "costume_manager", label: "Costume manager" },
-  { value: "board_member", label: "Board member" },
+// Settings § Members (director/admin) — who has a seat in this program.
+//
+// Spec 005 Wave 13 / T164: the row-edit idiom every table in the app now uses.
+// The role dropdown and its Save used to live permanently open in a cell, with
+// Remove a tab-stop away in the next one; both are behind one Edit disclosure
+// now, and a refusal comes back to the row that produced it rather than to a
+// banner at the top of the list.
+//
+// The last-director guard lives in the actions (a program must never be left
+// with nobody who can run it) and its refusal renders inside the panel of the
+// row that tried, because that is where the reader is looking.
+
+const ROLE_OPTIONS: readonly Role[] = [
+  "director",
+  "admin",
+  "treasurer",
+  "costume_manager",
+  "board_member",
 ];
 
-const ROLE_LABEL: Record<string, string> = Object.fromEntries(
-  ROLE_OPTIONS.map((r) => [r.value, r.label]),
-);
+// Director is the seat every director-only control answers to, so only a
+// director hands it out (settings/actions mayGrant, which is the gate — this
+// only stops offering a choice that would be refused).
 
-// Friendly labels for the member status column (stored value unchanged).
-const STATUS_LABEL: Record<string, string> = {
-  invited: "Invited",
-  active: "Active",
-  removed: "Removed",
-};
-
-interface MemberRow {
-  id: string;
-  role: Role;
-  status: "invited" | "active" | "removed";
-  invited_email: string | null;
-  user_id: string | null;
-}
+const MEMBER_COLUMNS = 4;
 
 export default async function MembersPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    invited?: string;
-    saved?: string;
-    error?: string;
-    confirm?: string;
-    member?: string;
-  }>;
+  // A duplicated param (?edit=a&edit=b) arrives as an ARRAY, so every read goes
+  // through lib/flash's `oneParam` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role } = await getTenantContext(slug);
@@ -55,11 +58,30 @@ export default async function MembersPage({
       <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
     );
   }
-  const { invited, saved, error, confirm, member } = await searchParams;
-  // Removing a member cuts their access immediately — a first tap shows an inline
-  // confirm box (querystring round-trip, same idiom as the roster page) rather
-  // than firing on tap.
-  const removeConfirmMemberId = confirm === "remove_member" ? member ?? null : null;
+  const sp = await searchParams;
+  const one = (key: string): string | null => oneParam(sp, key);
+  const flash = readFlash<MemberSection>(sp, MEMBER_FLASH_MAPS);
+  const canGrantDirector = role === "director";
+  const inviteRoles = ROLE_OPTIONS.filter(
+    (r) => r !== "director" || canGrantDirector,
+  );
+
+  const openMemberId = one("edit");
+  const confirmRemove = one("confirm") === "remove";
+  const panelError =
+    flash.error?.section === "panel" ? flash.error.message : null;
+  const inviteError =
+    flash.error?.section === "invite" ? flash.error.message : null;
+
+  const base = `/${slug}/settings/members`;
+  const rowHref = (memberId: string, mode: "open" | "close" | "confirm"): string => {
+    const anchor = `#${staffMemberAnchor(memberId)}`;
+    if (mode === "close") return `${base}${anchor}`;
+    const id = encodeURIComponent(memberId);
+    return mode === "confirm"
+      ? `${base}?edit=${id}&confirm=remove${anchor}`
+      : `${base}?edit=${id}${anchor}`;
+  };
 
   const supabase = await createClient();
   const { data } = await supabase
@@ -68,7 +90,7 @@ export default async function MembersPage({
     .eq("program_id", program.id)
     .in("status", ["active", "invited"])
     .order("status", { ascending: true });
-  const members = (data as MemberRow[] | null) ?? [];
+  const members = (data as StaffMember[] | null) ?? [];
 
   // profiles has no FK from program_members (both point at auth.users), so it
   // can't be embedded — resolve display names in a second query and map by
@@ -86,15 +108,30 @@ export default async function MembersPage({
       nameByUserId.set(p.id, p.full_name);
     }
   }
+  const nameOf = (m: StaffMember): string =>
+    (m.user_id ? nameByUserId.get(m.user_id) : null) ?? m.invited_email ?? "—";
 
-  // Full invite link to copy when email delivery isn't configured.
+  // The invite id rides back on the redirect exactly once, the same way a freshly
+  // minted share URL does: it is the one moment the full link is worth showing,
+  // because email delivery may not be configured and this is how onboarding still
+  // works. `?invited=` is data, not a message.
+  const invitedId = one("invited");
   let inviteLink: string | null = null;
-  if (invited) {
+  if (invitedId) {
     const h = await headers();
     const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
     const proto = h.get("x-forwarded-proto") ?? "https";
-    inviteLink = `${proto}://${host}/invite/${invited}`;
+    inviteLink = `${proto}://${host}/invite/${encodeURIComponent(invitedId)}`;
   }
+
+  const activeCount = members.filter((m) => m.status === "active").length;
+  const invitedCount = members.filter((m) => m.status === "invited").length;
+  const summary =
+    members.length === 0
+      ? "Nobody yet"
+      : `${activeCount} with access${
+          invitedCount > 0 ? ` · ${invitedCount} invited` : ""
+        }`;
 
   return (
     <section className="stack">
@@ -105,34 +142,33 @@ export default async function MembersPage({
         </div>
       </div>
 
-      <SettingsTabs slug={slug} active="members" />
+      <SubTabs strip={settingsTabs(slug, "members")} />
 
-      {saved && <p className="alert-ok">Saved.</p>}
-      {invited && (
+      <div className="travel-section-head">
+        <h2>Who has a seat</h2>
+        <span className="travel-section-summary">{summary}</span>
+      </div>
+      <Flash flash={flash} section="page" />
+      <p className="muted">
+        Staff and board only — parents and students never have accounts.{" "}
+        {ROLE_LABELS.director} and {ROLE_LABELS.admin} can do everything;{" "}
+        {ROLE_LABELS.board_member} can only read.
+      </p>
+
+      {inviteLink && (
         <div className="alert-ok stack">
           <span>
-            Invite created. Share this link with the invitee:
+            Invite created. Send this link to the person you invited:
             <br />
             <code className="invite-link">{inviteLink}</code>
           </span>
           <span className="muted">
-            If they&apos;ve never set a password, tell them to open the link, choose
-            &ldquo;Email me a sign-in link,&rdquo; and enter{" "}
+            If they&apos;ve never set a password, tell them to open the link,
+            choose &ldquo;Email me a sign-in link,&rdquo; and enter{" "}
             <strong>this exact email address</strong> — the sign-in link lets them
             in without a password.
           </span>
         </div>
-      )}
-      {error === "last_director" && (
-        <p className="alert-error">
-          A program must keep at least one director. Assign another director first.
-        </p>
-      )}
-      {error === "invite" && (
-        <p className="alert-error">Enter a valid email and role.</p>
-      )}
-      {(error === "role" || error === "remove") && (
-        <p className="alert-error">Couldn&apos;t update that member.</p>
       )}
 
       <table className="members">
@@ -140,75 +176,31 @@ export default async function MembersPage({
           <tr>
             <th>Member</th>
             <th>Status</th>
-            <th>Role</th>
-            <th>Remove</th>
+            <th>Can do</th>
+            <th className="table-action">
+              <span className="muted">Edit</span>
+            </th>
           </tr>
         </thead>
         <tbody>
           {members.map((m) => (
-            <tr key={m.id}>
-              <td>
-                {(m.user_id ? nameByUserId.get(m.user_id) : null) ??
-                  m.invited_email ??
-                  "—"}
-                {m.status === "invited" && m.invited_email && (
-                  <span className="muted"> (invited)</span>
-                )}
-              </td>
-              <td>{STATUS_LABEL[m.status] ?? m.status}</td>
-              <td>
-                <form action={reRoleMember} className="row-inline">
-                  <input type="hidden" name="programId" value={program.id} />
-                  <input type="hidden" name="slug" value={slug} />
-                  <input type="hidden" name="memberId" value={m.id} />
-                  <select name="role" defaultValue={m.role} aria-label="Role">
-                    {ROLE_OPTIONS.map((r) => (
-                      <option key={r.value} value={r.value}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button type="submit" className="secondary">
-                    Update
-                  </button>
-                </form>
-              </td>
-              <td>
-                {removeConfirmMemberId === m.id ? (
-                  <div className="confirm-box stack">
-                    <p>
-                      Remove{" "}
-                      {(m.user_id ? nameByUserId.get(m.user_id) : null) ??
-                        m.invited_email ??
-                        "this member"}{" "}
-                      from the program? They&apos;ll lose access immediately.
-                    </p>
-                    <div className="row-inline">
-                      <form action={removeMember}>
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="memberId" value={m.id} />
-                        <button type="submit" className="danger">
-                          Confirm remove
-                        </button>
-                      </form>
-                      <Link href={`/${slug}/settings/members`}>Cancel</Link>
-                    </div>
-                  </div>
-                ) : (
-                  <Link
-                    href={`/${slug}/settings/members?confirm=remove_member&member=${m.id}`}
-                    className="linklike danger"
-                  >
-                    Remove
-                  </Link>
-                )}
-              </td>
-            </tr>
+            <StaffMemberRow
+              key={m.id}
+              programId={program.id}
+              slug={slug}
+              member={m}
+              name={nameOf(m)}
+              canGrantDirector={canGrantDirector}
+              open={openMemberId === m.id}
+              confirmRemove={openMemberId === m.id && confirmRemove}
+              error={openMemberId === m.id ? panelError : null}
+              columns={MEMBER_COLUMNS}
+              rowHref={rowHref}
+            />
           ))}
           {members.length === 0 && (
             <tr>
-              <td colSpan={4} className="muted">
+              <td colSpan={MEMBER_COLUMNS} className="muted">
                 No members yet.
               </td>
             </tr>
@@ -216,30 +208,29 @@ export default async function MembersPage({
         </tbody>
       </table>
 
-      <h2>Invite a member</h2>
-      <p className="muted">
-        Staff and board only. {ROLE_LABEL.director} and {ROLE_LABEL.admin} share
-        the same abilities; {ROLE_LABEL.board_member} is read-only.
-      </p>
-      <form action={inviteMember} className="stack">
-        <input type="hidden" name="programId" value={program.id} />
-        <input type="hidden" name="slug" value={slug} />
-        <label>
-          Email
-          <input type="email" name="email" required />
-        </label>
-        <label>
-          Role
-          <select name="role" defaultValue="admin">
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit">Send invite</button>
-      </form>
+      <details className="stack" open={Boolean(inviteError)}>
+        <summary className="people-disclosure">Invite someone — {summary}</summary>
+        <form action={inviteMember} className="stack settings-form">
+          <input type="hidden" name="programId" value={program.id} />
+          <input type="hidden" name="slug" value={slug} />
+          {inviteError && <p className="alert-error">{inviteError}</p>}
+          <label>
+            Email
+            <input type="email" name="email" required />
+          </label>
+          <label>
+            What they can do
+            <select name="role" defaultValue="admin">
+              {inviteRoles.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit">Send invite</button>
+        </form>
+      </details>
     </section>
   );
 }

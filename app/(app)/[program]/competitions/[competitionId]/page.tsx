@@ -5,39 +5,34 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import {
   COMPETITION_WRITE_ROLES,
-  ATTENDANCE_WRITE_ROLES,
-  COMMON_CAPTIONS,
   COMPETITION_STATUS_LABELS,
-  activeCaptions,
   competitionEnsembleIds,
   competitionRoster,
+  ensembleSetFingerprint,
+  type CompetitionStatus,
 } from "@/lib/competitions";
-import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { loadCompReadiness } from "@/lib/readiness";
-import { loadMealData } from "@/lib/pdf/queries";
-import {
-  formatDateInTz,
-  formatTimeInTz,
-  zonedWallToUtc,
-} from "@/lib/datetime";
-import { setAttendance } from "./attendance/actions";
-import {
-  updateCompetition,
-  reseedAttendance,
-  saveResults,
-} from "../actions";
+import { formatDateInTz, formatTimeInTz, zonedWallToUtc } from "@/lib/datetime";
+import { updateCompetition } from "../actions";
+import { buildGlanceCards, GlanceCards } from "./GlanceCards";
+import { CompEdit } from "./CompEdit";
+import { ResultsForm, type ResultsRow } from "./ResultsForm";
 
-// Competition command center (season-workflow redesign, "Competition" design
-// ref) — comp week on one page. The five old tabs (Overview/Attendance/
-// Itinerary/Meals/Packet) become anchored sections, plus a Results section and a
-// sticky readiness/papers/travel rail. The heavy full-list editing flows still
-// live on their own routes (attendance/itinerary/meals/packet); this page shows
-// the light view + the exact same server actions, and links out for the rest.
+// Competition hub — comp week on one page (spec 005 US7). A HUB, not a copy of
+// its spokes: the header says which competition and when, the readiness rail
+// says what still needs doing, and one glance card per area says where that job
+// stands and opens the route that owns it (attendance/, itinerary/, meals/,
+// packet/, comms/shifts, travel/).
 //
-// Same lean-by-construction rule the rest of the app follows: a section's
-// backing query runs ONLY when its flag is on AND the caller's role has read
-// access (shifts, packet, travel). Reads only here — every mutation reuses an
-// existing server action untouched.
+// What used to live here — an attendance toggle grid, an itinerary list, a meal
+// breakdown, a packet row — was a second, thinner implementation of four child
+// routes that never went away. It's gone. What stays is what no child route
+// owns: the competition's own details, who is going, and results.
+//
+// Reads only. Every status line comes from the readiness pass the rail runs
+// anyway plus two small rows (linked trip, results), so this page costs LESS
+// than it did with the inline sections: the itinerary, attendance-roster,
+// shifts, meal-breakdown and packet-document queries are all gone.
 
 export const dynamic = "force-dynamic";
 
@@ -47,37 +42,46 @@ function countdownDays(target: Date, now: Date): number {
   return ms <= 0 ? 0 : Math.floor(ms / 86_400_000);
 }
 
-const STATUS_PILL: Record<string, { label: string; cls: string }> = {
-  planned: { label: "Planned", cls: "planned" },
-  confirmed: { label: "Confirmed", cls: "confirmed" },
-  done: { label: "Done", cls: "done" },
+const STATUS_PILL: Record<CompetitionStatus, string> = {
+  planned: "planned",
+  confirmed: "confirmed",
+  done: "done",
 };
 
-const PACKET_CHIP: Record<string, { label: string; tone: string }> = {
-  queued: { label: "Queued", tone: "" },
-  running: { label: "Running", tone: "" },
-  review: { label: "Ready to review", tone: "warn" },
-  accepted: { label: "Parse accepted", tone: "ok" },
-  failed: { label: "Failed", tone: "alert" },
+// ---- Section-local errors (the Wave-2 trip-page contract) -------------------
+// A failed action comes back on `?error=`, and the message renders inside the
+// section that owns what failed, which is also the section that reopens. The
+// code rides in the URL, so the lookup is a lookup and not a walk up
+// Object.prototype (?error=constructor would otherwise hand React a function).
+type CompSlot = "details" | "results" | "confirm";
+
+const COMP_ERROR: Record<string, { slot: CompSlot; message: string }> = {
+  name: { slot: "details", message: "A competition needs a name." },
+  ensemble: {
+    slot: "details",
+    message: "Pick at least one ensemble for the competition.",
+  },
+  save: { slot: "details", message: "Couldn't save. Try again." },
+  nothing: {
+    slot: "details",
+    message: "Nothing was sent to change, so nothing changed.",
+  },
+  // The confirm screen's own message: the ensembles moved under the director
+  // between rendering the confirmation and pressing the button, so the diff it
+  // described is not the diff that would have been applied.
+  ensembles_moved: {
+    slot: "confirm",
+    message:
+      "Someone changed who is going while this confirmation was open. Here it is again, against the ensembles as they are now.",
+  },
+  results: { slot: "results", message: "Couldn't save those results." },
 };
 
-const ATT_TOGGLE: Array<{ key: "expected" | "partial" | "absent"; label: string }> = [
-  { key: "expected", label: "Expected" },
-  { key: "partial", label: "Partial" },
-  { key: "absent", label: "Absent" },
-];
-
-// How many attendance rows to show inline before "All N students →".
-const ATT_PREVIEW = 12;
-
-// Map a readiness check's outbound href to the matching on-page anchor.
-function anchorFor(href: string): string {
-  if (href.includes("/itinerary")) return "#itinerary";
-  if (href.includes("/attendance")) return "#attendance";
-  if (href.includes("/shifts")) return "#shifts";
-  if (href.includes("/meals")) return "#meals";
-  if (href.includes("/packet")) return "#packet";
-  return "#top";
+function compError(
+  code: string | null,
+): { slot: CompSlot; message: string } | null {
+  if (!code || !Object.hasOwn(COMP_ERROR, code)) return null;
+  return COMP_ERROR[code];
 }
 
 interface CompDetail {
@@ -88,47 +92,32 @@ interface CompDetail {
   venue_address: string | null;
   date: string | null;
   showchoir_com_url: string | null;
-  status: "planned" | "confirmed" | "done";
+  status: CompetitionStatus;
 }
 
-interface EnsembleRow {
-  id: string;
-  name: string;
-}
-
-interface ResultsRow {
-  placement: string | null;
-  division: string | null;
-  score: number | null;
-  captions: Record<string, unknown> | null;
-  notes: string | null;
-}
-
-export default async function CompetitionCommandCenter({
+export default async function CompetitionHub({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string }>;
-  searchParams: Promise<{
-    saved?: string;
-    created?: string;
-    error?: string;
-    reseeded?: string;
-    results?: string;
-    confirm?: string;
-    pending_ensembles?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?error=a&error=b), so every
+  // read goes through `one()` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, competitionId } = await params;
   const { program, role, flags } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
-  const canEditAttendance = ATTENDANCE_WRITE_ROLES.includes(role);
   const tz = program.timezone;
   const now = new Date();
-  const sp = await searchParams;
   const base = `/${slug}`;
   const compBase = `${base}/competitions/${competitionId}`;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
 
   const supabase = await createClient();
   const { data: compData } = await supabase
@@ -144,10 +133,13 @@ export default async function CompetitionCommandCenter({
 
   // Participating ensembles (junction, Feature 004). ≥1 for a well-formed comp;
   // an empty set only appears mid-edit and is treated as "not seeded yet".
-  const participatingEnsembleIds = await competitionEnsembleIds(supabase, competitionId);
+  const participatingEnsembleIds = await competitionEnsembleIds(
+    supabase,
+    competitionId,
+  );
   const hasEnsembles = participatingEnsembleIds.length > 0;
 
-  // ---- Readiness (shared 5-check helper — feeds both the rail + countdown) ---
+  // ---- Readiness: the rail AND every glance card's status line --------------
   const readiness = await loadCompReadiness(supabase, {
     programId: program.id,
     comp: {
@@ -172,203 +164,45 @@ export default async function CompetitionCommandCenter({
     daysOut = countdownDays(target, now);
   }
 
-  // Per-section gates (flag on AND role has read access).
-  const showShifts = flags.shifts && SHIFT_WRITE_ROLES.includes(role);
-  const showPacket = flags.packet_parse;
+  // Linked trip — one row, and only when the travel flag is on (the card links
+  // to /travel, which 404s without it).
   const showTravel = flags.travel;
-
-  // ---- Itinerary items ------------------------------------------------------
-  interface ItinItem {
-    id: string;
-    starts_at: string | null;
-    kind: string;
-    title: string | null;
-    location: string | null;
-    details: string | null;
-  }
-  let itinPublished = false;
-  let itinItems: ItinItem[] = [];
-  {
-    const { data: itinRow } = await supabase
-      .from("itineraries")
-      .select("id, status")
-      .eq("program_id", program.id)
-      .eq("competition_id", competitionId)
-      .maybeSingle();
-    const itin = itinRow as { id: string; status: string } | null;
-    itinPublished = itin?.status === "published";
-    if (itin) {
-      const { data: itemRows } = await supabase
-        .from("itinerary_items")
-        .select("id, starts_at, kind, title, location, details, sort_order")
-        .eq("itinerary_id", itin.id)
-        .eq("program_id", program.id)
-        .order("sort_order", { ascending: true })
-        .order("starts_at", { ascending: true, nullsFirst: false });
-      itinItems = (itemRows as (ItinItem & { sort_order: number })[] | null) ?? [];
-    }
-  }
-
-  // ---- Attendance rows (summary + inline preview) ---------------------------
-  interface AttRow {
-    student_id: string;
-    status: "expected" | "absent" | "partial";
-    note: string | null;
-    students: { first_name: string; last_name: string } | null;
-  }
-  const { data: attData } = await supabase
-    .from("attendance")
-    .select("student_id, status, note, students(first_name, last_name)")
-    .eq("program_id", program.id)
-    .eq("competition_id", competitionId);
-  const attRows = ((attData as AttRow[] | null) ?? []).slice().sort((a, b) => {
-    const an = `${a.students?.last_name ?? ""} ${a.students?.first_name ?? ""}`;
-    const bn = `${b.students?.last_name ?? ""} ${b.students?.first_name ?? ""}`;
-    return an.localeCompare(bn);
-  });
-  const attCounts = { expected: 0, partial: 0, absent: 0 } as Record<string, number>;
-  for (const a of attRows) attCounts[a.status] = (attCounts[a.status] ?? 0) + 1;
-  const attPreview = attRows.slice(0, ATT_PREVIEW);
-
-  // ---- Volunteer shifts -----------------------------------------------------
-  interface ShiftCard {
-    id: string;
-    title: string;
-    starts_at: string | null;
-    ends_at: string | null;
-    needed: number;
-    filled: number;
-  }
-  let shiftCards: ShiftCard[] = [];
-  if (showShifts) {
-    const { data: shiftRows } = await supabase
-      .from("shifts")
-      .select("id, title, starts_at, ends_at, needed_count")
-      .eq("program_id", program.id)
-      .eq("competition_id", competitionId)
-      .order("starts_at", { ascending: true, nullsFirst: false });
-    const rows =
-      (shiftRows as {
-        id: string;
-        title: string;
-        starts_at: string | null;
-        ends_at: string | null;
-        needed_count: number;
-      }[] | null) ?? [];
-    if (rows.length > 0) {
-      const { data: suData } = await supabase
-        .from("shift_signups")
-        .select("shift_id")
-        .eq("program_id", program.id)
-        .eq("status", "confirmed")
-        .in(
-          "shift_id",
-          rows.map((s) => s.id),
-        );
-      const filled = new Map<string, number>();
-      for (const su of (suData as { shift_id: string }[] | null) ?? []) {
-        filled.set(su.shift_id, (filled.get(su.shift_id) ?? 0) + 1);
-      }
-      shiftCards = rows.map((s) => ({
-        id: s.id,
-        title: s.title,
-        starts_at: s.starts_at,
-        ends_at: s.ends_at,
-        needed: s.needed_count,
-        filled: Math.min(s.needed_count, filled.get(s.id) ?? 0),
-      }));
-    }
-  }
-
-  // ---- Meal count (shared loader — same rule the meal PDF uses) -------------
-  const meal = await loadMealData(supabase, competitionId);
-
-  // ---- Host packet (latest document + parse) --------------------------------
-  interface PacketState {
-    fileName: string;
-    uploadedAt: string;
-    status: string | null;
-    parseId: string | null;
-  }
-  let packet: PacketState | null = null;
-  if (showPacket) {
-    const { data: docRow } = await supabase
-      .from("documents")
-      .select("id, storage_path, created_at")
-      .eq("program_id", program.id)
-      .eq("competition_id", competitionId)
-      .eq("kind", "host_packet")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const doc = docRow as
-      | { id: string; storage_path: string; created_at: string }
-      | null;
-    if (doc) {
-      const { data: parseRow } = await supabase
-        .from("packet_parses")
-        .select("id, status")
-        .eq("program_id", program.id)
-        .eq("competition_id", competitionId)
-        .eq("document_id", doc.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const parse = parseRow as { id: string; status: string } | null;
-      packet = {
-        fileName: doc.storage_path.split("/").pop() ?? "Host packet",
-        uploadedAt: doc.created_at,
-        status: parse?.status ?? null,
-        parseId: parse?.id ?? null,
-      };
-    }
-  }
-
-  // ---- Linked trip ----------------------------------------------------------
-  interface TripLink {
-    id: string;
-    name: string;
-    starts_on: string | null;
-    ends_on: string | null;
-    is_overnight: boolean;
-  }
-  let trip: TripLink | null = null;
+  let trip: { id: string; name: string; is_overnight: boolean } | null = null;
   if (showTravel) {
     const { data: tripRow } = await supabase
       .from("trips")
-      .select("id, name, starts_on, ends_on, is_overnight")
+      .select("id, name, is_overnight")
       .eq("program_id", program.id)
       .eq("competition_id", competitionId)
       .order("starts_on", { ascending: true, nullsFirst: false })
       .limit(1)
       .maybeSingle();
-    trip = (tripRow as TripLink | null) ?? null;
+    trip = (tripRow as { id: string; name: string; is_overnight: boolean } | null) ?? null;
   }
 
-  // ---- Results + edit-form scaffolding --------------------------------------
+  // Ensembles (names for the header chips + the Details checkboxes) and results.
   const { data: ensData } = await supabase
     .from("ensembles")
     .select("id, name")
     .eq("program_id", program.id)
     .order("sort_order", { ascending: true });
-  const ensembles = (ensData as EnsembleRow[] | null) ?? [];
+  const ensembles = (ensData as { id: string; name: string }[] | null) ?? [];
+  const ensembleName = new Map(ensembles.map((e) => [e.id, e.name]));
 
   const { data: resultsData } = await supabase
     .from("competition_results")
     .select("placement, division, score, captions, notes")
+    .eq("program_id", program.id)
     .eq("competition_id", competitionId)
     .maybeSingle();
   const results = resultsData as ResultsRow | null;
-  const chosenCaptions = new Set(activeCaptions(results?.captions));
-
-  const ensembleName = new Map(ensembles.map((e) => [e.id, e.name]));
 
   // ---- Ensemble-change confirmation (generalized invariant §9.2) ------------
-  // The edit form posts the intended NEW ensemble set as `pending_ensembles`
+  // The Details form posts the intended NEW ensemble set as `pending_ensembles`
   // (comma-joined) when a removal needs acknowledgement. Name the students who
   // would lose eligibility: members of a removed ensemble in NO remaining one.
-  const confirmEnsemble = sp.confirm === "ensemble" && canWrite;
-  const pendingEnsembleIds = (sp.pending_ensembles ?? "")
+  const confirmEnsemble = one("confirm") === "ensemble" && canWrite;
+  const pendingEnsembleIds = (one("pending_ensembles") ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
@@ -400,47 +234,82 @@ export default async function CompetitionCommandCenter({
           .select("id, first_name, last_name")
           .eq("program_id", program.id)
           .in("id", toRemove);
-        affectedNames = ((nameRows as { first_name: string; last_name: string }[] | null) ?? [])
+        affectedNames = (
+          (nameRows as { first_name: string; last_name: string }[] | null) ?? []
+        )
           .map((s) => `${s.last_name}, ${s.first_name}`)
           .sort((a, b) => a.localeCompare(b));
       }
     }
   }
 
-  const statusPill = STATUS_PILL[comp.status] ?? STATUS_PILL.planned;
+  // ---- Header + section summaries ------------------------------------------
+  const dateText = comp.date
+    ? formatDateInTz(`${comp.date}T12:00:00Z`, tz)
+    : "No date set";
   const metaLine = [
-    comp.date ? formatDateInTz(`${comp.date}T12:00:00Z`, tz) : "No date set",
+    dateText,
     comp.host_school,
     comp.venue_address,
     readiness.firstStart ? `call ${formatTimeInTz(readiness.firstStart, tz)}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
+  const detailsSummary = [dateText, comp.host_school, COMPETITION_STATUS_LABELS[comp.status]]
+    .filter(Boolean)
+    .join(" · ");
+  const scored = results && (results.placement || results.score !== null);
+  const resultsSummary = scored
+    ? [results?.placement, results?.score != null ? `${results.score}` : null]
+        .filter(Boolean)
+        .join(" · ")
+    : comp.status === "done"
+      ? "not recorded yet"
+      : "after the competition";
+
+  // A section's own disclosure opens on `?edit=`, and a failed save reopens the
+  // section that owns the message — the Season spine's popover contract.
+  const err = compError(one("error"));
+  const editKey = one("edit");
+  const detailsOpen = editKey === "details" || err?.slot === "details";
+  const resultsOpen = editKey === "results" || err?.slot === "results";
+
+  const cards = buildGlanceCards({
+    readiness,
+    base,
+    compBase,
+    tz,
+    showTravel,
+    trip,
+    results,
+    compDone: comp.status === "done",
+    resultsHref: `${compBase}?edit=results#results`,
+  });
 
   return (
-    <section className="comp" id="top">
+    <section className="comp">
       <p className="comp-back">
         <Link href={`${base}/season`}>← Season</Link>
       </p>
 
-      {sp.created && <p className="alert-ok">Competition created. Attendance seeded.</p>}
-      {sp.saved && <p className="alert-ok">Saved.</p>}
-      {sp.reseeded && (
-        <p className="alert-ok">Attendance reseeded (expected for everyone new).</p>
+      {one("created") && (
+        <p className="alert-ok">Competition created. Attendance seeded.</p>
       )}
-      {sp.results && <p className="alert-ok">Results saved.</p>}
-      {sp.error === "name" && <p className="alert-error">A competition needs a name.</p>}
-      {sp.error === "ensemble" && (
-        <p className="alert-error">Pick at least one ensemble for the competition.</p>
+      {one("saved") && <p className="alert-ok">Saved.</p>}
+      {one("reseeded") && (
+        <p className="alert-ok">
+          Everyone on the roster now has an attendance row.
+        </p>
       )}
-      {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
-      {sp.error === "results" && <p className="alert-error">Couldn&apos;t save results.</p>}
+      {one("results") && <p className="alert-ok">Results saved.</p>}
 
       {/* ---- Header ---- */}
       <div className="comp-head">
         <div className="comp-head-titles">
           <div className="comp-status-row">
-            <span className={`comp-status-pill ${statusPill.cls}`}>{statusPill.label}</span>
+            <span className={`comp-status-pill ${STATUS_PILL[comp.status]}`}>
+              {COMPETITION_STATUS_LABELS[comp.status]}
+            </span>
             {comp.status !== "done" && daysOut != null && (
               <span className="comp-countdown">
                 {daysOut === 0 ? "Today" : `In ${daysOut} day${daysOut === 1 ? "" : "s"}`}
@@ -450,7 +319,7 @@ export default async function CompetitionCommandCenter({
           <h1 className="comp-h1">{comp.name}</h1>
           <p className="comp-meta">{metaLine}</p>
           {hasEnsembles && (
-            <p className="row-inline" style={{ gap: "0.3rem", flexWrap: "wrap" }}>
+            <p className="comp-head-chips">
               {participatingEnsembleIds.map((eid) => (
                 <span className="chip" key={eid}>
                   {ensembleName.get(eid) ?? "?"}
@@ -461,7 +330,7 @@ export default async function CompetitionCommandCenter({
         </div>
         <div className="comp-head-actions">
           {canWrite && (
-            <Link href="#details" className="button-link secondary">
+            <Link href={`${compBase}?edit=details#details`} className="button-link secondary">
               Edit details
             </Link>
           )}
@@ -471,9 +340,20 @@ export default async function CompetitionCommandCenter({
         </div>
       </div>
 
-      {/* ---- Ensemble-change confirmation (generalized invariant §9.2) ---- */}
+      {/* ---- Ensemble-change confirmation (generalized invariant §9.2) ----
+          The form carries the competition, the ensembles being asked for, the
+          confirm flag, and a FINGERPRINT of the set this page just read — the
+          set the paragraph below describes. Everything else — the name, the
+          date, the season — is re-read server-side, so a confirmation typed five
+          minutes ago can't paste a stale record back over the record. The
+          fingerprint closes the other half of that: if someone else adds or
+          removes an ensemble while this is open, the action refuses rather than
+          applying a removal to an ensemble that was never on this screen. */}
       {confirmEnsemble && (
         <div className="stack confirm-box">
+          {err?.slot === "confirm" && (
+            <p className="alert-error">{err.message}</p>
+          )}
           <p>
             Set participating ensembles to <strong>{pendingNames || "none"}</strong>?
           </p>
@@ -496,17 +376,16 @@ export default async function CompetitionCommandCenter({
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="competitionId" value={comp.id} />
-            <input type="hidden" name="seasonId" value={comp.season_id} />
+            <input type="hidden" name="sparse" value="1" />
+            <input type="hidden" name="confirm_ensemble" value="1" />
+            <input
+              type="hidden"
+              name="ensembles_seen"
+              value={ensembleSetFingerprint(participatingEnsembleIds)}
+            />
             {pendingEnsembleIds.map((id) => (
               <input type="hidden" name="ensemble_ids" value={id} key={id} />
             ))}
-            <input type="hidden" name="confirm_ensemble" value="1" />
-            <input type="hidden" name="name" value={comp.name} />
-            <input type="hidden" name="host_school" value={comp.host_school ?? ""} />
-            <input type="hidden" name="venue_address" value={comp.venue_address ?? ""} />
-            <input type="hidden" name="date" value={comp.date ?? ""} />
-            <input type="hidden" name="showchoir_com_url" value={comp.showchoir_com_url ?? ""} />
-            <input type="hidden" name="status" value={comp.status} />
             <button type="submit" className="danger">
               Confirm &amp; update ensembles
             </button>
@@ -518,429 +397,34 @@ export default async function CompetitionCommandCenter({
       {/* ---- Body ---- */}
       <div className="comp-body">
         <div className="comp-main">
-          {/* ---- Itinerary ---- */}
-          <section className="comp-section" id="itinerary">
-            <div className="comp-section-head">
-              <h2>
-                Itinerary{" "}
-                <span className={`comp-chip ${itinPublished ? "ok" : ""}`}>
-                  {itinPublished ? "Published" : "Draft"}
-                </span>
-              </h2>
-              <div className="comp-section-links">
-                <Link href={`${compBase}/itinerary`}>
-                  {canWrite ? "Edit items" : "View items"}
-                </Link>
-                <Link href={`${compBase}/itinerary`}>Share link</Link>
-              </div>
-            </div>
-            {itinItems.length === 0 ? (
-              <p className="muted">
-                No itinerary items yet.{" "}
-                <Link href={`${compBase}/itinerary`}>
-                  {canWrite ? "Build the itinerary →" : "View the itinerary →"}
-                </Link>
-              </p>
-            ) : (
-              <div className="comp-rows">
-                {itinItems.map((item) => {
-                  const perform =
-                    item.kind === "perform" || /perform/i.test(item.title ?? "");
-                  const detail = [item.location, item.details].filter(Boolean).join(" · ");
-                  return (
-                    <div className="comp-itin-row" key={item.id}>
-                      <span className={`comp-itin-time${perform ? " perform" : ""}`}>
-                        {item.starts_at ? formatTimeInTz(item.starts_at, tz) : "—"}
-                      </span>
-                      <span className="comp-itin-body">
-                        <strong className={perform ? "perform" : ""}>
-                          {item.title ?? "Untitled"}
-                        </strong>
-                        {detail ? <span className="muted"> · {detail}</span> : null}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+          <GlanceCards cards={cards} />
 
-          {/* ---- Attendance ---- */}
-          <section className="comp-section" id="attendance">
-            <div className="comp-section-head">
-              <h2>Attendance</h2>
-              <span className="comp-att-summary">
-                {attCounts.expected} expected · {attCounts.partial} partial ·{" "}
-                {attCounts.absent} absent
-              </span>
-            </div>
-            {attRows.length === 0 ? (
-              <p className="muted">
-                No attendance rows yet.{" "}
-                {hasEnsembles
-                  ? "Reseed from Edit details below."
-                  : "Add at least one ensemble in Edit details, then reseed."}
-              </p>
-            ) : (
-              <div className="comp-rows">
-                {attPreview.map((r) => (
-                  <div className="comp-att-row" key={r.student_id}>
-                    <span className="comp-att-name">
-                      <strong>
-                        {r.students?.last_name}, {r.students?.first_name}
-                      </strong>
-                      {!canEditAttendance && (
-                        <span className="muted"> · {r.status}</span>
-                      )}
-                    </span>
-                    {canEditAttendance ? (
-                      <form action={setAttendance} className="comp-att-toggle">
-                        <input type="hidden" name="programId" value={program.id} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="competitionId" value={competitionId} />
-                        <input type="hidden" name="studentId" value={r.student_id} />
-                        <input
-                          type="text"
-                          name="note"
-                          defaultValue={r.note ?? ""}
-                          placeholder="Note"
-                          aria-label={`Note for ${r.students?.first_name}`}
-                          className="comp-att-note"
-                        />
-                        {ATT_TOGGLE.map((s) => (
-                          <button
-                            key={s.key}
-                            type="submit"
-                            name="status"
-                            value={s.key}
-                            className={`comp-toggle-btn ${s.key}${
-                              r.status === s.key ? " active" : ""
-                            }`}
-                          >
-                            {s.label}
-                          </button>
-                        ))}
-                      </form>
-                    ) : (
-                      r.note && <span className="muted">{r.note}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="comp-section-footer">
-              <Link href={`${compBase}/attendance`}>
-                All {attRows.length} student{attRows.length === 1 ? "" : "s"} →
-              </Link>
-              {canWrite && hasEnsembles && (
-                <form action={reseedAttendance}>
-                  <input type="hidden" name="programId" value={program.id} />
-                  <input type="hidden" name="slug" value={slug} />
-                  <input type="hidden" name="competitionId" value={comp.id} />
-                  <input type="hidden" name="seasonId" value={comp.season_id} />
-                  <button type="submit" className="linklike">
-                    Reseed attendance
-                  </button>
-                </form>
-              )}
-            </div>
-          </section>
+          <ResultsForm
+            programId={program.id}
+            slug={slug}
+            competitionId={comp.id}
+            results={results}
+            compDone={comp.status === "done"}
+            canWrite={canWrite}
+            summary={resultsSummary}
+            open={resultsOpen}
+            error={err?.slot === "results" ? err.message : null}
+          />
 
-          {/* ---- Volunteer shifts ---- */}
-          {showShifts && (
-            <section className="comp-section" id="shifts">
-              <div className="comp-section-head">
-                <h2>Volunteer shifts</h2>
-                <Link href={`${base}/comms/shifts`}>Manage in Comms →</Link>
-              </div>
-              {shiftCards.length === 0 ? (
-                <p className="muted">
-                  No volunteer shifts attached to this competition yet.{" "}
-                  <Link href={`${base}/comms/shifts`}>Add shifts →</Link>
-                </p>
-              ) : (
-                <div className="comp-shift-grid">
-                  {shiftCards.map((s) => {
-                    const open = Math.max(0, s.needed - s.filled);
-                    const pct = s.needed > 0 ? Math.round((s.filled / s.needed) * 100) : 100;
-                    const full = open === 0;
-                    const range = s.starts_at
-                      ? `${formatTimeInTz(s.starts_at, tz)}${
-                          s.ends_at ? ` – ${formatTimeInTz(s.ends_at, tz)}` : ""
-                        }`
-                      : "Time TBD";
-                    return (
-                      <div className="comp-shift-card" key={s.id}>
-                        <strong className="comp-shift-title">{s.title}</strong>
-                        <span className="comp-shift-time">{range}</span>
-                        <div className="comp-progress">
-                          <div
-                            className={`comp-progress-fill ${full ? "ok" : "warn"}`}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <span className={`comp-shift-count ${full ? "ok" : "warn"}`}>
-                          {full
-                            ? `Full (${s.filled} filled)`
-                            : `${open} of ${s.needed} spot${s.needed === 1 ? "" : "s"} open`}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* ---- Meal count ---- */}
-          <section className="comp-section" id="meals">
-            <h2>Meal count</h2>
-            <p className="comp-meal-rule">
-              A meal is counted for every student marked <strong>expected</strong> or{" "}
-              <strong>partial</strong>; only absent students are excluded.{" "}
-              <a href={`/api/pdf/meal?competition=${competitionId}`}>
-                Download meal count (PDF)
-              </a>
-            </p>
-            <div className="comp-meal-figures">
-              <span className="comp-meal-big">
-                <span className="comp-meal-num">{meal?.totalAttending ?? 0}</span>{" "}
-                <span className="muted">meals needed</span>
-              </span>
-              {(meal?.ensembles ?? []).map((e, i) => (
-                <span key={i} className="comp-meal-ens">
-                  {e.ensembleName} · <strong>{e.attending}</strong>{" "}
-                  <span className="muted">({e.absent} absent)</span>
-                </span>
-              ))}
-            </div>
-            {meal?.mealNote && <p className="comp-meal-note muted">Note: {meal.mealNote}</p>}
-          </section>
-
-          {/* ---- Host packet ---- */}
-          {showPacket && (
-            <section className="comp-section" id="packet">
-              <h2>Host packet</h2>
-              {packet ? (
-                <>
-                  <div className="comp-packet-row">
-                    <span className="comp-packet-file">
-                      {packet.fileName} · uploaded{" "}
-                      {formatDateInTz(packet.uploadedAt, tz)}
-                    </span>
-                    {packet.status &&
-                      (() => {
-                        const chip = PACKET_CHIP[packet.status];
-                        return chip ? (
-                          <span className={`comp-chip ${chip.tone}`}>{chip.label}</span>
-                        ) : null;
-                      })()}
-                    <Link
-                      href={
-                        packet.parseId &&
-                        (packet.status === "review" || packet.status === "accepted")
-                          ? `${compBase}/packet/${packet.parseId}/review`
-                          : `${compBase}/packet`
-                      }
-                    >
-                      View / re-review
-                    </Link>
-                    {canWrite && (
-                      <Link href={`${compBase}/packet`}>Upload another</Link>
-                    )}
-                  </div>
-                  <p className="muted comp-caption">
-                    AI drafts stay drafts — nothing lands on the itinerary until you
-                    accept it.
-                  </p>
-                </>
-              ) : (
-                <p className="muted">
-                  No host packet uploaded yet.
-                  {canWrite && (
-                    <>
-                      {" "}
-                      <Link href={`${compBase}/packet`}>Upload a packet →</Link>
-                    </>
-                  )}
-                </p>
-              )}
-            </section>
-          )}
-
-          {/* ---- Results ---- */}
-          <section className="comp-section" id="results">
-            <h2>Results</h2>
-            {comp.status !== "done" && !results ? (
-              <p className="muted">
-                Flip status to <strong>Done</strong> after the competition to record
-                placement and captions — they land in the trophy case.
-              </p>
-            ) : canWrite ? (
-              <form action={saveResults} className="stack">
-                <input type="hidden" name="programId" value={program.id} />
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="competitionId" value={comp.id} />
-                <div className="row-inline">
-                  <label>
-                    Placement
-                    <input
-                      type="text"
-                      name="placement"
-                      defaultValue={results?.placement ?? ""}
-                      placeholder="Grand Champion, 2nd Runner-Up…"
-                    />
-                  </label>
-                  <label>
-                    Division
-                    <input type="text" name="division" defaultValue={results?.division ?? ""} />
-                  </label>
-                  <label>
-                    Score
-                    <input
-                      type="number"
-                      step="0.01"
-                      name="score"
-                      className="num"
-                      defaultValue={results?.score ?? ""}
-                    />
-                  </label>
-                </div>
-                <fieldset className="stack">
-                  <legend>Caption awards</legend>
-                  <div className="row-inline">
-                    {COMMON_CAPTIONS.map((name) => (
-                      <label key={name} className="row-inline">
-                        <input
-                          type="checkbox"
-                          name={`caption_${name}`}
-                          defaultChecked={chosenCaptions.has(name)}
-                        />
-                        {name}
-                      </label>
-                    ))}
-                  </div>
-                  <label>
-                    Add more (comma-separated)
-                    <input
-                      type="text"
-                      name="captions_extra"
-                      placeholder="Best Ballad, Judges' Choice"
-                    />
-                  </label>
-                </fieldset>
-                <label>
-                  Notes
-                  <textarea name="notes" rows={2} defaultValue={results?.notes ?? ""} />
-                </label>
-                <button type="submit">Save results</button>
-              </form>
-            ) : results ? (
-              <dl className="detail-list">
-                <dt>Placement</dt>
-                <dd>{results.placement ?? "—"}</dd>
-                <dt>Score</dt>
-                <dd>{results.score ?? "—"}</dd>
-                <dt>Captions</dt>
-                <dd>{activeCaptions(results.captions).join(", ") || "—"}</dd>
-              </dl>
-            ) : (
-              <p className="muted">No results recorded.</p>
-            )}
-          </section>
-
-          {/* ---- Edit details (disclosure target for the header action) ---- */}
-          <section className="comp-section comp-details" id="details">
-            <h2>Edit details</h2>
-            {canWrite && ensembles.length === 0 ? (
-              <p className="muted">
-                A competition attaches to an ensemble so it can seed attendance,
-                meals, and checkout.{" "}
-                <Link href={`${base}/roster/ensembles`}>Create an ensemble first</Link>,
-                then set it here.
-              </p>
-            ) : canWrite ? (
-              <form action={updateCompetition} className="stack">
-                <input type="hidden" name="programId" value={program.id} />
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="competitionId" value={comp.id} />
-                <input type="hidden" name="seasonId" value={comp.season_id} />
-                <div className="row-inline">
-                  <label>
-                    Name
-                    <input type="text" name="name" defaultValue={comp.name} required />
-                  </label>
-                  <label>
-                    Date
-                    <input type="date" name="date" defaultValue={comp.date ?? ""} />
-                  </label>
-                  <label>
-                    Status
-                    <select name="status" defaultValue={comp.status}>
-                      <option value="planned">Planned</option>
-                      <option value="confirmed">Confirmed</option>
-                      <option value="done">Done</option>
-                    </select>
-                  </label>
-                </div>
-                <fieldset className="stack">
-                  <legend>Ensembles</legend>
-                  <div className="row-inline" style={{ flexWrap: "wrap" }}>
-                    {ensembles.map((e) => (
-                      <label key={e.id} className="row-inline">
-                        <input
-                          type="checkbox"
-                          name="ensemble_ids"
-                          value={e.id}
-                          defaultChecked={participatingEnsembleIds.includes(e.id)}
-                        />
-                        {e.name}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-                <div className="row-inline">
-                  <label>
-                    Host school
-                    <input type="text" name="host_school" defaultValue={comp.host_school ?? ""} />
-                  </label>
-                  <label>
-                    Venue address
-                    <input
-                      type="text"
-                      name="venue_address"
-                      defaultValue={comp.venue_address ?? ""}
-                    />
-                  </label>
-                  <label>
-                    showchoir.com URL
-                    <input
-                      type="url"
-                      name="showchoir_com_url"
-                      defaultValue={comp.showchoir_com_url ?? ""}
-                    />
-                  </label>
-                </div>
-                <p className="muted">
-                  Adding an ensemble seeds its members (expected). Removing one asks
-                  for confirmation, then drops attendance and comp-scoped checkouts
-                  only for students in no remaining ensemble.
-                </p>
-                <button type="submit">Save changes</button>
-              </form>
-            ) : (
-              <dl className="detail-list">
-                <dt>Date</dt>
-                <dd>{comp.date ? formatDateInTz(`${comp.date}T12:00:00Z`, tz) : "—"}</dd>
-                <dt>Host</dt>
-                <dd>{comp.host_school ?? "—"}</dd>
-                <dt>Venue</dt>
-                <dd>{comp.venue_address ?? "—"}</dd>
-                <dt>Status</dt>
-                <dd>{COMPETITION_STATUS_LABELS[comp.status]}</dd>
-              </dl>
-            )}
-          </section>
+          <CompEdit
+            programId={program.id}
+            slug={slug}
+            comp={comp}
+            ensembles={ensembles}
+            participatingIds={participatingEnsembleIds}
+            ensemblesHref={`${base}/roster/ensembles`}
+            canWrite={canWrite}
+            hasEnsembles={hasEnsembles}
+            tz={tz}
+            summary={detailsSummary}
+            open={detailsOpen}
+            error={err?.slot === "details" ? err.message : null}
+          />
         </div>
 
         {/* ---- Right rail ---- */}
@@ -953,11 +437,7 @@ export default async function CompetitionCommandCenter({
               </span>
             </div>
             {readiness.checks.map((c, i) => (
-              <Link
-                className={`comp-readiness-row ${c.ok ? "" : c.tone}`}
-                href={anchorFor(c.href)}
-                key={i}
-              >
+              <Link className={`comp-readiness-row ${c.ok ? "" : c.tone}`} href={c.href} key={i}>
                 <span className={`status-dot ${c.tone}`} aria-hidden="true" />
                 <span>{c.label}</span>
               </Link>
@@ -966,7 +446,6 @@ export default async function CompetitionCommandCenter({
 
           <div className="comp-card">
             <h3>Papers &amp; links</h3>
-            <a href={`/api/pdf/packet?competition=${competitionId}`}>Parent packet PDF ↓</a>
             <a href={`/api/pdf/meal?competition=${competitionId}`}>Meal count PDF ↓</a>
             <Link href={`${compBase}/itinerary`}>Itinerary share link →</Link>
             <p className="muted comp-caption">
@@ -974,29 +453,6 @@ export default async function CompetitionCommandCenter({
               needed.
             </p>
           </div>
-
-          {showTravel && (
-            <div className="comp-card">
-              <h3>Travel</h3>
-              {trip ? (
-                <>
-                  <div className="comp-travel-name">{trip.name}</div>
-                  <div className="muted comp-travel-meta">
-                    {trip.is_overnight ? "Overnight trip" : "Day trip"}
-                    {trip.starts_on
-                      ? ` · ${formatDateInTz(`${trip.starts_on}T12:00:00Z`, tz)}`
-                      : ""}
-                  </div>
-                  <Link href={`${base}/travel/${trip.id}`}>Bus rosters →</Link>
-                </>
-              ) : (
-                <p className="comp-travel-empty">
-                  <span className="status-dot alert" aria-hidden="true" />
-                  No trip yet — <Link href={`${base}/travel`}>create trip</Link>
-                </p>
-              )}
-            </div>
-          )}
         </aside>
       </div>
     </section>

@@ -71,6 +71,71 @@ export interface ParseResult {
 }
 
 // ----------------------------------------------------------------------------
+// One reviewable list of everything the parse decided (spec 005 T137a)
+// ----------------------------------------------------------------------------
+// A preview used to report its findings in three unrelated shapes: a red
+// "Skipped columns" box above the table, a grey chip inside a cell for rows that
+// were combined, and an "Excluded rows" bullet list underneath. Three taxonomies
+// for one question — "what did this do to my spreadsheet, and what do I do about
+// it?" — so a director scanning for problems had three places to look and no way
+// to tell which mattered. This flattens them into one ordered list, each entry
+// naming where it happened, what happened, and the next move.
+//
+// Pure and DB-free like everything else here, so the list is unit-tested rather
+// than assembled inside a component.
+
+export type ImportIssueKind = "column" | "excluded" | "combined";
+
+export interface ImportIssue {
+  kind: ImportIssueKind;
+  /** Where in the spreadsheet: a column header, or "Row 12" / "Rows 4, 5". */
+  where: string;
+  /** What the parse did, in the director's terms. */
+  what: string;
+  /** The next move, or null when there is nothing to do. */
+  fix: string | null;
+  /** True when data did NOT make it in — the entries worth acting on first. */
+  blocking: boolean;
+}
+
+function rowLabel(rows: readonly number[]): string {
+  return rows.length === 1 ? `Row ${rows[0]}` : `Rows ${rows.join(", ")}`;
+}
+
+// Excluded rows first (a student is missing), then dropped columns (a field is
+// missing), then merges (nothing is missing — it just isn't obvious). Within a
+// kind the source order is kept, so the list reads down the spreadsheet.
+export function importIssues(result: ParseResult): ImportIssue[] {
+  const excluded: ImportIssue[] = result.errors.map((e) => ({
+    kind: "excluded",
+    where: `Row ${e.row}`,
+    what: e.message,
+    fix: "Fix that row in your spreadsheet and import the file again.",
+    blocking: true,
+  }));
+
+  const columns: ImportIssue[] = result.skippedColumns.map((c) => ({
+    kind: "column",
+    where: c.header,
+    what: c.reason,
+    fix: null,
+    blocking: true,
+  }));
+
+  const combined: ImportIssue[] = result.rows
+    .filter((r) => r.mergedRowCount > 0)
+    .map((r) => ({
+      kind: "combined",
+      where: rowLabel(r.sourceRows),
+      what: `${r.lastName}, ${r.firstName} appeared on ${r.sourceRows.length} rows — the parent contacts on them were combined into one student.`,
+      fix: "Nothing to do, unless these are two different students with the same name and grad year.",
+      blocking: false,
+    }));
+
+  return [...excluded, ...columns, ...combined];
+}
+
+// ----------------------------------------------------------------------------
 // Column mapping
 // ----------------------------------------------------------------------------
 

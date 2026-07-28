@@ -4,9 +4,11 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
+import { flag, type FlaggableProgram } from "@/lib/flags";
 import { ANNOUNCEMENT_WRITE_ROLES } from "@/lib/comms";
 import { sendAnnouncementCore } from "@/lib/comms-send";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
+import { programPath } from "@/lib/return-path";
 
 // Send an announcement (§8, T038). Immediate: creates the announcement (status
 // 'sent'), then fans out one announcement_sends row per deduped recipient,
@@ -22,6 +24,18 @@ function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
 }
 
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+function commsPath(slug: string): string {
+  return programPath(slug, "comms") ?? "/";
+}
+
+function announcementsPath(slug: string): string {
+  return programPath(slug, "comms/announcements") ?? "/";
+}
+
 export async function sendAnnouncement(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -32,9 +46,47 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
   const bodyMd = str(formData, "body_md");
   const ensembleId = str(formData, "ensemble_id") || null;
 
-  if (!subject || !bodyMd) redirect(`/${slug}/comms/announcements?error=empty`);
+  if (!subject || !bodyMd) redirect(`${announcementsPath(slug)}?error=empty`);
 
   const supabase = await createClient();
+
+  // The `announcements` flag gates the channel, not just the page (spec 005
+  // US9-4, Constitution VIII: flags are evaluated server-side). The route 404s
+  // when it is off, so the only way to reach this line with the flag down is a
+  // POST to the action itself — which is exactly the case a flag has to hold.
+  const { data: progData } = await supabase
+    .from("programs")
+    .select("tier, feature_overrides")
+    .eq("id", programId)
+    .maybeSingle();
+  const announcementsOn = flag(
+    (progData as FlaggableProgram | null) ?? { tier: "prep", feature_overrides: null },
+    "announcements",
+  );
+  if (!announcementsOn) redirect(commsPath(slug));
+
+  // Both ids come off the form and the write policy checks only the row's own
+  // program_id, so resolve them inside THIS program first (Constitution I).
+  // Otherwise an announcement can be pinned to another program's season or
+  // ensemble — a row they can neither see nor delete, which then blocks them
+  // from ever deleting that ensemble. It also mails nobody, because
+  // computeRecipients is program-scoped: an honest director who somehow gets
+  // here deserves the error rather than a "sent" that reached no one.
+  const inProgram = async (table: string, id: string): Promise<boolean> => {
+    const { data } = await supabase
+      .from(table)
+      .select("id")
+      .eq("id", id)
+      .eq("program_id", programId)
+      .maybeSingle();
+    return Boolean(data);
+  };
+  if (seasonId && !(await inProgram("seasons", seasonId))) {
+    redirect(`${announcementsPath(slug)}?error=season`);
+  }
+  if (ensembleId && !(await inProgram("ensembles", ensembleId))) {
+    redirect(`${announcementsPath(slug)}?error=ensemble`);
+  }
 
   // Create the announcement (sent).
   const { data: annData, error: annErr } = await supabase
@@ -50,7 +102,7 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     })
     .select("id")
     .maybeSingle();
-  if (annErr || !annData) redirect(`/${slug}/comms/announcements?error=save`);
+  if (annErr || !annData) redirect(`${announcementsPath(slug)}?error=save`);
   const announcementId = (annData as { id: string }).id;
 
   // Async path: enqueue the fan-out and return immediately (the announcement is
@@ -60,8 +112,8 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
       name: "announcement/send",
       data: { programId, announcementId, seasonId, ensembleId, subject, bodyMd },
     });
-    revalidatePath(`/${slug}/comms/announcements`);
-    redirect(`/${slug}/comms/announcements?done=1&queued=1`);
+    revalidatePath(announcementsPath(slug));
+    redirect(`${announcementsPath(slug)}?done=1&queued=1`);
   }
 
   // Inline fallback (no Inngest): run the same core now and report counts.
@@ -74,8 +126,8 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     bodyMd,
   });
 
-  revalidatePath(`/${slug}/comms/announcements`);
+  revalidatePath(announcementsPath(slug));
   redirect(
-    `/${slug}/comms/announcements?done=1&sent=${sent}&skipped=${skipped}&failed=${failed}`,
+    `${announcementsPath(slug)}?done=1&sent=${sent}&skipped=${skipped}&failed=${failed}`,
   );
 }

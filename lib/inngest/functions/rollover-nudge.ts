@@ -3,7 +3,7 @@ import { inngest } from "@/lib/inngest/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email";
 import { appBaseUrl } from "@/lib/tokens";
-import { formatDateInTz } from "@/lib/datetime";
+import { formatDateInTz, zonedDateKey } from "@/lib/datetime";
 
 // Season rollover-nudge cron (§10 Inngest list, T037). A spring reminder: for
 // each program whose ACTIVE season ends within ~90 days and that has NOT already
@@ -39,8 +39,6 @@ export const rolloverNudgeCron = inngest.createFunction(
       const supabase = createAdminClient();
       const now = new Date();
       const horizon = new Date(now.getTime() + NUDGE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-      const horizonKey = horizon.toISOString().slice(0, 10);
-      const todayKey = now.toISOString().slice(0, 10);
 
       const { data: progRows } = await supabase
         .from("programs")
@@ -51,6 +49,14 @@ export const rolloverNudgeCron = inngest.createFunction(
       let emailsSent = 0;
 
       for (const p of programs) {
+        // `seasons.ends_on` is a plain calendar day, so the two keys it is
+        // compared against are the program's own calendar days — not UTC's. This
+        // cron fires at 9am Central, where a UTC key is still the same date, but
+        // the window edge is a date comparison and every other date comparison
+        // in the app is now the program's (spec 005 Wave 14).
+        const todayKey = zonedDateKey(now, p.timezone);
+        const horizonKey = zonedDateKey(horizon, p.timezone);
+
         // Active season for the program.
         const { data: activeRow } = await supabase
           .from("seasons")

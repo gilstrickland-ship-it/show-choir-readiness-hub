@@ -2,12 +2,29 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { importIssues, type ImportIssue } from "@/lib/roster/import";
 import { previewImport, commitImport, type PreviewResult, type CommitResult } from "./actions";
 
 // The only interactive surface in the roster (Constitution: 'use client' only
-// where genuinely needed). Reads the chosen file client-side, posts its TEXT to
-// the server for parsing, renders the preview, then commits. The commit re-parses
-// the same text server-side — the client never sends parsed rows.
+// where genuinely needed — this one reads a file the user picked). Reads the
+// chosen file client-side, posts its TEXT to the server for parsing, renders the
+// preview, then commits. The commit re-parses the same text server-side — the
+// client never sends parsed rows, and the role check lives in both actions.
+//
+// Wave 6 gave the three phases a name and a number. The flow was always
+// choose → check → import, but nothing said so: a director who picked a file got
+// a table and a button, with no sense of where they were or what was left. And
+// what the parse found arrived in three unrelated shapes — a red box of skipped
+// columns, a grey chip inside a table cell, a bullet list of excluded rows —
+// which is now one list, worst first (lib/roster/import.ts `importIssues`).
+
+const STEPS = ["Choose your file", "Check the preview", "Import"] as const;
+
+const ISSUE_WORD: Record<ImportIssue["kind"], string> = {
+  excluded: "Not imported",
+  column: "Column dropped",
+  combined: "Rows combined",
+};
 
 export function ImportClient({ programId }: { programId: string }) {
   const router = useRouter();
@@ -46,9 +63,45 @@ export function ImportClient({ programId }: { programId: string }) {
   }
 
   const validCount = preview?.rows.length ?? 0;
+  const step = committed ? 3 : preview ? 2 : 1;
+  const issues = preview ? importIssues(preview) : [];
+  const blocking = issues.filter((i) => i.blocking).length;
 
   return (
     <div className="stack">
+      <nav className="import-steps" aria-label="Import steps">
+        <p className="eyebrow">
+          Step {step} of {STEPS.length} — {STEPS[step - 1]}
+        </p>
+        <ol>
+          {STEPS.map((label, i) => {
+            const n = i + 1;
+            const state = n < step ? "done" : n === step ? "now" : "todo";
+            return (
+              <li
+                key={label}
+                className={`import-step ${state}`}
+                aria-current={state === "now" ? "step" : undefined}
+              >
+                <span className="import-step-mark" aria-hidden="true">
+                  {state === "done" ? "✓" : "•"}
+                </span>
+                {n}. {label}
+                <span className="import-step-state">
+                  {" "}
+                  —{" "}
+                  {state === "done"
+                    ? "done"
+                    : state === "now"
+                      ? "you are here"
+                      : "not yet"}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
+
       <label>
         Choose a CSV file
         <input type="file" accept=".csv,text/csv" onChange={onFile} />
@@ -65,7 +118,9 @@ export function ImportClient({ programId }: { programId: string }) {
           <p className={committed.ok ? "alert-ok" : "alert-error"}>{committed.message}</p>
           {committed.errorCount > 0 && (
             <p className="muted">
-              {committed.errorCount} row(s) with errors were skipped.
+              {committed.errorCount} row{committed.errorCount === 1 ? "" : "s"} with
+              problems {committed.errorCount === 1 ? "was" : "were"} left out. Fix
+              them in your spreadsheet and import that file again.
             </p>
           )}
         </div>
@@ -73,28 +128,55 @@ export function ImportClient({ programId }: { programId: string }) {
 
       {preview && (
         <div className="stack">
-          {preview.skippedColumns.length > 0 && (
-            <div className="alert-error">
-              <strong>Skipped columns</strong>
-              <ul>
-                {preview.skippedColumns.map((c) => (
-                  <li key={c.header}>
-                    {c.header} — {c.reason}
+          <h2>
+            {validCount} student{validCount === 1 ? "" : "s"} ready to import
+          </h2>
+          <p className="muted">
+            Nothing is saved yet. Size columns found:{" "}
+            {preview.sizeKeys.join(", ") || "none"}.
+          </p>
+
+          {issues.length > 0 && (
+            <div className="stack import-issues">
+              <h3>
+                {issues.length} thing{issues.length === 1 ? "" : "s"} to look at
+                {blocking > 0 && (
+                  <span className="muted"> · {blocking} kept data out</span>
+                )}
+              </h3>
+              {/* A list, not a table: four columns of prose squeeze to three
+                  words a line on a phone, and every entry here IS prose. */}
+              <ul className="import-issue-list">
+                {issues.map((issue, i) => (
+                  <li
+                    key={`${issue.kind}-${issue.where}-${i}`}
+                    className={`import-issue ${issue.blocking ? "blocking" : ""}`}
+                  >
+                    <p className="import-issue-head">
+                      <span
+                        className={`family-link ${issue.blocking ? "bouncing" : "delivering"}`}
+                      >
+                        <span
+                          className={`status-dot ${issue.blocking ? "alert" : "ok"}`}
+                          aria-hidden="true"
+                        />
+                        {ISSUE_WORD[issue.kind]}
+                      </span>
+                      <strong>{issue.where}</strong>
+                    </p>
+                    <p>{issue.what}</p>
+                    <p className="muted">{issue.fix ?? "Nothing to do."}</p>
                   </li>
                 ))}
               </ul>
             </div>
           )}
 
-          <p className="muted">
-            Size columns found: {preview.sizeKeys.join(", ") || "none"}.
-          </p>
-
-          <h2>
-            Preview — {validCount} student{validCount === 1 ? "" : "s"} ready
-          </h2>
           {validCount === 0 ? (
-            <p className="muted">No valid students to import.</p>
+            <p className="muted">
+              Nothing in this file can be imported yet. Work through the list
+              above, then choose the file again.
+            </p>
           ) : (
             <table className="members">
               <thead>
@@ -103,7 +185,7 @@ export function ImportClient({ programId }: { programId: string }) {
                   <th>Grad</th>
                   <th>Sizes</th>
                   <th>Guardians</th>
-                  <th>Source</th>
+                  <th>From</th>
                 </tr>
               </thead>
               <tbody>
@@ -118,40 +200,22 @@ export function ImportClient({ programId }: { programId: string }) {
                         .map(([k, v]) => `${k}:${v}`)
                         .join(", ") || "—"}
                     </td>
-                    <td>
-                      {r.guardians.length}
-                      {r.mergedRowCount > 0 && (
-                        <span
-                          className="chip"
-                          title="This student appeared on more than one row — the extra rows' parent contacts were combined."
-                        >
-                          combined from {r.mergedRowCount} rows
-                        </span>
-                      )}
+                    <td>{r.guardians.length}</td>
+                    <td className="muted">
+                      row{r.sourceRows.length === 1 ? "" : "s"}{" "}
+                      {r.sourceRows.join(", ")}
                     </td>
-                    <td className="muted">row {r.sourceRows.join(", ")}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
 
-          {preview.errors.length > 0 && (
-            <div className="stack">
-              <h3>Excluded rows ({preview.errors.length})</h3>
-              <ul>
-                {preview.errors.map((err, i) => (
-                  <li key={i} className="muted">
-                    Row {err.row}: {err.message}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
           {validCount > 0 && (
             <button type="button" onClick={onCommit} disabled={pending}>
-              {pending ? "Importing…" : `Import ${validCount} student${validCount === 1 ? "" : "s"}`}
+              {pending
+                ? "Importing…"
+                : `Import ${validCount} student${validCount === 1 ? "" : "s"}`}
             </button>
           )}
         </div>

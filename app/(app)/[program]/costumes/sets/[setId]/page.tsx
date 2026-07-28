@@ -12,16 +12,29 @@ import {
 } from "@/lib/costumes";
 import { assignPieceToSet, removePieceFromSet } from "../../actions";
 
-// Set detail (T009) — attach pieces to this set (set_id re-pointing) and detach
-// them. Pieces are program inventory; a piece belongs to at most one set at a
-// time. This is the season-regrouping surface (§4).
+// What is in this set — put pieces in, take them out. Pieces are program
+// inventory and belong to at most one set at a time, so this is the season
+// regrouping surface (§4). Everything else about a set (its name, its ensemble,
+// its place in the show) is edited where it is used, in Assignments → Set
+// settings.
 
 interface PieceRow {
   id: string;
   kind: PieceKind;
   label: string;
   size_label: string | null;
-  set_id: string | null;
+}
+
+const ERR: Record<string, string> = {
+  piece: "That piece isn't part of this program. Reload the page and try again.",
+  save: "Couldn't save. Try again.",
+};
+
+// The code rides in the URL, so the lookup must be a lookup and not a walk up
+// Object.prototype — `?error=constructor` would otherwise hand React a function.
+function message(code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(ERR, code) ? ERR[code] : null;
 }
 
 export default async function CostumeSetDetailPage({
@@ -29,7 +42,7 @@ export default async function CostumeSetDetailPage({
   searchParams,
 }: {
   params: Promise<{ program: string; setId: string }>;
-  searchParams: Promise<{ saved?: string; error?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, setId } = await params;
   const { program, role } = await getTenantContext(slug);
@@ -40,22 +53,28 @@ export default async function CostumeSetDetailPage({
     );
   }
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
-  const { saved, error } = await searchParams;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const error = message(one("error"));
 
   const supabase = await createClient();
   const { data: setData } = await supabase
     .from("costume_sets")
-    .select("id, name, ensemble_id")
+    .select("id, name")
     .eq("id", setId)
     .eq("program_id", program.id)
     .maybeSingle();
-  const set = setData as { id: string; name: string; ensemble_id: string | null } | null;
+  const set = setData as { id: string; name: string } | null;
   if (!set) notFound();
 
-  // Pieces already in this set, plus unassigned pieces available to attach.
+  // Pieces already in this set, plus the ones free to go in.
   const { data: inSetData } = await supabase
     .from("costume_pieces")
-    .select("id, kind, label, size_label, set_id")
+    .select("id, kind, label, size_label")
     .eq("program_id", program.id)
     .eq("set_id", setId)
     .order("label", { ascending: true });
@@ -63,7 +82,7 @@ export default async function CostumeSetDetailPage({
 
   const { data: freeData } = await supabase
     .from("costume_pieces")
-    .select("id, kind, label, size_label, set_id")
+    .select("id, kind, label, size_label")
     .eq("program_id", program.id)
     .is("set_id", null)
     .neq("condition", "retire")
@@ -72,19 +91,26 @@ export default async function CostumeSetDetailPage({
 
   return (
     <section className="stack">
-      <p>
-        <Link href={`/${slug}/costumes/sets`}>← Sets</Link>
-      </p>
-      <h1>{set.name} — pieces</h1>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">
+            <Link href={`/${slug}/costumes/assignments?set=${setId}`}>
+              ← Assignments
+            </Link>{" "}
+            · {inSet.length} piece{inSet.length === 1 ? "" : "s"}
+          </p>
+          <h1 className="page-h1">{set.name}</h1>
+        </div>
+      </div>
 
-      {saved && <p className="alert-ok">Saved.</p>}
-      {error === "piece" && <p className="alert-error">Couldn&apos;t update the piece. Try again.</p>}
+      {one("saved") && <p className="alert-ok">Saved.</p>}
+      {error && <p className="alert-error">{error}</p>}
 
       <table className="members">
         <thead>
           <tr>
-            <th>Label</th>
-            <th>Kind</th>
+            <th>Name</th>
+            <th>What it is</th>
             <th>Size</th>
             {canWrite && <th></th>}
           </tr>
@@ -104,8 +130,12 @@ export default async function CostumeSetDetailPage({
                     <input type="hidden" name="slug" value={slug} />
                     <input type="hidden" name="setId" value={setId} />
                     <input type="hidden" name="pieceId" value={p.id} />
-                    <button type="submit" className="linklike danger">
-                      Remove
+                    <button
+                      type="submit"
+                      className="linklike danger"
+                      aria-label={`Take ${p.label} out of ${set.name}`}
+                    >
+                      Take out
                     </button>
                   </form>
                 </td>
@@ -115,7 +145,7 @@ export default async function CostumeSetDetailPage({
           {inSet.length === 0 && (
             <tr>
               <td colSpan={canWrite ? 4 : 3} className="muted">
-                No pieces in this set yet.
+                Nothing in this set yet.
               </td>
             </tr>
           )}
@@ -124,11 +154,12 @@ export default async function CostumeSetDetailPage({
 
       {canWrite && (
         <>
-          <h2>Attach a piece</h2>
+          <h2>Put a piece in</h2>
           {free.length === 0 ? (
             <p className="muted">
-              No unassigned pieces available. Add pieces in Inventory, or detach
-              one from another set first.
+              Every piece is already in a set. Add pieces in{" "}
+              <Link href={`/${slug}/costumes/inventory`}>Inventory</Link>, or take
+              one out of another set first.
             </p>
           ) : (
             <form action={assignPieceToSet} className="stack">
@@ -146,7 +177,7 @@ export default async function CostumeSetDetailPage({
                   ))}
                 </select>
               </label>
-              <button type="submit">Attach to set</button>
+              <button type="submit">Put it in</button>
             </form>
           )}
         </>

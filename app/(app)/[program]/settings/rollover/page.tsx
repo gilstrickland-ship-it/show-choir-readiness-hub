@@ -3,92 +3,89 @@ import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/server";
-import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
-import { archiveSeason, unarchiveSeason } from "../actions";
-import { ArchivedBanner } from "../../ArchivedBanner";
-import { SettingsTabs } from "../SettingsTabs";
+import { readFlash, oneParam } from "@/lib/flash";
+import { resolveRolloverScreen, rolloverProgress, ROLLOVER_STEP_LABELS } from "@/lib/seasons";
+import {
+  commitmentTotalsFromRow,
+  formatCents,
+  type CommitmentTotals,
+} from "@/lib/treasury";
+import { SubTabs } from "../../SubTabs";
+import { settingsTabs } from "@/lib/subnav";
+import { Flash } from "../../Flash";
+import { RolloverSteps, rolloverStepCaption } from "./RolloverSteps";
+import { StudentsStep } from "./StudentsStep";
+import { CostumesStep } from "./CostumesStep";
+import { SeasonsTable, type SeasonRow } from "./SeasonsTable";
+import { ROLLOVER_ANCHOR, ROLLOVER_FLASH_MAPS, type RolloverSection } from "./shared";
 import {
   createRolloverSeason,
   confirmEnsembles,
-  rolloverStudents,
-  repointCostumeSets,
   activateNewSeason,
 } from "./actions";
 
-// Season rollover wizard + archive (§3, §9.4, T028). director/admin. The wizard
-// is a linear step flow driven by ?step= and ?newSeason=; the archive controls at
-// the bottom freeze a past season read-only (RLS enforces it) and unarchive it.
-
-const STEPS = ["new", "ensembles", "students", "costumes", "activate", "archive"] as const;
-type Step = (typeof STEPS)[number];
-
-const ERR: Record<string, string> = {
-  label: "A season label is required (e.g. 2027-28).",
-  create: "Could not create the season. Try again.",
-  activate: "Could not activate the new season. Try again.",
-  archive: "Could not archive that season.",
-  unarchive: "Could not unarchive that season.",
-};
+// Settings → Seasons (§3, §9.4, T028). director/admin. Two things live here:
+// the rollover into next year, and the archive that freezes a past season
+// read-only.
+//
+// Rollover-only since spec 005 US3 — starting a FIRST season is one submit on
+// the Season/Today card — so nothing here special-cases "you have no seasons".
+// What the flow does branch on is whether there is a season to roll FROM, which
+// is a real difference a director can see, and since T165 the step indicator
+// says so: with nothing to carry across the flow really is two steps, and it now
+// counts two rather than numbering its screens 1 and 5.
 
 export default async function RolloverPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    step?: string;
-    newSeason?: string;
-    error?: string;
-    archived?: string;
-    unarchived?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?error=a&error=b), so this
+  // is typed as what it really is and every read goes through `one()`.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   if (!SETTINGS_ROLES.includes(role)) {
     return (
       <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
     );
   }
   const sp = await searchParams;
+  const one = (key: string): string | null => oneParam(sp, key);
   const isDirector = role === "director";
+  const tz = program.timezone;
 
-  const step: Step = (STEPS as readonly string[]).includes(sp.step ?? "")
-    ? (sp.step as Step)
-    : "new";
-  const newSeasonId = sp.newSeason ?? "";
+  const newSeasonId = one("newSeason") ?? "";
+  const flash = readFlash<RolloverSection>(sp, ROLLOVER_FLASH_MAPS);
 
   const supabase = await createClient();
 
-  // All seasons (for the archive section + wizard summaries).
+  // All seasons (for the archive table + the wizard's summaries).
   const { data: seasonRows } = await supabase
     .from("seasons")
     .select("id, label, starts_on, ends_on, is_active, archived_at")
     .eq("program_id", program.id)
     .order("starts_on", { ascending: false, nullsFirst: false })
     .order("label", { ascending: false });
-  const seasons =
-    (seasonRows as {
-      id: string;
-      label: string;
-      starts_on: string | null;
-      ends_on: string | null;
-      is_active: boolean;
-      archived_at: string | null;
-    }[] | null) ?? [];
+  const seasons = (seasonRows as SeasonRow[] | null) ?? [];
   const newSeason = seasons.find((s) => s.id === newSeasonId) ?? null;
 
-  // First-season framing: when nothing exists to roll *from* (no prior season
-  // besides the one this wizard is creating), the carry-forward steps have no
-  // source data. We present the flow as "Start your first season" and the
-  // create action jumps straight to activate. Excluding newSeasonId keeps this
-  // correct on every step — at "new" it counts all seasons, later it ignores the
-  // just-created one.
-  const isFirstSeason = seasons.filter((s) => s.id !== newSeasonId).length === 0;
+  // Is there anything to carry ACROSS? Counted the same way createRolloverSeason
+  // counts it — every season that isn't the one being made — so the indicator
+  // promises the path the action will actually take. (Reading the ACTIVE season
+  // instead would disagree with it for a program whose only prior season is
+  // inactive.)
+  const hasPrior = seasons.some((s) => s.id !== newSeasonId);
+  // One resolution of "which screen", used by BOTH the indicator and the branch
+  // below, so a `?step=` naming a screen this program's path doesn't have can't
+  // render one form while the indicator counts another.
+  const screen = resolveRolloverScreen(one("step") ?? "", hasPrior);
+  const progress = rolloverProgress(screen, hasPrior);
 
-  // Data needed only for the interactive steps.
+  // Data needed only by the interactive steps.
   const ensembles =
-    step === "ensembles" || step === "students"
+    screen === "ensembles" || screen === "students"
       ? ((
           await supabase
             .from("ensembles")
@@ -97,6 +94,34 @@ export default async function RolloverPage({
             .order("sort_order", { ascending: true })
         ).data as { id: string; name: string; sort_order: number }[] | null) ?? []
       : [];
+
+  // What the season being left still has promised (spec 006 R7). The last step
+  // of a rollover is the natural moment to sweep it: open commitments carried
+  // into a new year are a NAMED audit finding, and once the app is looking at
+  // the new season nobody opens the old one's list again.
+  //
+  // IT CLOSES NOTHING. Closing releases the remainder back to a budget line, and
+  // a balance that re-inflates on its own hides under-delivery — the release has
+  // to be somebody's decision (R4). So this counts, says what it means, and
+  // links to the list.
+  //
+  // One SQL aggregate, the same one the commitments page and the board snapshot
+  // read, and a failed read renders nothing rather than "0 open".
+  let leftOpen: CommitmentTotals | null = null;
+  if (flags.treasury && season && screen === "activate") {
+    const { data, error } = await supabase.rpc("commitment_totals", {
+      p_program_id: program.id,
+      p_season_id: season.id,
+    });
+    leftOpen = error
+      ? null
+      : commitmentTotalsFromRow(Array.isArray(data) ? data[0] : data);
+  }
+  const stillOpen = leftOpen && leftOpen.openCount + leftOpen.expectedCount > 0;
+
+  const title = progress.finished
+    ? "You're rolled over"
+    : ROLLOVER_STEP_LABELS[progress.steps[progress.position! - 1].key];
 
   return (
     <section className="stack">
@@ -107,44 +132,44 @@ export default async function RolloverPage({
         </div>
       </div>
 
-      <SettingsTabs slug={slug} active="seasons" />
+      <SubTabs strip={settingsTabs(slug, "seasons")} />
       <p className="muted">
-        Create your first season below, roll over into next year, and archive past
-        seasons to freeze them read-only.
+        Every summer you start the year again: name the new season, say who is
+        coming back, and switch the app over. Nothing from the old year is
+        deleted — you archive it at the end and it stays readable forever.
       </p>
 
-      {sp.error && <p className="alert-error">{ERR[sp.error] ?? "Something went wrong."}</p>}
-      {sp.archived && <p className="alert-ok">Season archived — it is now read-only.</p>}
-      {sp.unarchived && <p className="alert-ok">Season unarchived.</p>}
+      {/* --------------------------- The rollover --------------------------- */}
+      <section id={ROLLOVER_ANCHOR.wizard} className="panel stack">
+        <div className="travel-section-head">
+          <h2>{title}</h2>
+          <span className="travel-section-summary">
+            {rolloverStepCaption(progress)}
+          </span>
+        </div>
+        <RolloverSteps progress={progress} />
+        <Flash flash={flash} section="wizard" />
 
-      {/* --- Wizard --- */}
-      <div className="confirm-box stack" style={{ width: "100%" }}>
-        {isFirstSeason ? (
+        {season && !progress.finished && (
           <p className="muted">
-            Starting your first season. There&apos;s nothing to carry over from a
-            prior year, so you go straight from creating the season to activating
-            it — add students, ensembles, and competitions afterward from Today.
-          </p>
-        ) : (
-          <p className="muted">
-            Rolling over from{" "}
-            <strong>{season ? season.label : "no active season"}</strong>.
-            Ensembles carry forward automatically; you choose which students
-            return, re-point costume sets, then activate the new season.
+            Rolling over from <strong>{season.label}</strong>. Your groups come
+            along on their own; you choose who is returning, copy your costume set
+            names, then switch the app to the new season.
           </p>
         )}
 
-        {step === "new" && (
-          <form action={createRolloverSeason} className="stack">
+        {screen === "new" && (
+          <form action={createRolloverSeason} className="stack settings-form">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
-            <h2>
-              {isFirstSeason
-                ? "Create your first season"
-                : "Step 1 · Create the new season"}
-            </h2>
+            <p className="muted">
+              Name it the way you say it out loud — most programs write a school
+              year, like 2027-28. Dates are optional and you can fill them in
+              later. Making it does not switch anything over: your current season
+              keeps running until the last step.
+            </p>
             <label>
-              Season label
+              Season name
               <input type="text" name="label" placeholder="2027-28" required />
             </label>
             <div className="row-inline">
@@ -157,42 +182,47 @@ export default async function RolloverPage({
                 <input type="date" name="ends_on" />
               </label>
             </div>
-            <button type="submit">Create season &amp; continue</button>
+            <button type="submit">Create it and keep going</button>
           </form>
         )}
 
-        {step === "ensembles" && (
+        {screen === "ensembles" && (
           <form action={confirmEnsembles} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="newSeasonId" value={newSeasonId} />
-            <h2>Step 2 · Ensembles</h2>
             <p className="muted">
-              Ensembles are program-level and carry forward automatically. The new
-              season will use these:
+              Your groups belong to the program, not to one year, so they come
+              across on their own — there is nothing to do here but check the
+              list. The new season will use these:
             </p>
             <ul>
               {ensembles.map((e) => (
                 <li key={e.id}>{e.name}</li>
               ))}
-              {ensembles.length === 0 && <li className="muted">No ensembles yet.</li>}
+              {ensembles.length === 0 && (
+                <li className="muted">
+                  No groups yet — you can add them any time from People →
+                  Ensembles.
+                </li>
+              )}
             </ul>
-            <button type="submit">Continue</button>
+            <button type="submit">Looks right, keep going</button>
           </form>
         )}
 
-        {step === "students" && (
+        {screen === "students" && (
           <StudentsStep
             slug={slug}
             programId={program.id}
             newSeasonId={newSeasonId}
-            seasonId={season?.id ?? null}
+            fromSeasonId={season?.id ?? null}
             ensembles={ensembles}
             supabase={supabase}
           />
         )}
 
-        {step === "costumes" && (
+        {screen === "costumes" && (
           <CostumesStep
             slug={slug}
             programId={program.id}
@@ -202,316 +232,93 @@ export default async function RolloverPage({
           />
         )}
 
-        {step === "activate" && (
+        {screen === "activate" && stillOpen && season && (
+          <div className="alert-error">
+            <p>
+              <strong>
+                {season.label} still has{" "}
+                {leftOpen!.openCount > 0
+                  ? `${leftOpen!.openCount} open commitment${leftOpen!.openCount === 1 ? "" : "s"} holding ${formatCents(leftOpen!.openCommittedCents)} out of its budget`
+                  : ""}
+                {leftOpen!.openCount > 0 && leftOpen!.expectedCount > 0 ? ", and " : ""}
+                {leftOpen!.expectedCount > 0
+                  ? `${leftOpen!.expectedCount} still expected to come in (${formatCents(leftOpen!.openExpectedCents)})`
+                  : ""}
+                .
+              </strong>
+              {leftOpen!.staleCount > 0
+                ? ` ${leftOpen!.staleCount} of them ${leftOpen!.staleCount === 1 ? "is" : "are"} already past the date ${leftOpen!.staleCount === 1 ? "it was" : "they were"} needed.`
+                : ""}
+            </p>
+            <p>
+              Switching seasons does not close any of them and nothing here will
+              close them for you — releasing what is left is a decision somebody
+              makes, one purchase order at a time. Left open, they stay against{" "}
+              {season.label} and they are the first thing an audit asks about.{" "}
+              <Link href={`/${slug}/treasury/commitments`}>
+                Go through {season.label}&apos;s commitments
+              </Link>{" "}
+              first if you can — you can also come back to them afterwards.
+            </p>
+          </div>
+        )}
+
+        {screen === "activate" && (
           <form action={activateNewSeason} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="newSeasonId" value={newSeasonId} />
-            <h2>
-              {isFirstSeason ? "Activate" : "Step 5 · Activate"}{" "}
-              {newSeason?.label ?? "the new season"}
-            </h2>
-            {isFirstSeason ? (
-              <p className="muted">
-                This makes <strong>{newSeason?.label}</strong> your active season.
-                That&apos;s it — you&apos;re ready to build your roster.
-              </p>
-            ) : (
-              <p className="muted">
-                This makes <strong>{newSeason?.label}</strong> the active season
-                and deactivates{" "}
-                <strong>{season?.label ?? "the current season"}</strong>. You can
-                archive the old season next.
-              </p>
-            )}
-            <button type="submit">
-              {isFirstSeason ? "Activate season" : "Activate new season"}
-            </button>
+            <p className="muted">
+              From here on every page shows{" "}
+              <strong>{newSeason?.label ?? "the new season"}</strong>
+              {season ? (
+                <>
+                  {" "}
+                  instead of <strong>{season.label}</strong>. Nothing in{" "}
+                  {season.label} is deleted or changed — it stops being the
+                  season the app is working in, and you can archive it next.
+                </>
+              ) : (
+                "."
+              )}
+            </p>
+            <button type="submit">Switch to {newSeason?.label ?? "it"}</button>
           </form>
         )}
 
-        {step === "archive" && (
+        {progress.finished && (
           <div className="stack">
-            <h2>
-              {isFirstSeason
-                ? "Your first season is live 🎉"
-                : "Step 6 · You're rolled over 🎉"}
-            </h2>
             <p className="alert-ok">
-              {newSeason?.label} is now your active season.
+              {newSeason?.label ?? "Your new season"} is now your active season.
             </p>
-            {isFirstSeason ? (
-              <p className="muted">
-                You&apos;re all set. Head to Today to add students, put them in an
-                ensemble, and schedule your first competition.
-              </p>
-            ) : (
-              <p className="muted">
-                Archive the previous season to freeze it read-only — its roster,
-                results, and PDFs stay browsable in History and Export, but
-                nothing can be changed. You can do this now or later from the list
-                below.
-              </p>
-            )}
-            <Link href={`/${slug}/dashboard`}>Go to dashboard</Link>
+            <p className="muted">
+              One optional last thing: archive the season you just left, in the
+              list below. That freezes it read-only — its roster, results and PDFs
+              stay browsable in History and in your export, but nothing in it can
+              be changed by accident. You can do it now or any time later.
+            </p>
+            <Link href={`/${slug}/dashboard`}>Go to the dashboard</Link>
           </div>
         )}
 
-        {step !== "new" && step !== "archive" && (
+        {screen !== "new" && !progress.finished && (
           <p className="muted">
-            <Link href={`/${slug}/settings/rollover`}>Cancel rollover</Link>
+            <Link href={`/${slug}/settings/rollover`}>
+              Stop for now — nothing you have done so far is undone
+            </Link>
           </p>
         )}
-      </div>
+      </section>
 
-      {/* --- Archive controls --- */}
-      <h2>All seasons</h2>
-      {seasons.some((s) => s.archived_at) && <ArchivedBanner />}
-      <table className="members">
-        <thead>
-          <tr>
-            <th>Season</th>
-            <th>Dates</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {seasons.map((s) => (
-            <tr key={s.id}>
-              <td>{s.label}</td>
-              <td className="muted">
-                {s.starts_on ? formatDateInTz(`${s.starts_on}T12:00:00Z`, program.timezone) : "—"} →{" "}
-                {s.ends_on ? formatDateInTz(`${s.ends_on}T12:00:00Z`, program.timezone) : "—"}
-              </td>
-              <td>
-                {s.is_active && <span className="badge">Active</span>}
-                {s.archived_at ? (
-                  <span
-                    className="chip"
-                    title={formatDateTimeInTz(s.archived_at, program.timezone)}
-                  >
-                    Archived (read-only)
-                  </span>
-                ) : (
-                  !s.is_active && <span className="muted">Inactive</span>
-                )}
-              </td>
-              <td>
-                {s.archived_at ? (
-                  isDirector ? (
-                    <form action={unarchiveSeason}>
-                      <input type="hidden" name="programId" value={program.id} />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="seasonId" value={s.id} />
-                      <button type="submit" className="linklike">
-                        Unarchive
-                      </button>
-                    </form>
-                  ) : (
-                    <span className="muted">Director only</span>
-                  )
-                ) : s.is_active ? (
-                  <span className="muted">Deactivate via rollover first</span>
-                ) : (
-                  <form action={archiveSeason}>
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="seasonId" value={s.id} />
-                    <button type="submit" className="linklike danger">
-                      Archive
-                    </button>
-                  </form>
-                )}
-              </td>
-            </tr>
-          ))}
-          {seasons.length === 0 && (
-            <tr>
-              <td colSpan={4} className="muted">
-                No seasons yet.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+      {/* --------------------------- All seasons --------------------------- */}
+      <SeasonsTable
+        programId={program.id}
+        slug={slug}
+        tz={tz}
+        flash={flash}
+        seasons={seasons}
+        isDirector={isDirector}
+      />
     </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Step 3 — returning students checklist.
-// ---------------------------------------------------------------------------
-async function StudentsStep({
-  slug,
-  programId,
-  newSeasonId,
-  seasonId,
-  ensembles,
-  supabase,
-}: {
-  slug: string;
-  programId: string;
-  newSeasonId: string;
-  seasonId: string | null;
-  ensembles: { id: string; name: string; sort_order: number }[];
-  supabase: Awaited<ReturnType<typeof createClient>>;
-}) {
-  const { data: studentRows } = await supabase
-    .from("students")
-    .select("id, first_name, last_name, grad_year")
-    .eq("program_id", programId)
-    .eq("status", "active")
-    .order("grad_year", { ascending: true, nullsFirst: false })
-    .order("last_name", { ascending: true });
-  const students =
-    (studentRows as {
-      id: string;
-      first_name: string;
-      last_name: string;
-      grad_year: number | null;
-    }[] | null) ?? [];
-
-  // Current-season ensemble per student (default carry-forward target).
-  const currentEnsemble = new Map<string, string>();
-  if (seasonId) {
-    const { data: mems } = await supabase
-      .from("ensemble_members")
-      .select("student_id, ensemble_id")
-      .eq("program_id", programId)
-      .eq("season_id", seasonId);
-    for (const m of (mems as { student_id: string; ensemble_id: string }[] | null) ?? []) {
-      if (!currentEnsemble.has(m.student_id)) currentEnsemble.set(m.student_id, m.ensemble_id);
-    }
-  }
-
-  // Graduating class = the lowest grad_year among active students (pre-unchecked).
-  const gradYears = students.map((s) => s.grad_year).filter((y): y is number => y != null);
-  const graduatingYear = gradYears.length > 0 ? Math.min(...gradYears) : null;
-
-  return (
-    <form action={rolloverStudents} className="stack">
-      <input type="hidden" name="programId" value={programId} />
-      <input type="hidden" name="slug" value={slug} />
-      <input type="hidden" name="newSeasonId" value={newSeasonId} />
-      <h2>Step 3 · Returning students</h2>
-      <p className="muted">
-        Uncheck students who are leaving — the graduating class (
-        {graduatingYear ?? "seniors"}) is pre-unchecked and will be marked
-        graduated. Everyone else is re-added to the ensemble you pick (defaulting
-        to their current one).
-      </p>
-      <table className="members">
-        <thead>
-          <tr>
-            <th>Returning</th>
-            <th>Student</th>
-            <th>Grad year</th>
-            <th>Ensemble (new season)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {students.map((s) => {
-            const graduating = s.grad_year != null && s.grad_year === graduatingYear;
-            const defaultEnsemble =
-              currentEnsemble.get(s.id) ?? ensembles[0]?.id ?? "";
-            return (
-              <tr key={s.id}>
-                <td>
-                  <input type="hidden" name="student" value={s.id} />
-                  <input
-                    type="checkbox"
-                    name={`return_${s.id}`}
-                    defaultChecked={!graduating}
-                    aria-label={`Return ${s.first_name} ${s.last_name}`}
-                  />
-                </td>
-                <td>
-                  {s.last_name}, {s.first_name}
-                  {graduating && <span className="chip">graduating</span>}
-                </td>
-                <td>{s.grad_year ?? "—"}</td>
-                <td>
-                  <select name={`ensemble_${s.id}`} defaultValue={defaultEnsemble}>
-                    {ensembles.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-              </tr>
-            );
-          })}
-          {students.length === 0 && (
-            <tr>
-              <td colSpan={4} className="muted">
-                No active students to carry forward.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      <button type="submit">Save &amp; continue</button>
-    </form>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Step 4 — re-point costume sets.
-// ---------------------------------------------------------------------------
-async function CostumesStep({
-  slug,
-  programId,
-  newSeasonId,
-  fromSeasonId,
-  supabase,
-}: {
-  slug: string;
-  programId: string;
-  newSeasonId: string;
-  fromSeasonId: string | null;
-  supabase: Awaited<ReturnType<typeof createClient>>;
-}) {
-  let oldSetCount = 0;
-  if (fromSeasonId) {
-    const { count } = await supabase
-      .from("costume_sets")
-      .select("id", { count: "exact", head: true })
-      .eq("program_id", programId)
-      .eq("season_id", fromSeasonId);
-    oldSetCount = count ?? 0;
-  }
-
-  return (
-    <div className="stack">
-      <h2>Step 4 · Costume sets</h2>
-      <p className="muted">
-        Costume <em>pieces</em> are program-level inventory and always persist
-        (§4). Re-pointing copies the {oldSetCount} set name
-        {oldSetCount === 1 ? "" : "s"} from the current season into the new one as
-        empty sets, ready to re-assign — or skip and build sets fresh.
-      </p>
-      <div className="row-inline">
-        <form action={repointCostumeSets}>
-          <input type="hidden" name="programId" value={programId} />
-          <input type="hidden" name="slug" value={slug} />
-          <input type="hidden" name="newSeasonId" value={newSeasonId} />
-          <input type="hidden" name="fromSeasonId" value={fromSeasonId ?? ""} />
-          <button type="submit" disabled={oldSetCount === 0}>
-            Re-point {oldSetCount} set{oldSetCount === 1 ? "" : "s"} &amp; continue
-          </button>
-        </form>
-        <form action={repointCostumeSets}>
-          <input type="hidden" name="programId" value={programId} />
-          <input type="hidden" name="slug" value={slug} />
-          <input type="hidden" name="newSeasonId" value={newSeasonId} />
-          <input type="hidden" name="skip" value="1" />
-          <button type="submit" className="secondary">
-            Skip
-          </button>
-        </form>
-      </div>
-    </div>
   );
 }

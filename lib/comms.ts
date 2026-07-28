@@ -137,9 +137,11 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// Assemble the full HTML email: body + the three canonical footer links (§8a)
+// Assemble the full HTML email: body + whichever canonical footer links this
+// program actually has (§8a; lib/tokens guardianLinks does the flag filtering)
 // plus a per-recipient Unsubscribe link (CAN-SPAM). Every guardian-facing email
-// footers through here, so the unsubscribe affordance is universal and visible.
+// footers through here, so the unsubscribe affordance is universal and visible —
+// it is printed on its own, below, and never depends on the list above it.
 // Friendly labels for the per-recipient send statuses the send pipeline writes
 // (lib/comms-send.ts: sent / skipped_no_key / failed) plus deliverability states
 // a webhook may later stamp (bounced). Staff-facing history tables print these
@@ -161,14 +163,18 @@ export function announcementHtml(args: {
   links: GuardianLinks;
 }): string {
   const body = bodyToHtml(args.bodyMd);
-  const { itinerary, signup, absence, unsubscribe } = args.links;
-  return `${body}
-<hr>
+  const { links, unsubscribe } = args.links;
+  // Nothing turned on → no link row at all, rather than an empty paragraph with
+  // a stray separator in it.
+  const linkRow =
+    links.length === 0
+      ? ""
+      : `
 <p style="font-size:0.85rem;color:#666">
-  <a href="${itinerary}">Itinerary</a> &nbsp;·&nbsp;
-  <a href="${signup}">Volunteer signup</a> &nbsp;·&nbsp;
-  <a href="${absence}">Report an absence</a>
-</p>
+  ${links.map((l) => `<a href="${l.url}">${l.label}</a>`).join(" &nbsp;·&nbsp;\n  ")}
+</p>`;
+  return `${body}
+<hr>${linkRow}
 <p style="font-size:0.8rem;color:#999">
   <a href="${unsubscribe}">Unsubscribe</a> from announcements and weekly digests.
 </p>`;

@@ -2,8 +2,10 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
+import { programPath } from "@/lib/return-path";
 import { zonedWallToUtc } from "@/lib/datetime";
 import {
   HOSTING_WRITE_ROLES,
@@ -16,12 +18,76 @@ import {
   type HostedEventStatus,
   type HostedSlotKind,
 } from "@/lib/hosting";
+import {
+  HOST_ANCHOR,
+  hostOkSection,
+  hostErrorSection,
+  type HostOkKey,
+  type HostErrorKey,
+} from "./[eventId]/shared";
 
-// Host-mode server actions (Wave I2). Writes are director/admin (HOSTING_WRITE_
-// ROLES); every action re-checks the role via requireRole (Constitution I) even
-// though RLS also gates it. Season-archived events are frozen at the RLS layer;
-// we pre-check here to surface a friendly ?error=archived instead of a raw
-// failure (mirrors the ArchivedBanner posture on season-scoped surfaces).
+// Host-mode server actions (Wave I2, rebuilt in spec 005 Wave 7). Writes are
+// director/admin (HOSTING_WRITE_ROLES); every action re-checks the role via
+// requireRole (Constitution I) even though RLS also gates it. Season-archived
+// events are frozen at the RLS layer; we pre-check here to surface a friendly
+// ?error=archived instead of a raw failure (mirrors the ArchivedBanner posture
+// on season-scoped surfaces).
+//
+// CROSS-PROGRAM REFERENCES (Constitution I). Every id below arrives as a form
+// field, and requireRole only proves the caller runs THIS program — not that the
+// event/school/slot/season they posted belongs to it. Anyone can self-serve a
+// program at /launch, so an unresolved id lets them write a row that points into
+// someone else's data. Resolve first, scoped to programId (and to the event,
+// where the row belongs to one), and fail closed to the surface's error
+// convention when the row isn't there.
+//
+// Every redirect target is BUILT, never interpolated: the slug arrives as a form
+// field, and a value like "/evil.com" makes "//evil.com/hosting" — which every
+// browser reads as a protocol-relative URL and follows off-site. programPath is
+// the allow-list; anything that isn't a program slug lands on "/".
+
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function hostingPath(slug: string): string {
+  return programPath(slug, "hosting") ?? "/";
+}
+
+// The event page's path, or the hosting list when the id isn't an id — an
+// eventId that isn't a uuid can never be a row here, and interpolating it would
+// let a form field write query string or fragment into the target.
+function eventPath(slug: string, eventId: string): string {
+  const path = UUID.test(eventId)
+    ? programPath(slug, `hosting/${eventId}`)
+    : null;
+  return path ?? hostingPath(slug);
+}
+
+// `?ok=` / `?error=` + the anchor of the section that owns the message. The
+// section comes from the same map the page reads it back with, so the two halves
+// cannot drift; `open` reopens the disclosure the message belongs to (a row by
+// id, or the word for a section-level form).
+function okTo(
+  slug: string,
+  eventId: string,
+  key: HostOkKey,
+  open?: string,
+): string {
+  const q = open ? `?ok=${key}&open=${encodeURIComponent(open)}` : `?ok=${key}`;
+  return `${eventPath(slug, eventId)}${q}#${HOST_ANCHOR[hostOkSection(key)]}`;
+}
+
+function errTo(
+  slug: string,
+  eventId: string,
+  key: HostErrorKey,
+  open?: string,
+): string {
+  const q = open
+    ? `?error=${key}&open=${encodeURIComponent(open)}`
+    : `?error=${key}`;
+  return `${eventPath(slug, eventId)}${q}#${HOST_ANCHOR[hostErrorSection(key)]}`;
+}
 
 function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
@@ -57,13 +123,42 @@ function resolveHostedDates(
   return { event_date: eventDate, end_date: endDate };
 }
 
+// Resolve a row inside BOTH this program and this hosted event. Returns the id
+// when it belongs here, null when the field was blank (only meaningful for the
+// optional school on a slot), and false when it belongs to someone else — or to
+// another invitational of this program, which would corrupt the host schedule
+// and the door-sign PDFs just as thoroughly.
+//
+// hosted_slots.hosted_school_id in particular is written straight from a
+// <select>, and no policy, constraint or trigger looks at it — so an unresolved
+// id files a slot against another program's school, which then blocks that
+// program from ever deleting the school (Constitution I).
+async function resolveInEvent(
+  supabase: SupabaseClient,
+  table: "hosted_schools" | "hosted_slots",
+  programId: string,
+  eventId: string,
+  id: string | null,
+): Promise<string | null | false> {
+  if (!id) return null;
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? false;
+}
+
 // Resolve an event to its program + season + archived flag, scoped to programId.
 // Returns null when the event is missing/hidden (RLS) — the caller bounces.
 async function loadEventGuard(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: SupabaseClient,
   programId: string,
   eventId: string,
 ): Promise<{ seasonId: string; archived: boolean } | null> {
+  if (!UUID.test(eventId)) return null;
   const { data } = await supabase
     .from("hosted_events")
     .select("season_id, seasons(archived_at)")
@@ -87,13 +182,26 @@ export async function createHostedEvent(formData: FormData): Promise<void> {
   const seasonId = nullable(formData, "seasonId");
   await requireRole(programId, HOSTING_WRITE_ROLES);
 
+  const list = hostingPath(slug);
   const name = str(formData, "name");
-  if (!name) redirect(`/${slug}/hosting?error=name`);
-  if (!seasonId) redirect(`/${slug}/hosting?error=season`);
+  if (!name) redirect(`${list}?error=name`);
+  if (!seasonId) redirect(`${list}?error=season`);
   const dates = resolveHostedDates(formData);
-  if (!dates) redirect(`/${slug}/hosting?error=enddate`);
+  if (!dates) redirect(`${list}?error=enddate`);
 
   const supabase = await createClient();
+
+  // seasonId is a hidden field; resolve it inside this program before writing,
+  // so an edited field can't hang an invitational off another program's season
+  // (Constitution I).
+  const { data: season } = await supabase
+    .from("seasons")
+    .select("id")
+    .eq("id", seasonId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  if (!season) redirect(`${list}?error=season`);
+
   const { data, error } = await supabase
     .from("hosted_events")
     .insert({
@@ -107,13 +215,14 @@ export async function createHostedEvent(formData: FormData): Promise<void> {
     .select("id")
     .single();
 
-  if (error || !data) redirect(`/${slug}/hosting?error=save`);
+  if (error || !data) redirect(`${list}?error=save`);
 
-  revalidatePath(`/${slug}/hosting`);
-  redirect(`/${slug}/hosting/${(data as { id: string }).id}?created=1`);
+  revalidatePath(list);
+  redirect(okTo(slug, (data as { id: string }).id, "created"));
 }
 
-// Header inline edit: name / date / status.
+// Overview's edit disclosure: the invitational's own facts. The form shows the
+// whole record and posts the whole record, so an emptied field clears.
 export async function updateHostedEvent(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -122,13 +231,13 @@ export async function updateHostedEvent(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
 
   const name = str(formData, "name");
-  if (!name) redirect(`/${slug}/hosting/${eventId}?error=name`);
+  if (!name) redirect(errTo(slug, eventId, "name"));
   const dates = resolveHostedDates(formData);
-  if (!dates) redirect(`/${slug}/hosting/${eventId}?error=enddate`);
+  if (!dates) redirect(errTo(slug, eventId, "enddate"));
   const status = str(formData, "status") as HostedEventStatus;
 
   const { error } = await supabase
@@ -144,9 +253,9 @@ export async function updateHostedEvent(formData: FormData): Promise<void> {
     .eq("id", eventId)
     .eq("program_id", programId);
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?saved=1`);
+  if (error) redirect(errTo(slug, eventId, "save"));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "saved"));
 }
 
 // ---- Schools ---------------------------------------------------------------
@@ -174,12 +283,12 @@ export async function addHostedSchool(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
 
   const fields = schoolFields(formData);
   if (!fields.school_name) {
-    redirect(`/${slug}/hosting/${eventId}?error=school_name#schools`);
+    redirect(errTo(slug, eventId, "school_name", "school"));
   }
 
   // Append to the end of the current sort order.
@@ -191,7 +300,8 @@ export async function addHostedSchool(formData: FormData): Promise<void> {
     .order("sort_order", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const nextSort = ((last as { sort_order: number } | null)?.sort_order ?? -1) + 1;
+  const nextSort =
+    ((last as { sort_order: number } | null)?.sort_order ?? -1) + 1;
 
   const { error } = await supabase.from("hosted_schools").insert({
     program_id: programId,
@@ -200,9 +310,9 @@ export async function addHostedSchool(formData: FormData): Promise<void> {
     sort_order: nextSort,
   });
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schools`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?school_saved=1#schools`);
+  if (error) redirect(errTo(slug, eventId, "school_save", "school"));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "school_saved"));
 }
 
 export async function updateHostedSchool(formData: FormData): Promise<void> {
@@ -214,12 +324,24 @@ export async function updateHostedSchool(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
+
+  // The card that posted this is one of THIS invitational's — prove it before
+  // writing, rather than letting a scoped UPDATE match nothing and report
+  // "School saved." over a row that was never touched.
+  const owned = await resolveInEvent(
+    supabase,
+    "hosted_schools",
+    programId,
+    eventId,
+    schoolId || null,
+  );
+  if (!owned) redirect(errTo(slug, eventId, "school_missing"));
 
   const fields = schoolFields(formData);
   if (!fields.school_name) {
-    redirect(`/${slug}/hosting/${eventId}?error=school_name#schools`);
+    redirect(errTo(slug, eventId, "school_name", owned as string));
   }
   const sortOrder = intOrNull(formData, "sort_order");
 
@@ -229,12 +351,13 @@ export async function updateHostedSchool(formData: FormData): Promise<void> {
       ...fields,
       ...(sortOrder != null ? { sort_order: sortOrder } : {}),
     })
-    .eq("id", schoolId)
-    .eq("program_id", programId);
+    .eq("id", owned)
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId);
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schools`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?school_saved=1#schools`);
+  if (error) redirect(errTo(slug, eventId, "school_save", owned as string));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "school_saved"));
 }
 
 export async function removeHostedSchool(formData: FormData): Promise<void> {
@@ -246,8 +369,17 @@ export async function removeHostedSchool(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
+
+  const owned = await resolveInEvent(
+    supabase,
+    "hosted_schools",
+    programId,
+    eventId,
+    schoolId || null,
+  );
+  if (!owned) redirect(errTo(slug, eventId, "school_missing"));
 
   // Detach any slots pointing at this school (they become label-only rows)
   // before deleting, so a school removal never orphans a schedule row's FK.
@@ -255,17 +387,19 @@ export async function removeHostedSchool(formData: FormData): Promise<void> {
     .from("hosted_slots")
     .update({ hosted_school_id: null })
     .eq("program_id", programId)
-    .eq("hosted_school_id", schoolId);
+    .eq("hosted_event_id", eventId)
+    .eq("hosted_school_id", owned);
 
   const { error } = await supabase
     .from("hosted_schools")
     .delete()
-    .eq("id", schoolId)
-    .eq("program_id", programId);
+    .eq("id", owned)
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId);
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schools`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?school_removed=1#schools`);
+  if (error) redirect(errTo(slug, eventId, "school_save", owned as string));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "school_removed"));
 }
 
 // ---- Slots -----------------------------------------------------------------
@@ -278,13 +412,15 @@ export async function addHostedSlot(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
 
   const kind = str(formData, "kind") as HostedSlotKind;
   const tz = str(formData, "tz") || "UTC";
   const startWall = str(formData, "starts_at"); // datetime-local, program tz
-  const startsAt = startWall ? zonedWallToUtc(startWall, tz)?.toISOString() ?? null : null;
+  const startsAt = startWall
+    ? (zonedWallToUtc(startWall, tz)?.toISOString() ?? null)
+    : null;
 
   const { data: last } = await supabase
     .from("hosted_slots")
@@ -294,12 +430,24 @@ export async function addHostedSlot(formData: FormData): Promise<void> {
     .order("sort_order", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const nextSort = ((last as { sort_order: number } | null)?.sort_order ?? -1) + 1;
+  const nextSort =
+    ((last as { sort_order: number } | null)?.sort_order ?? -1) + 1;
+
+  const schoolId = await resolveInEvent(
+    supabase,
+    "hosted_schools",
+    programId,
+    eventId,
+    nullable(formData, "hosted_school_id"),
+  );
+  if (schoolId === false) {
+    redirect(errTo(slug, eventId, "school", "slot"));
+  }
 
   const { error } = await supabase.from("hosted_slots").insert({
     program_id: programId,
     hosted_event_id: eventId,
-    hosted_school_id: nullable(formData, "hosted_school_id"),
+    hosted_school_id: schoolId,
     kind: HOSTED_SLOT_KINDS.includes(kind) ? kind : "other",
     label: nullable(formData, "label"),
     starts_at: startsAt,
@@ -307,9 +455,9 @@ export async function addHostedSlot(formData: FormData): Promise<void> {
     sort_order: nextSort,
   });
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schedule`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?slot_saved=1#schedule`);
+  if (error) redirect(errTo(slug, eventId, "slot_save", "slot"));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "slot_saved"));
 }
 
 export async function updateHostedSlot(formData: FormData): Promise<void> {
@@ -321,29 +469,52 @@ export async function updateHostedSlot(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
+
+  const ownedSlot = await resolveInEvent(
+    supabase,
+    "hosted_slots",
+    programId,
+    eventId,
+    slotId || null,
+  );
+  if (!ownedSlot) redirect(errTo(slug, eventId, "slot_missing"));
 
   const kind = str(formData, "kind") as HostedSlotKind;
   const tz = str(formData, "tz") || "UTC";
   const startWall = str(formData, "starts_at");
-  const startsAt = startWall ? zonedWallToUtc(startWall, tz)?.toISOString() ?? null : null;
+  const startsAt = startWall
+    ? (zonedWallToUtc(startWall, tz)?.toISOString() ?? null)
+    : null;
+
+  const schoolId = await resolveInEvent(
+    supabase,
+    "hosted_schools",
+    programId,
+    eventId,
+    nullable(formData, "hosted_school_id"),
+  );
+  if (schoolId === false) {
+    redirect(errTo(slug, eventId, "school", ownedSlot as string));
+  }
 
   const { error } = await supabase
     .from("hosted_slots")
     .update({
-      hosted_school_id: nullable(formData, "hosted_school_id"),
+      hosted_school_id: schoolId,
       kind: HOSTED_SLOT_KINDS.includes(kind) ? kind : "other",
       label: nullable(formData, "label"),
       starts_at: startsAt,
       duration_minutes: intOrNull(formData, "duration_minutes"),
     })
-    .eq("id", slotId)
-    .eq("program_id", programId);
+    .eq("id", ownedSlot)
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId);
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schedule`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?slot_saved=1#schedule`);
+  if (error) redirect(errTo(slug, eventId, "slot_save", ownedSlot as string));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "slot_saved"));
 }
 
 export async function removeHostedSlot(formData: FormData): Promise<void> {
@@ -355,25 +526,38 @@ export async function removeHostedSlot(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
+
+  const ownedSlot = await resolveInEvent(
+    supabase,
+    "hosted_slots",
+    programId,
+    eventId,
+    slotId || null,
+  );
+  if (!ownedSlot) redirect(errTo(slug, eventId, "slot_missing"));
 
   const { error } = await supabase
     .from("hosted_slots")
     .delete()
-    .eq("id", slotId)
-    .eq("program_id", programId);
+    .eq("id", ownedSlot)
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId);
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schedule`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?slot_removed=1#schedule`);
+  if (error) redirect(errTo(slug, eventId, "slot_save", ownedSlot as string));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "slot_removed"));
 }
 
 // "Generate schedule" — materialize the deterministic warm-up/perform ladder for
-// every school in sort_order. Offered only when no slots exist; when the replace
-// flag is set (confirm-box), the current schedule is cleared first. Pure ladder
-// math lives in lib/hosting.generateHostSchedule.
-export async function generateHostedSchedule(formData: FormData): Promise<void> {
+// every school in sort_order. When the replace flag is set (a schedule already
+// exists, and the panel says so next to a button that names it), the current
+// schedule is cleared first. Pure ladder math lives in
+// lib/hosting.generateHostSchedule.
+export async function generateHostedSchedule(
+  formData: FormData,
+): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const eventId = str(formData, "eventId");
@@ -381,16 +565,18 @@ export async function generateHostedSchedule(formData: FormData): Promise<void> 
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
 
   const tz = str(formData, "tz") || "UTC";
   const startWall = str(formData, "starts_at");
   const startInstant = startWall ? zonedWallToUtc(startWall, tz) : null;
-  if (!startInstant) redirect(`/${slug}/hosting/${eventId}?error=start#schedule`);
+  if (!startInstant) redirect(errTo(slug, eventId, "start", "generate"));
 
-  const warmupMinutes = intOrNull(formData, "warmup_minutes") ?? DEFAULT_WARMUP_MINUTES;
-  const performMinutes = intOrNull(formData, "perform_minutes") ?? DEFAULT_PERFORM_MINUTES;
+  const warmupMinutes =
+    intOrNull(formData, "warmup_minutes") ?? DEFAULT_WARMUP_MINUTES;
+  const performMinutes =
+    intOrNull(formData, "perform_minutes") ?? DEFAULT_PERFORM_MINUTES;
   const replace = str(formData, "replace") === "1";
 
   const { data: schoolRows } = await supabase
@@ -404,7 +590,7 @@ export async function generateHostedSchedule(formData: FormData): Promise<void> 
   ).map((s) => ({ id: s.id, name: s.school_name }));
 
   if (schools.length === 0) {
-    redirect(`/${slug}/hosting/${eventId}?error=noschools#schedule`);
+    redirect(errTo(slug, eventId, "noschools", "generate"));
   }
 
   if (replace) {
@@ -435,9 +621,9 @@ export async function generateHostedSchedule(formData: FormData): Promise<void> 
     })),
   );
 
-  if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schedule`);
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  redirect(`/${slug}/hosting/${eventId}?generated=1#schedule`);
+  if (error) redirect(errTo(slug, eventId, "slot_save", "generate"));
+  revalidatePath(eventPath(slug, eventId));
+  redirect(okTo(slug, eventId, "generated"));
 }
 
 // "Shift remaining" — move the given slot and every later slot (by starts_at) by
@@ -452,12 +638,21 @@ export async function shiftRemainingSlots(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   const guard = await loadEventGuard(supabase, programId, eventId);
-  if (!guard) redirect(`/${slug}/hosting?error=save`);
-  if (guard.archived) redirect(`/${slug}/hosting/${eventId}?error=archived`);
+  if (!guard) redirect(`${hostingPath(slug)}?error=save`);
+  if (guard.archived) redirect(errTo(slug, eventId, "archived"));
+
+  const ownedSlot = await resolveInEvent(
+    supabase,
+    "hosted_slots",
+    programId,
+    eventId,
+    slotId || null,
+  );
+  if (!ownedSlot) redirect(errTo(slug, eventId, "slot_missing"));
 
   const deltaMinutes = intOrNull(formData, "delta_minutes");
   if (deltaMinutes == null || deltaMinutes === 0) {
-    redirect(`/${slug}/hosting/${eventId}?error=delta#schedule`);
+    redirect(errTo(slug, eventId, "delta", ownedSlot as string));
   }
   // Program tz scopes the shift to the pivot's calendar day (Wave N) — day 2 of a
   // multi-day invitational stays put when day 1 runs behind. Posted by the form.
@@ -471,9 +666,14 @@ export async function shiftRemainingSlots(formData: FormData): Promise<void> {
   const slots =
     (slotRows as { id: string; starts_at: string | null }[] | null) ?? [];
 
-  const updates = computeShiftRemaining(slots, slotId, deltaMinutes!, tz);
+  const updates = computeShiftRemaining(
+    slots,
+    ownedSlot as string,
+    deltaMinutes!,
+    tz,
+  );
   if (updates.length === 0) {
-    redirect(`/${slug}/hosting/${eventId}?error=delta#schedule`);
+    redirect(errTo(slug, eventId, "delta", ownedSlot as string));
   }
 
   // Apply each new starts_at. Scoped to program + event so a stray id can't reach
@@ -487,9 +687,13 @@ export async function shiftRemainingSlots(formData: FormData): Promise<void> {
       .eq("hosted_event_id", eventId);
   }
 
-  revalidatePath(`/${slug}/hosting/${eventId}`);
-  const dir = deltaMinutes! > 0 ? "later" : "earlier";
+  revalidatePath(eventPath(slug, eventId));
   redirect(
-    `/${slug}/hosting/${eventId}?shifted=${Math.abs(deltaMinutes!)}&dir=${dir}#schedule`,
+    okTo(
+      slug,
+      eventId,
+      deltaMinutes! > 0 ? "shifted_later" : "shifted_earlier",
+      ownedSlot as string,
+    ),
   );
 }

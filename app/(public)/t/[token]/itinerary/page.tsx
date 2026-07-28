@@ -1,18 +1,29 @@
 import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { formatDateInTz, formatTimeInTz, formatDateTimeInTz } from "@/lib/datetime";
+import {
+  formatDateInTz,
+  formatTimeInTz,
+  formatDateTimeInTz,
+  zonedDateKey,
+} from "@/lib/datetime";
 import {
   groupItemsByDay,
   changedItemsSincePublish,
   type ChangedSincePublish,
 } from "@/lib/itinerary-days";
-import { TokenFooter } from "../parts";
+import { parentSurfaceAvailable, documentAllowsToken } from "@/lib/tokens";
+import { TokenFooter, TokenUnavailable } from "../parts";
 
 // Published itineraries on the tokenized surface (§8a, invariant §9.3). Guardian
 // token → published itineraries for the family's ensembles' upcoming
 // competitions. Share link (resource 'itinerary') → that one competition. DRAFT
 // ITINERARIES ARE NEVER VISIBLE HERE — only status='published'.
+//
+// THE PACKET LINK IS GUARDIAN-ONLY. The .ics beside it is the times this page
+// already shows, so a broadcast link keeps it; the packet PDF names students
+// against hotel rooms, so a broadcast link does not (lib/tokens
+// SHARE_CAPABILITIES, and the /packet route refuses one on its own).
 
 interface ItemRow {
   starts_at: string | null;
@@ -34,13 +45,25 @@ export default async function PublicItineraryPage({
   const resolved = await getResolvedToken(token);
   if (!resolved) notFound();
 
+  // Constitution VIII — a program that does not run competitions has no
+  // itinerary to show, on either half of the app (lib/tokens).
+  if (!parentSurfaceAvailable(resolved.program, "itinerary")) {
+    return <TokenUnavailable token={token} resolved={resolved} />;
+  }
+
   const { program } = resolved;
+  // The link and the route it points at consult the SAME table, so they cannot
+  // drift the way they had (lib/tokens DOCUMENT_TOKEN_KINDS).
+  const canPacket = documentAllowsToken("packet_pdf", resolved.kind);
   const tz = program.timezone;
   const supabase = createAdminClient();
 
   // Determine which competitions to show.
   let competitionIds: string[] = [];
-  const todayKey = new Date().toISOString().slice(0, 10);
+  // Today on the PROGRAM's calendar, not UTC's (Constitution VII). A UTC key
+  // rolls over at 7pm Central, which used to drop the day's own itinerary out of
+  // this list mid-competition — while the schedule it lists is still running.
+  const todayKey = zonedDateKey(new Date(), tz);
 
   if (resolved.kind === "share") {
     if (resolved.resource !== "itinerary") notFound();
@@ -162,10 +185,15 @@ export default async function PublicItineraryPage({
           )}
           <p className="itinerary-links">
             {/* Published-only (invariant §9.3) — every block here IS published, so
-                these links always resolve. The routes re-check eligibility. */}
-            <a href={`/t/${token}/packet?competition=${block.competitionId}`}>
-              Download packet (PDF)
-            </a>
+                these links always resolve. The routes re-check eligibility.
+                The packet is offered to FAMILIES only: it prints room and bus
+                assignments by student name, which a shared browse link must
+                never reach (the route refuses one regardless). */}
+            {canPacket && (
+              <a href={`/t/${token}/packet?competition=${block.competitionId}`}>
+                Download packet (PDF)
+              </a>
+            )}
             <a href={`/t/${token}/itinerary/ics/${block.competitionId}`}>
               Add to calendar
             </a>
@@ -216,7 +244,7 @@ export default async function PublicItineraryPage({
         </div>
       ))}
 
-      <TokenFooter token={token} kind={resolved.kind} />
+      <TokenFooter token={token} resolved={resolved} />
     </section>
   );
 }
