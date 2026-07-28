@@ -128,5 +128,7 @@ export async function acceptParse(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   revalidatePath(itineraryPath);
-  redirect(`${itineraryPath}?accepted=1`);
+  // The itinerary editor's one `?ok=` contract (spec 005 T156 / ./itinerary
+  // shared.ts) — the key is what decides which block on that page speaks.
+  redirect(`${itineraryPath}?ok=accepted`);
 }

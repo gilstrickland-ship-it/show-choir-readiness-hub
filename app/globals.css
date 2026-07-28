@@ -989,8 +989,26 @@
     user-select: all;
   }
 
+  /* Comp-day attendance: a roster you thumb down, one student per line with the
+     three answers on the line under the name. A list, never a table — the three
+     buttons plus a note field are wider than a 375px screen, and a table would
+     put them behind a horizontal scroll. The measurements used to live in
+     style={{}} on the page, which is why nothing else could match them. */
+  .attendance-list {
+    list-style: none;
+    padding: 0;
+    width: 100%;
+  }
+
   .attendance-list li {
+    width: 100%;
     padding-top: 0.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .attendance-row {
+    margin-top: 0.35rem;
   }
 
   /* ---------------- Public token surface ---------------- */
@@ -3640,8 +3658,9 @@
   }
 
   /* The app's expand-in-flow panel — wardrobe's (an inventory row's Edit, an
-     assignment row's Edit, a set's settings) and host-mode's (a school card's
-     Edit, a slot row's Edit, the generator, the two add forms). They EXPAND
+     assignment row's Edit, a set's settings), host-mode's (a school card's
+     Edit, a slot row's Edit, the generator, the two add forms), and the
+     itinerary editor's (one line of comp day). They EXPAND
      their row or their section instead of floating over it, which is the one
      thing the Season spine's popover idiom can't do here: `table.members` is
      `display:block; overflow-x:auto` so it can scroll on a phone, and a scroll
@@ -3654,13 +3673,38 @@
      cascade trap). */
   .wardrobe-row-panel,
   .wardrobe-section-panel,
-  .hosting-panel {
+  .hosting-panel,
+  .itinerary-row-panel {
     margin-top: 0.5rem;
     padding: 0.75rem 0.9rem 0.9rem;
     background: var(--paper);
     border: 1px solid var(--line);
     border-top: 3px solid var(--line-strong);
     border-radius: var(--radius-m);
+  }
+
+  /* An itinerary line carries seven fields — what happens, its kind, a start, an
+     end, a place, an order, a note — so its panel gets a wider cap than the
+     wardrobe's one select. Still capped: on a 1280px desktop the table is the
+     page's full measure, and a form stretched across all of it is unreadable. */
+  .itinerary-row-panel {
+    width: 100%;
+    max-width: 32rem;
+  }
+
+  /* Saving the line and taking it off the schedule are two decisions, not one
+     long form — a hairline says so, and the destructive one gets a thumb-sized
+     hit area. */
+  .itinerary-row-form + .itinerary-row-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  .itinerary-row-form a.linklike,
+  .itinerary-row-form button.linklike {
+    min-height: 44px;
   }
 
   /* A row panel is the width of the row it opens beneath (`.table-panel` sizes
@@ -4322,6 +4366,29 @@
     font-size: 0.95rem;
     color: var(--ink-2);
     border-bottom: 2px solid var(--line);
+  }
+
+  /* The staff editor beside the host packet it was typed from (spec 005 T156).
+     Two columns that each wrap to full width on a phone; the numbers used to
+     live in a style={{}} on the page, which is why nothing else could match
+     them. Prefixed class names, never a bare state word, so nothing here can
+     outrank the base-layer element styles it sits beside (T061/T066). */
+  .itinerary-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    width: 100%;
+  }
+
+  .itinerary-editor,
+  .itinerary-packet {
+    flex: 1 1 22rem;
+    min-width: 0;
+  }
+
+  .itinerary-packet-view {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
   }
 
   /* Absence history as stacked cards (C2-4) — a 4-column table is unreadable on
