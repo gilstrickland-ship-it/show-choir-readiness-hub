@@ -11,6 +11,7 @@ import { describe, test, expect } from "vitest";
 import {
   defaultSeasonLabel,
   isRolloverScreen,
+  resolveRolloverScreen,
   rolloverProgress,
   rolloverStepKeys,
   seasonLabelForStartYear,
@@ -135,5 +136,31 @@ describe("isRolloverScreen", () => {
     expect(isRolloverScreen("archive")).toBe(false);
     expect(isRolloverScreen("constructor")).toBe(false);
     expect(isRolloverScreen("")).toBe(false);
+  });
+});
+
+describe("resolveRolloverScreen", () => {
+  test("a screen on this program's path is kept", () => {
+    expect(resolveRolloverScreen("students", true)).toBe("students");
+    expect(resolveRolloverScreen("activate", false)).toBe("activate");
+    expect(resolveRolloverScreen("done", false)).toBe("done");
+  });
+
+  test("a screen this program's path does NOT have falls back to the first", () => {
+    // `?step=students` for a program with nothing to carry across: its path is
+    // only new → activate, so there is no third step to be on. Reading it as
+    // "students" rendered a form the flow doesn't have AND asked the indicator
+    // to find a position for a step that isn't in its own list.
+    expect(resolveRolloverScreen("students", false)).toBe("new");
+    expect(resolveRolloverScreen("costumes", false)).toBe("new");
+    expect(resolveRolloverScreen("archive", true)).toBe("new");
+    expect(resolveRolloverScreen("constructor", true)).toBe("new");
+  });
+
+  test("and the indicator never indexes off the end of its own list", () => {
+    const p = rolloverProgress("students", false);
+    expect(p.position).toBe(1);
+    expect(p.total).toBe(2);
+    expect(p.steps[(p.position ?? 0) - 1].key).toBe("new");
   });
 });

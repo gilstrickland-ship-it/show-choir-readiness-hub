@@ -4,12 +4,7 @@ import { Restricted } from "../../Restricted";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/server";
 import { readFlash, oneParam } from "@/lib/flash";
-import {
-  isRolloverScreen,
-  rolloverProgress,
-  ROLLOVER_STEP_LABELS,
-  type RolloverScreen,
-} from "@/lib/seasons";
+import { resolveRolloverScreen, rolloverProgress, ROLLOVER_STEP_LABELS } from "@/lib/seasons";
 import { SubTabs } from "../../SubTabs";
 import { settingsTabs } from "@/lib/subnav";
 import { Flash } from "../../Flash";
@@ -56,8 +51,6 @@ export default async function RolloverPage({
   const isDirector = role === "director";
   const tz = program.timezone;
 
-  const stepParam = one("step") ?? "";
-  const screen: RolloverScreen = isRolloverScreen(stepParam) ? stepParam : "new";
   const newSeasonId = one("newSeason") ?? "";
   const flash = readFlash<RolloverSection>(sp, ROLLOVER_FLASH_MAPS);
 
@@ -79,6 +72,10 @@ export default async function RolloverPage({
   // instead would disagree with it for a program whose only prior season is
   // inactive.)
   const hasPrior = seasons.some((s) => s.id !== newSeasonId);
+  // One resolution of "which screen", used by BOTH the indicator and the branch
+  // below, so a `?step=` naming a screen this program's path doesn't have can't
+  // render one form while the indicator counts another.
+  const screen = resolveRolloverScreen(one("step") ?? "", hasPrior);
   const progress = rolloverProgress(screen, hasPrior);
 
   // Data needed only by the interactive steps.

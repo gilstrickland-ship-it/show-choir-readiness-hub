@@ -61,6 +61,21 @@ export function isRolloverScreen(value: string): value is RolloverScreen {
   return value === "done" || (ROLLOVER_STEPS as readonly string[]).includes(value);
 }
 
+// The screen this program is really on. `?step=` rides in the URL, so it can name
+// a screen that is not on THIS program's path — `?step=students` for a program
+// with nothing to carry across, whose path is only new → activate. That is a
+// hand-typed URL, so it fails closed to the first screen rather than rendering a
+// step the flow does not have (and rather than asking the indicator to find a
+// position for a step that is not in its own list).
+export function resolveRolloverScreen(
+  step: string,
+  hasPriorSeason: boolean,
+): RolloverScreen {
+  if (step === "done") return "done";
+  const keys = rolloverStepKeys(hasPriorSeason);
+  return (keys as readonly string[]).includes(step) ? (step as RolloverScreen) : "new";
+}
+
 // What each step is called, in the words a director would use out loud.
 export const ROLLOVER_STEP_LABELS: Record<RolloverStep, string> = {
   new: "Name the new season",
@@ -101,8 +116,14 @@ export function rolloverProgress(
   hasPriorSeason: boolean,
 ): RolloverProgress {
   const keys = rolloverStepKeys(hasPriorSeason);
-  const finished = screen === "done";
-  const at = finished ? keys.length : keys.indexOf(screen as RolloverStep);
+  const resolved = resolveRolloverScreen(screen, hasPriorSeason);
+  const finished = resolved === "done";
+  // `resolved` is on this path by construction, so indexOf cannot be -1 — but a
+  // negative index would read steps[-1] and throw, so it is clamped here too
+  // rather than trusted from two files away.
+  const at = finished
+    ? keys.length
+    : Math.max(0, keys.indexOf(resolved as RolloverStep));
   return {
     position: finished ? null : at + 1,
     total: keys.length,
