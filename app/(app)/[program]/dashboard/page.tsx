@@ -16,7 +16,12 @@ import { OPEN_ALTERATION_STATUSES } from "@/lib/costumes";
 import { loadGuideState, loadJourneyPanel } from "@/lib/guide";
 import { JourneyPanel } from "../JourneyPanel";
 import { StartSeasonCard } from "../StartSeasonCard";
-import { formatCents, seasonTotalsFromRow } from "@/lib/treasury";
+import {
+  COMMITMENT_CREATE_ROLES,
+  commitmentTotalsFromRow,
+  formatCents,
+  seasonTotalsFromRow,
+} from "@/lib/treasury";
 import { loadCompReadiness, type ReadinessCheck } from "@/lib/readiness";
 import {
   zonedWallToUtc,
@@ -305,6 +310,47 @@ export default async function DashboardPage({
         desc: `${n} guardian address${n === 1 ? " is" : "es are"} missing every announcement.`,
         href: `${base}/roster/email-issues`,
         action: "Fix addresses",
+      });
+    }
+  }
+
+  // Open commitments whose need-by has already passed (spec 006 R7). An open
+  // purchase order from a date that has gone by is money held out of the budget
+  // for something that may never happen, and it is a NAMED audit finding — a
+  // prior year's open POs are the first thing an auditor lists.
+  //
+  // NOTHING HERE CLOSES ANYTHING. Closing releases the remainder back to a
+  // budget line, and a balance that re-inflates on its own hides under-delivery;
+  // an explicit release is the moment the director learns what the number meant.
+  //
+  // The seat gate is the seats that can DO something: a treasurer closes it, and
+  // a director or admin is who chases the vendor or restates the amount. A board
+  // member reads the same count on the board snapshot instead.
+  if (
+    flags.treasury &&
+    COMMITMENT_CREATE_ROLES.includes(role) &&
+    !isSupport &&
+    seasonId
+  ) {
+    // The same SQL aggregate the commitments page and the board snapshot read
+    // (0021), so the three cannot disagree about how many are overdue. A failed
+    // read leaves the row out entirely rather than claiming "0 overdue".
+    const { data, error } = await supabase.rpc("commitment_totals", {
+      p_program_id: program.id,
+      p_season_id: seasonId,
+    });
+    const totals = error
+      ? null
+      : commitmentTotalsFromRow(Array.isArray(data) ? data[0] : data);
+    const n = totals?.staleCount ?? 0;
+    if (n > 0) {
+      inbox.push({
+        count: n,
+        tone: "warn",
+        title: `Commitment${n === 1 ? "" : "s"} past the date ${n === 1 ? "it was" : "they were"} needed`,
+        desc: "Still holding money out of the budget. Close each one to release what is left, or restate it.",
+        href: `${base}/treasury/commitments`,
+        action: "Review",
       });
     }
   }

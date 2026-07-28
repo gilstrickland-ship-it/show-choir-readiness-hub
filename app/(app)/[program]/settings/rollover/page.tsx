@@ -5,6 +5,11 @@ import { SETTINGS_ROLES } from "@/lib/nav";
 import { createClient } from "@/lib/supabase/server";
 import { readFlash, oneParam } from "@/lib/flash";
 import { resolveRolloverScreen, rolloverProgress, ROLLOVER_STEP_LABELS } from "@/lib/seasons";
+import {
+  commitmentTotalsFromRow,
+  formatCents,
+  type CommitmentTotals,
+} from "@/lib/treasury";
 import { SubTabs } from "../../SubTabs";
 import { settingsTabs } from "@/lib/subnav";
 import { Flash } from "../../Flash";
@@ -40,7 +45,7 @@ export default async function RolloverPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   if (!SETTINGS_ROLES.includes(role)) {
     return (
       <Restricted slug={slug} surface="Settings" role={role} allowed={SETTINGS_ROLES} />
@@ -89,6 +94,30 @@ export default async function RolloverPage({
             .order("sort_order", { ascending: true })
         ).data as { id: string; name: string; sort_order: number }[] | null) ?? []
       : [];
+
+  // What the season being left still has promised (spec 006 R7). The last step
+  // of a rollover is the natural moment to sweep it: open commitments carried
+  // into a new year are a NAMED audit finding, and once the app is looking at
+  // the new season nobody opens the old one's list again.
+  //
+  // IT CLOSES NOTHING. Closing releases the remainder back to a budget line, and
+  // a balance that re-inflates on its own hides under-delivery — the release has
+  // to be somebody's decision (R4). So this counts, says what it means, and
+  // links to the list.
+  //
+  // One SQL aggregate, the same one the commitments page and the board snapshot
+  // read, and a failed read renders nothing rather than "0 open".
+  let leftOpen: CommitmentTotals | null = null;
+  if (flags.treasury && season && screen === "activate") {
+    const { data, error } = await supabase.rpc("commitment_totals", {
+      p_program_id: program.id,
+      p_season_id: season.id,
+    });
+    leftOpen = error
+      ? null
+      : commitmentTotalsFromRow(Array.isArray(data) ? data[0] : data);
+  }
+  const stillOpen = leftOpen && leftOpen.openCount + leftOpen.expectedCount > 0;
 
   const title = progress.finished
     ? "You're rolled over"
@@ -201,6 +230,37 @@ export default async function RolloverPage({
             fromSeasonId={season?.id ?? null}
             supabase={supabase}
           />
+        )}
+
+        {screen === "activate" && stillOpen && season && (
+          <div className="alert-error">
+            <p>
+              <strong>
+                {season.label} still has{" "}
+                {leftOpen!.openCount > 0
+                  ? `${leftOpen!.openCount} open commitment${leftOpen!.openCount === 1 ? "" : "s"} holding ${formatCents(leftOpen!.openCommittedCents)} out of its budget`
+                  : ""}
+                {leftOpen!.openCount > 0 && leftOpen!.expectedCount > 0 ? ", and " : ""}
+                {leftOpen!.expectedCount > 0
+                  ? `${leftOpen!.expectedCount} still expected to come in (${formatCents(leftOpen!.openExpectedCents)})`
+                  : ""}
+                .
+              </strong>
+              {leftOpen!.staleCount > 0
+                ? ` ${leftOpen!.staleCount} of them ${leftOpen!.staleCount === 1 ? "is" : "are"} already past the date ${leftOpen!.staleCount === 1 ? "it was" : "they were"} needed.`
+                : ""}
+            </p>
+            <p>
+              Switching seasons does not close any of them and nothing here will
+              close them for you — releasing what is left is a decision somebody
+              makes, one purchase order at a time. Left open, they stay against{" "}
+              {season.label} and they are the first thing an audit asks about.{" "}
+              <Link href={`/${slug}/treasury/commitments`}>
+                Go through {season.label}&apos;s commitments
+              </Link>{" "}
+              first if you can — you can also come back to them afterwards.
+            </p>
+          </div>
         )}
 
         {screen === "activate" && (
