@@ -3,23 +3,28 @@ import { notFound } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
-import { formatDateTimeInTz, toZonedInputValue } from "@/lib/datetime";
-import { updateEvent, deleteEvent } from "../actions";
-import { EVENTS_WRITE_ROLES, EVENT_KINDS, EVENT_KIND_LABELS } from "@/lib/events";
+import { formatDateTimeInTz } from "@/lib/datetime";
+import { deleteEvent } from "../actions";
+import { EVENTS_WRITE_ROLES, EVENT_KIND_LABELS } from "@/lib/events";
 import { eventEnsembleIds } from "@/lib/competitions";
+import { Flash } from "../../Flash";
+import { readFlash, oneParam } from "@/lib/flash";
+import { EVENT_FLASH_MAPS, type EventSection } from "../shared";
+import { EventEdit, type EditableEvent } from "./EventEdit";
 
-// Single event edit/delete (§5a, T013). Each materialized repeat occurrence is
-// independently editable/deletable here. Times in program tz (Constitution VII).
-// Audience is any subset of ensembles (Feature 004) — zero = whole program.
+// One event (§5a, T013; re-shaped spec 005 Wave 11 / T159). Each materialized
+// repeat occurrence is its own event and is edited and deleted here.
+//
+// The page now reads the way every detail surface reads since Wave 7: the facts
+// in the open for anyone who can see the page, mutations behind labeled
+// disclosures, and messages in the section that owns what happened — the edit
+// panel for a save, the danger zone for a delete. Deleting takes two presses,
+// because an event and its history go with it and nothing brings them back.
 
-interface EventDetail {
+export const dynamic = "force-dynamic";
+
+interface EventDetail extends EditableEvent {
   id: string;
-  title: string;
-  kind: string;
-  starts_at: string | null;
-  ends_at: string | null;
-  location: string | null;
-  note: string | null;
 }
 
 interface EnsembleRow {
@@ -32,7 +37,9 @@ export default async function EventDetailPage({
   searchParams,
 }: {
   params: Promise<{ program: string; eventId: string }>;
-  searchParams: Promise<{ saved?: string; error?: string }>;
+  // Next hands back an ARRAY for a duplicated param, so every read goes through
+  // oneParam — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, eventId } = await params;
   const { program, role } = await getTenantContext(slug);
@@ -40,6 +47,7 @@ export default async function EventDetailPage({
   const canWrite = (EVENTS_WRITE_ROLES as readonly string[]).includes(role);
   const tz = program.timezone;
   const sp = await searchParams;
+  const one = (key: string): string | null => oneParam(sp, key);
 
   const supabase = await createClient();
   const { data: evData } = await supabase
@@ -60,127 +68,124 @@ export default async function EventDetailPage({
     .order("sort_order", { ascending: true });
   const ensembles = (ensData as EnsembleRow[] | null) ?? [];
 
+  const flash = readFlash<EventSection>(sp, EVENT_FLASH_MAPS);
+  // A refused save springs the edit panel open on the message that refused it.
+  const editOpen = canWrite && (one("edit") === "1" || flash.error?.section === "details");
+  const confirmDelete = canWrite && one("confirm") === "delete";
+
+  const kindLabel =
+    EVENT_KIND_LABELS[event.kind as keyof typeof EVENT_KIND_LABELS] ??
+    event.kind;
+  const whenLabel = event.starts_at
+    ? formatDateTimeInTz(event.starts_at, tz)
+    : "No time set";
+  const audience =
+    targetedEnsembleIds.length === 0
+      ? "The whole program"
+      : ensembles
+          .filter((e) => targetedEnsembleIds.includes(e.id))
+          .map((e) => e.name)
+          .join(", ");
+
   return (
     <section className="stack">
-      <p>
+      <p className="comp-back">
         <Link href={`/${slug}/events`}>← Events</Link>
       </p>
-      <h1>{event.title}</h1>
 
-      {sp.saved && <p className="alert-ok">Saved.</p>}
-      {sp.error === "title" && <p className="alert-error">An event needs a title.</p>}
-      {sp.error === "dates" && (
-        <p className="alert-error">The end time is before the start.</p>
-      )}
-      {sp.error === "ensemble" && (
-        <p className="alert-error">
-          Pick who this event is for from the ensembles listed.
-        </p>
-      )}
-      {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
+      <div className="comp-head">
+        <div className="comp-head-titles">
+          <div className="comp-status-row">
+            <span className="chip">{kindLabel}</span>
+          </div>
+          <h1 className="comp-h1">{event.title}</h1>
+          <p className="comp-meta">
+            {whenLabel} · {audience}
+          </p>
+        </div>
+      </div>
 
-      <p className="muted">
-        {event.starts_at ? formatDateTimeInTz(event.starts_at, tz) : "No time set"} · {EVENT_KIND_LABELS[event.kind as keyof typeof EVENT_KIND_LABELS] ?? event.kind}
-      </p>
-
-      {canWrite ? (
-        <>
-          <form action={updateEvent} className="stack">
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="eventId" value={event.id} />
-            <input type="hidden" name="tz" value={tz} />
-            <div className="row-inline">
-              <label>
-                Title
-                <input type="text" name="title" defaultValue={event.title} required />
-              </label>
-              <label>
-                Kind
-                <select name="kind" defaultValue={event.kind}>
-                  {EVENT_KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {EVENT_KIND_LABELS[k]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <fieldset className="stack">
-              <legend>Ensembles</legend>
-              <p className="muted">
-                No boxes ticked = whole program; tick one or more to target a subset.
-              </p>
-              <div className="row-inline" style={{ flexWrap: "wrap" }}>
-                {ensembles.map((e) => (
-                  <label key={e.id} className="row-inline">
-                    <input
-                      type="checkbox"
-                      name="ensemble_ids"
-                      value={e.id}
-                      defaultChecked={targetedEnsembleIds.includes(e.id)}
-                    />
-                    {e.name}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <div className="row-inline">
-              <label>
-                Starts
-                <input
-                  type="datetime-local"
-                  name="starts_at"
-                  defaultValue={toZonedInputValue(event.starts_at, tz)}
-                />
-              </label>
-              <label>
-                Ends
-                <input
-                  type="datetime-local"
-                  name="ends_at"
-                  defaultValue={toZonedInputValue(event.ends_at, tz)}
-                />
-              </label>
-              <label>
-                Location
-                <input type="text" name="location" defaultValue={event.location ?? ""} />
-              </label>
-            </div>
-            <label>
-              Note
-              <input type="text" name="note" defaultValue={event.note ?? ""} />
-            </label>
-            <button type="submit">Save changes</button>
-          </form>
-
-          <form action={deleteEvent}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="eventId" value={event.id} />
-            <button type="submit" className="danger">
-              Delete event
-            </button>
-          </form>
-        </>
-      ) : (
+      <section className="comp-section" id="details">
+        <div className="comp-section-head">
+          <h2>Details</h2>
+          <span className="comp-section-summary">{whenLabel}</span>
+        </div>
+        <Flash flash={flash} section="details" />
         <dl className="detail-list">
-          <dt>When</dt>
-          <dd>{formatDateTimeInTz(event.starts_at, tz)}</dd>
-          <dt>Ensembles</dt>
+          <dt>Starts</dt>
+          <dd>{whenLabel}</dd>
+          <dt>Ends</dt>
           <dd>
-            {targetedEnsembleIds.length === 0
-              ? "Whole program"
-              : ensembles
-                  .filter((e) => targetedEnsembleIds.includes(e.id))
-                  .map((e) => e.name)
-                  .join(", ")}
+            {event.ends_at ? (
+              formatDateTimeInTz(event.ends_at, tz)
+            ) : (
+              <span className="muted">Not set</span>
+            )}
           </dd>
-          <dt>Location</dt>
-          <dd>{event.location ?? "—"}</dd>
+          <dt>Who it&apos;s for</dt>
+          <dd>{audience}</dd>
+          <dt>Where</dt>
+          <dd>
+            {event.location ?? <span className="muted">Not set</span>}
+          </dd>
           <dt>Note</dt>
-          <dd>{event.note ?? "—"}</dd>
+          <dd>{event.note ?? <span className="muted">None</span>}</dd>
         </dl>
+        {canWrite && (
+          <EventEdit
+            programId={program.id}
+            slug={slug}
+            event={event}
+            tz={tz}
+            ensembles={ensembles}
+            targetedEnsembleIds={targetedEnsembleIds}
+            summary={`${whenLabel} · ${kindLabel}`}
+            open={editOpen}
+          />
+        )}
+      </section>
+
+      {canWrite && (
+        <section className="comp-section" id="danger">
+          <div className="comp-section-head">
+            <h2>Danger zone</h2>
+            <span className="comp-section-summary">
+              Deleting an event can&apos;t be undone
+            </span>
+          </div>
+          <Flash flash={flash} section="danger" />
+          <details open={confirmDelete}>
+            <summary className="comp-disclosure">
+              Delete this event — {event.title}
+            </summary>
+            {confirmDelete ? (
+              <div className="confirm-box stack">
+                <p>
+                  Delete {event.title}? A repeat makes one event per week, so
+                  this deletes only this one.
+                </p>
+                <form action={deleteEvent} className="row-inline">
+                  <input type="hidden" name="programId" value={program.id} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="eventId" value={event.id} />
+                  <button type="submit" className="danger">
+                    Confirm delete event
+                  </button>
+                  <Link href={`/${slug}/events/${event.id}`}>Cancel</Link>
+                </form>
+              </div>
+            ) : (
+              <p>
+                <Link
+                  className="linklike danger"
+                  href={`/${slug}/events/${event.id}?confirm=delete#danger`}
+                >
+                  Delete this event
+                </Link>
+              </p>
+            )}
+          </details>
+        </section>
       )}
     </section>
   );

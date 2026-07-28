@@ -3,15 +3,26 @@ import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { formatDateInTz, formatTimeInTz, zonedDateKey } from "@/lib/datetime";
-import { createEvent } from "./actions";
-import { EVENTS_WRITE_ROLES, EVENT_KINDS, EVENT_KIND_LABELS } from "@/lib/events";
+import { EVENTS_WRITE_ROLES } from "@/lib/events";
 import { eventEnsembleMap } from "@/lib/competitions";
+import { eventViewTabs, type EventViewTab } from "@/lib/subnav";
+import { SubTabs } from "../SubTabs";
+import { readFlash, oneParam } from "@/lib/flash";
+import { EVENTS_FLASH_MAPS, type EventsSection } from "./shared";
+import { AddEvent } from "./AddEvent";
 
-// Events calendar (§5a, T013) — week + month views, server-rendered, all times in
-// programs.timezone (Constitution VII). Events are deliberately thin (no
-// attendance/itinerary); they answer "what's happening this week" for the digest
-// and dashboard. Recurring events are materialized rows created via the repeat
-// helper below.
+// The events calendar (§5a, T013; re-shaped spec 005 Wave 11 / T159) — month and
+// week, server-rendered, every time in programs.timezone (Constitution VII).
+// Both views stay: a server-rendered calendar you can page through IS this
+// page's job, and month and week answer two different questions ("when is that
+// week of fittings" / "what is happening Thursday").
+//
+// What changed is the create form's standing. Wave 1 made Season the one place
+// you add things (US1, P6), and this page's always-open "Add an event" heading
+// was a second, competing primary path directly under the calendar. It is now
+// the Season drawer's "More options →" panel — a labeled disclosure holding the
+// fields a two-field drawer can't take — and only mutations sit in disclosures
+// here; the calendar, which is what the page is for, is what you see.
 
 interface EventRow {
   id: string;
@@ -51,7 +62,9 @@ export default async function EventsPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ view?: string; ref?: string; created?: string; error?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?view=a&view=b), so every
+  // read goes through oneParam — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -59,11 +72,21 @@ export default async function EventsPage({
   const canWrite = (EVENTS_WRITE_ROLES as readonly string[]).includes(role);
   const tz = program.timezone;
   const sp = await searchParams;
+  const one = (key: string): string | null => oneParam(sp, key);
 
-  const view = sp.view === "week" ? "week" : "month";
+  const view: EventViewTab = one("view") === "week" ? "week" : "month";
   const todayKey = zonedDateKey(new Date(), tz);
-  const refKey = sp.ref && /^\d{4}-\d{2}-\d{2}$/.test(sp.ref) ? sp.ref : todayKey;
+  const refParam = one("ref");
+  const refKey = refParam && /^\d{4}-\d{2}-\d{2}$/.test(refParam) ? refParam : todayKey;
   const ref = parseCivil(refKey);
+
+  // One `?ok=` and one `?error=`, resolved against this surface's map (shared.ts).
+  const flash = readFlash<EventsSection>(sp, EVENTS_FLASH_MAPS);
+  // `?add=event` is the Season drawer's "More options →" link AND the URL a
+  // refused save comes back on; a message with nowhere to render is worse than
+  // no message, so anything the flash resolved springs the panel too.
+  const addOpen =
+    canWrite && (one("add") === "event" || !!flash.ok || !!flash.error);
 
   // Build the visible grid of civil dates.
   let gridStart: Date;
@@ -143,37 +166,7 @@ export default async function EventsPage({
     <section className="stack">
       <h1>Events</h1>
 
-      {sp.created && <p className="alert-ok">Added {sp.created} event(s).</p>}
-      {sp.error === "title" && <p className="alert-error">An event needs a title.</p>}
-      {sp.error === "season" && (
-        <p className="alert-error">Activate a season before adding events.</p>
-      )}
-      {sp.error === "dates" && (
-        <p className="alert-error">The end time is before the start.</p>
-      )}
-      {sp.error === "ensemble" && (
-        <p className="alert-error">
-          Pick who this event is for from the ensembles listed.
-        </p>
-      )}
-      {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
-
-      <div className="settings-tabs">
-        <Link
-          href={`/${slug}/events?view=month&ref=${refKey}`}
-          aria-label="Month view"
-          aria-current={view === "month" ? "page" : undefined}
-        >
-          {view === "month" ? <strong>Month</strong> : "Month"}
-        </Link>
-        <Link
-          href={`/${slug}/events?view=week&ref=${refKey}`}
-          aria-label="Week view"
-          aria-current={view === "week" ? "page" : undefined}
-        >
-          {view === "week" ? <strong>Week</strong> : "Week"}
-        </Link>
-      </div>
+      <SubTabs strip={eventViewTabs(slug, view, refKey)} />
 
       <div className="row-inline" style={{ justifyContent: "space-between", width: "100%" }}>
         <Link href={`/${slug}/events?view=${view}&ref=${prevRef}`}>← Prev</Link>
@@ -226,82 +219,21 @@ export default async function EventsPage({
       </div>
 
       {canWrite && season && (
-        <>
-          <h2 id="add">Add an event</h2>
-          <form action={createEvent} className="stack">
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="seasonId" value={season.id} />
-            <input type="hidden" name="tz" value={tz} />
-            <div className="row-inline">
-              <label>
-                Title
-                <input type="text" name="title" required />
-              </label>
-              <label>
-                Kind
-                <select name="kind" defaultValue="rehearsal">
-                  {EVENT_KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {EVENT_KIND_LABELS[k]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <fieldset className="stack">
-              <legend>Ensembles</legend>
-              <p className="muted">
-                Leave every box unticked for a whole-program event; tick one or more
-                to target just those ensembles.
-              </p>
-              <div className="row-inline" style={{ flexWrap: "wrap" }}>
-                {ensembles.map((e) => (
-                  <label key={e.id} className="row-inline">
-                    <input type="checkbox" name="ensemble_ids" value={e.id} />
-                    {e.name}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <div className="row-inline">
-              <label>
-                Starts
-                <input type="datetime-local" name="starts_at" />
-              </label>
-              <label>
-                Ends
-                <input type="datetime-local" name="ends_at" />
-              </label>
-              <label>
-                Location
-                <input type="text" name="location" />
-              </label>
-              <label>
-                Repeat weekly ×
-                <input
-                  type="number"
-                  name="repeat_count"
-                  className="num"
-                  min="1"
-                  max="52"
-                  defaultValue="1"
-                />
-              </label>
-            </div>
-            <label>
-              Note
-              <input type="text" name="note" />
-            </label>
-            <p className="muted">
-              Repeat creates individual weekly rows you can edit or delete one at a time.
-            </p>
-            <button type="submit">Add event</button>
-          </form>
-        </>
+        <AddEvent
+          programId={program.id}
+          slug={slug}
+          seasonId={season.id}
+          tz={tz}
+          ensembles={ensembles}
+          open={addOpen}
+          flash={flash}
+        />
       )}
       {canWrite && !season && (
-        <p className="muted">No active season — events are season-scoped.</p>
+        <p className="muted">
+          No season yet — competitions, events, and trips all belong to a
+          season. <Link href={`/${slug}/season`}>Start yours on Season</Link>.
+        </p>
       )}
     </section>
   );

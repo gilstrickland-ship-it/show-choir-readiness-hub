@@ -259,7 +259,12 @@ export function QuickAdd({
                   <button type="submit">Add event</button>
                   <p className="muted">
                     Where it is, an end time, a note:{" "}
-                    <Link href={`${base}/events#add`}>More options →</Link>
+                    {/* `?add=event` opens the panel this link is pointing at
+                        (T159); the #add anchor still addresses it, so an old
+                        bookmark lands on the same disclosure, closed. */}
+                    <Link href={`${base}/events?add=event#add`}>
+                      More options →
+                    </Link>
                   </p>
                 </form>
               </details>

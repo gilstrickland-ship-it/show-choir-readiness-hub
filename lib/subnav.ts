@@ -164,6 +164,34 @@ export function settingsTabs(slug: string, active: SettingsTab): SubTabStrip {
   };
 }
 
+// Events — Month / Week. The one strip whose items are two VIEWS of a single
+// route rather than two sibling routes: the calendar is the same page either
+// way and `?view=` is only which shape of it you asked for. It belongs here
+// anyway, because that difference is invisible to the person reading it — it is
+// the same "one of these, and you are on this one" control — and because the
+// events calendar was the last surface still building that control by hand out
+// of `.settings-tabs`, the pre-redesign class T142 removed everywhere else, so
+// its tabs rendered smaller, lighter and in sentence case than the app's.
+//
+// `ref` rides along so switching shape keeps the month or the week you were
+// looking at instead of snapping back to today.
+export type EventViewTab = "month" | "week";
+
+export function eventViewTabs(
+  slug: string,
+  active: EventViewTab,
+  refKey: string,
+): SubTabStrip {
+  const base = `/${slug}/events`;
+  return {
+    active,
+    items: [
+      { key: "month", label: "Month", href: `${base}?view=month&ref=${refKey}` },
+      { key: "week", label: "Week", href: `${base}?view=week&ref=${refKey}` },
+    ],
+  };
+}
+
 // The heavy full-list editing routes under a competition. Since the
 // season-workflow redesign the competition landing is a one-page command center
 // (no tabs); these routes hold the deep editing flows and get a way back to it

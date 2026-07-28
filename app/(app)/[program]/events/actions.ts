@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
-import { zonedWallToUtc } from "@/lib/datetime";
+import { zonedWallToUtc, zonedDateKey } from "@/lib/datetime";
 import {
   EVENTS_WRITE_ROLES,
   EVENT_KINDS,
@@ -12,6 +12,12 @@ import {
 } from "@/lib/events";
 import { returnPath, programPath } from "@/lib/return-path";
 import { ensemblesInProgram, resolveSeasonId } from "@/lib/competitions";
+import type {
+  EventsOkKey,
+  EventsErrorKey,
+  EventOkKey,
+  EventErrorKey,
+} from "./shared";
 
 // General events CRUD + weekly repeat helper (§5a, T013). Writers: director/admin
 // (events_write). Times arrive as program-tz wall clock and store UTC
@@ -84,10 +90,16 @@ export async function createEvent(formData: FormData): Promise<void> {
   await requireRole(programId, EVENTS_WRITE_ROLES);
 
   // Quick-add from the Season page comes back to Season with the drawer's event
-  // section reopened on the same error message it always used.
+  // section reopened on the same error message it always used; the Events page's
+  // own form comes back with ITS panel reopened on the same code (T159), so both
+  // callers of this action put the message inside the form that produced it.
+  // Typed by the calendar's key union: a code no map defines is a compile error
+  // here rather than a blank alert there.
   const back = seasonReturn(formData, slug);
-  const fail = (code: string): string =>
-    back ? `${back}?error=${code}&add=event` : `${eventsPath(slug)}?error=${code}`;
+  const fail = (code: EventsErrorKey): string =>
+    back
+      ? `${back}?error=${code}&add=event`
+      : `${eventsPath(slug)}?error=${code}&add=event#add`;
 
   const title = str(formData, "title");
   if (!title) redirect(fail("title"));
@@ -101,15 +113,20 @@ export async function createEvent(formData: FormData): Promise<void> {
   const startsWall = str(formData, "starts_at");
   const endsWall = str(formData, "ends_at");
 
-  // An event added from the Season page must have a start: the spine is
-  // chronological, so an undated event would be created and then be invisible on
-  // the very page the director is looking at. The Events page's own create keeps
-  // allowing undated events — its calendar is not the only way to reach them.
-  if (back && !startsWall) redirect(fail("starts"));
+  // An event must have a start, whichever form made it. The spine is
+  // chronological and the calendar buckets by day, so an event with no start
+  // renders on NEITHER: it was created, reported as added, and then could not be
+  // found again from any surface in the product. The Season drawer already
+  // refused one; the Events page allowing it was the hole (T159).
+  if (!startsWall) redirect(fail("starts"));
 
   // An end before its start is a typo, every time. Checking the first occurrence
   // is enough: a weekly repeat shifts both ends by the same whole weeks.
   const firstStart = zonedWallToUtc(startsWall, tz);
+  // Unparseable is the same outcome as absent — a row whose starts_at ends up
+  // null is the invisible event above, arrived at from a hand-built post
+  // instead of an empty field.
+  if (!firstStart) redirect(fail("starts"));
   const firstEnd = zonedWallToUtc(endsWall, tz);
   if (firstStart && firstEnd && firstEnd.getTime() < firstStart.getTime()) {
     redirect(fail("dates"));
@@ -180,7 +197,13 @@ export async function createEvent(formData: FormData): Promise<void> {
     const key = `event-${(inserted as { id: string }[])[0]?.id ?? ""}`;
     redirect(`${back}?created=${key}#item-${key}`);
   }
-  redirect(`${eventsPath(slug)}?created=${rows.length}`);
+  // Land the calendar on the month (or week) the new events are actually in,
+  // not on today's: a fitting added for March is not a confirmation you can see
+  // if the page comes back showing January. `ref` is the same civil-date key the
+  // page's own Prev/Next links use, taken from the wall value that was typed.
+  const okKey: EventsOkKey = rows.length > 1 ? "created_repeat" : "created";
+  const ref = zonedDateKey(firstStart, tz);
+  redirect(`${eventsPath(slug)}?ok=${okKey}&ref=${ref}#add`);
 }
 
 export async function updateEvent(formData: FormData): Promise<void> {
@@ -193,10 +216,10 @@ export async function updateEvent(formData: FormData): Promise<void> {
   // Spine edit popover (Season page): failures reopen that row's popover, saves
   // land back on the spine. Allow-listed server-side; detail-page edits unchanged.
   const back = seasonReturn(formData, slug);
-  const fail = (code: string): string =>
+  const fail = (code: EventErrorKey): string =>
     back
       ? `${back}?error=${code}&edit=event-${eventId}`
-      : `${eventPath(slug, eventId)}?error=${code}`;
+      : `${eventPath(slug, eventId)}?error=${code}&edit=1#details`;
 
   // The spine popover edits three fields and sends three fields; everything it
   // doesn't send is left exactly as it is, instead of being cleared by a save
@@ -311,7 +334,8 @@ export async function updateEvent(formData: FormData): Promise<void> {
     revalidatePath(back);
     redirect(`${back}?saved=event-${eventId}#item-event-${eventId}`);
   }
-  redirect(`${eventPath(slug, eventId)}?saved=1`);
+  const okKey: EventOkKey = "saved";
+  redirect(`${eventPath(slug, eventId)}?ok=${okKey}#details`);
 }
 
 export async function deleteEvent(formData: FormData): Promise<void> {
@@ -321,7 +345,20 @@ export async function deleteEvent(formData: FormData): Promise<void> {
   await requireRole(programId, EVENTS_WRITE_ROLES);
 
   const supabase = await createClient();
-  await supabase.from("events").delete().eq("id", eventId).eq("program_id", programId);
+  // .select("id") makes this write authoritative, the same reason updateEvent
+  // needs it: an eventId from another program matches zero rows and returns NO
+  // error, so a discarded result had this action report a deletion that never
+  // happened. A refusal now says so, in the danger zone that asked for it.
+  const { data: deleted, error } = await supabase
+    .from("events")
+    .delete()
+    .eq("id", eventId)
+    .eq("program_id", programId)
+    .select("id");
+  if (error || ((deleted as { id: string }[] | null) ?? []).length === 0) {
+    const code: EventErrorKey = "delete";
+    redirect(`${eventPath(slug, eventId)}?error=${code}#danger`);
+  }
 
   revalidatePath(eventsPath(slug));
   redirect(eventsPath(slug));

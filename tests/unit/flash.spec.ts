@@ -35,6 +35,13 @@ import {
   entryAnchor,
   type LedgerErrorKey,
 } from "@/app/(app)/[program]/treasury/flash";
+import {
+  EVENTS_FLASH_MAPS,
+  EVENT_FLASH_MAPS,
+  type EventsOkKey,
+  type EventsErrorKey,
+  type EventErrorKey,
+} from "@/app/(app)/[program]/events/shared";
 
 const PROTOTYPE_KEYS = [
   "constructor",
@@ -279,6 +286,88 @@ describe("the ledger's contract", () => {
     for (const key of PROTOTYPE_KEYS) {
       expect(flashFrom(LEDGER_FLASH_MAPS.ok, key)).toBeNull();
       expect(flashFrom(LEDGER_FLASH_MAPS.error, key)).toBeNull();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+const EVENTS_ERROR_KEYS: EventsErrorKey[] = [
+  "title",
+  "starts",
+  "season",
+  "dates",
+  "ensemble",
+  "save",
+];
+
+const EVENT_ERROR_KEYS: EventErrorKey[] = [
+  "title",
+  "dates",
+  "ensemble",
+  "save",
+  "delete",
+];
+
+describe("the events surface's contract (spec 005 Wave 11)", () => {
+  test("the calendar has one message area: the panel that does the writing", () => {
+    for (const key of EVENTS_ERROR_KEYS) {
+      const entry = flashFrom(EVENTS_FLASH_MAPS.error, key);
+      expect(entry?.message ?? "", key).not.toBe("");
+      expect(entry?.section, key).toBe("add");
+    }
+    for (const key of ["created", "created_repeat"] as EventsOkKey[]) {
+      expect(flashFrom(EVENTS_FLASH_MAPS.ok, key)?.section, key).toBe("add");
+    }
+  });
+
+  test("the old ?created=<count> values are not keys", () => {
+    // The page used to read `?created=12` and print the number. The twelve new
+    // events are on the calendar directly above the message, so the count went
+    // with the param — and a stale bookmark now prints nothing rather than
+    // "Added 12 event(s)" over a calendar with none.
+    for (const stale of ["1", "12", "0"]) {
+      expect(flashFrom(EVENTS_FLASH_MAPS.ok, stale), stale).toBeNull();
+    }
+  });
+
+  test("one event's page tells a refused save from a refused delete", () => {
+    for (const key of ["title", "dates", "ensemble", "save"] as EventErrorKey[]) {
+      expect(flashFrom(EVENT_FLASH_MAPS.error, key)?.section, key).toBe(
+        "details",
+      );
+    }
+    // A delete that didn't happen must not spring the edit panel open — it
+    // belongs to the box that asked for it.
+    expect(flashFrom(EVENT_FLASH_MAPS.error, "delete")?.section).toBe("danger");
+    expect(flashFrom(EVENT_FLASH_MAPS.ok, "saved")?.section).toBe("details");
+  });
+
+  test("every key on both pages carries a non-empty message", () => {
+    for (const key of EVENT_ERROR_KEYS) {
+      expect(flashFrom(EVENT_FLASH_MAPS.error, key)?.message ?? "", key).not.toBe(
+        "",
+      );
+    }
+  });
+
+  test("an unrecognized code renders nothing on either page", () => {
+    // No fallback section here, deliberately: unlike money, an events code that
+    // no longer resolves is a URL someone typed, not a write that failed.
+    expect(readFlash({ error: "nope" }, EVENTS_FLASH_MAPS).error).toBeNull();
+    expect(readFlash({ error: "nope" }, EVENT_FLASH_MAPS).error).toBeNull();
+  });
+
+  test("a duplicated param never 500s and never resolves", () => {
+    expect(readFlash({ ok: ["created", "save"] }, EVENTS_FLASH_MAPS).ok).toBeNull();
+  });
+
+  test("rejects Object.prototype keys on all four maps", () => {
+    for (const key of PROTOTYPE_KEYS) {
+      expect(flashFrom(EVENTS_FLASH_MAPS.ok, key)).toBeNull();
+      expect(flashFrom(EVENTS_FLASH_MAPS.error, key)).toBeNull();
+      expect(flashFrom(EVENT_FLASH_MAPS.ok, key)).toBeNull();
+      expect(flashFrom(EVENT_FLASH_MAPS.error, key)).toBeNull();
     }
   });
 });

@@ -16,6 +16,7 @@ import {
   commsTabs,
   settingsTabs,
   competitionTabs,
+  eventViewTabs,
   type SubTabStrip,
 } from "@/lib/subnav";
 
@@ -141,6 +142,26 @@ describe("Competition children (was CompetitionTabs)", () => {
   });
 });
 
+// The events calendar's Month/Week switch (spec 005 Wave 11 / T159) was the
+// last strip in the app still built by hand, out of `.settings-tabs` — the
+// pre-redesign class this module exists to have removed. Two views of one
+// route, so what has to hold is that the ref rides along: switching shape must
+// keep the month you were looking at, not snap you back to today.
+describe("Events calendar (was the last hand-rolled strip)", () => {
+  test("both views, each keeping the reference date", () => {
+    expect(shape(eventViewTabs(SLUG, "month", "2026-03-07"))).toEqual([
+      ["Month", "/demo/events?view=month&ref=2026-03-07"],
+      ["Week", "/demo/events?view=week&ref=2026-03-07"],
+    ]);
+  });
+
+  test("the active view is the one highlighted", () => {
+    const strip = eventViewTabs(SLUG, "week", "2026-03-07");
+    expect(strip.active).toBe("week");
+    expect(strip.items.filter((i) => i.key === strip.active)).toHaveLength(1);
+  });
+});
+
 describe("every strip is well-formed", () => {
   const strips: [string, SubTabStrip][] = [
     ["roster", rosterTabs(SLUG, "import", true)],
@@ -156,6 +177,7 @@ describe("every strip is well-formed", () => {
     ],
     ["settings", settingsTabs(SLUG, "export")],
     ["competition", competitionTabs(SLUG, COMP, "meals")],
+    ["events", eventViewTabs(SLUG, "week", "2026-03-07")],
   ];
 
   test("keys are unique and the active key is one of them", () => {
