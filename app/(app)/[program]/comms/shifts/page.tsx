@@ -36,27 +36,33 @@ interface ShiftQueryRow extends ShiftRow {
   event_id: string | null;
 }
 
-// Messages the page owns — the create drawer, the signup link, and the
-// add-a-name form, none of which belong to a particular shift row.
+// Messages the page owns — the create drawer and the signup link, neither of
+// which belongs to a particular shift row.
 const ERR: Record<string, string> = {
   title: "A shift needs a title.",
-  name: "A signup needs a name.",
   season: "Activate a season before adding shifts.",
   save: "Couldn't save. Try again.",
   attach:
     "That competition, trip, or event isn't part of this program. Reload the page and pick one from the list.",
-  shift: "That shift isn't part of this program. Reload the page and try again.",
   share:
     "Couldn't make a signup link. The old link has been retired, so make a new one before sharing.",
 };
 
-// Messages that belong to ONE shift. They arrive with `?edit=<shiftId>`, which
-// is also what reopens that row's panel, so the message lands on the control
-// that produced it.
-const ROW_ERR: Record<string, string> = {
+// Messages that belong to ONE shift's EDIT PANEL. They arrive with
+// `?edit=<shiftId>`, which is also what reopens that panel, so the message lands
+// on the control that produced it.
+const PANEL_ERR: Record<string, string> = {
   title: "A shift needs a title.",
   in_use:
     "Couldn't delete this shift — something still refers to it, so it's still here.",
+};
+
+// Messages that belong to ONE shift's ADD-A-NAME form. Same `?edit=<shiftId>`
+// row address, but they must NOT spring the edit panel open: the control that
+// failed is the signup box on the card, and that is where the message renders.
+const SIGNUP_ERR: Record<string, string> = {
+  name: "A signup needs a name.",
+  shift: "That shift isn't part of this program. Reload the page and try again.",
 };
 
 // The code rides in the URL, so the lookup must be a lookup and not a walk up
@@ -184,13 +190,23 @@ export default async function ShiftsPage({
     return "Standalone";
   }
 
-  // A row's panel reopens on `?edit=<shiftId>` carrying its own message; without
-  // an `edit` the code belongs to the page (the create drawer or the link).
+  // `?edit=<shiftId>` addresses a ROW; the code decides which of that row's two
+  // controls owns the message. Without an `edit` the code belongs to the page
+  // (the create drawer or the signup link). A row-addressed code whose row is
+  // not on this page (a deleted shift, a season switch) would render nowhere at
+  // all, so it falls open to the page banner instead.
   const errorCode = one("error");
   const openId = canWrite ? one("edit") : null;
-  const rowError = openId ? message(ROW_ERR, errorCode) : null;
-  const pageError = openId ? null : message(ERR, errorCode);
-  const unknownError = !!errorCode && !rowError && !pageError;
+  const rowOnPage = !!openId && shifts.some((s) => s.id === openId);
+  const panelError = rowOnPage ? message(PANEL_ERR, errorCode) : null;
+  const signupError = rowOnPage ? message(SIGNUP_ERR, errorCode) : null;
+  const pageError =
+    panelError || signupError
+      ? null
+      : (message(ERR, errorCode) ??
+        message(PANEL_ERR, errorCode) ??
+        message(SIGNUP_ERR, errorCode));
+  const unknownError = !!errorCode && !panelError && !signupError && !pageError;
   // A create that came back rejected reopens the drawer with its message inside,
   // rather than dropping it at the top of a page the drawer is closed over.
   const DRAWER_CODES = ["title", "save", "attach", "season"];
@@ -307,8 +323,9 @@ export default async function ShiftsPage({
           signups={signupsByShift.get(s.id) ?? []}
           confirmedCount={confirmedByShift.get(s.id) ?? 0}
           canWrite={canWrite}
-          open={openId === s.id}
-          error={openId === s.id ? rowError : null}
+          open={openId === s.id && !!panelError}
+          error={openId === s.id ? panelError : null}
+          signupError={openId === s.id ? signupError : null}
         />
       ))}
     </section>

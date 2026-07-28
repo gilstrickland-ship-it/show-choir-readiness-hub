@@ -61,6 +61,7 @@ export function ShiftCard({
   canWrite,
   open,
   error,
+  signupError,
 }: {
   programId: string;
   slug: string;
@@ -71,7 +72,11 @@ export function ShiftCard({
   confirmedCount: number;
   canWrite: boolean;
   open: boolean;
+  // The Edit panel's own message.
   error: string | null;
+  // The add-a-name form's own message. Separate because a failed signup must
+  // NOT spring the Edit panel open — it renders on the box that failed.
+  signupError: string | null;
 }) {
   const openSlots = Math.max(0, shift.needed_count - confirmedCount);
 
@@ -138,6 +143,7 @@ export function ShiftCard({
 
       {canWrite && (
         <div className="stack" style={{ marginTop: "0.5rem" }}>
+          {signupError && <p className="alert-error">{signupError}</p>}
           <form action={addStaffSignup} className="row-inline">
             <input type="hidden" name="programId" value={programId} />
             <input type="hidden" name="slug" value={slug} />
@@ -147,6 +153,7 @@ export function ShiftCard({
               name="name"
               placeholder="Add volunteer name"
               aria-label="Volunteer name"
+              required
             />
             <input
               type="email"

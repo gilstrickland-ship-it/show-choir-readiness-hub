@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireRole, type Role } from "@/lib/auth";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { zonedWallToUtc } from "@/lib/datetime";
+import { programPath } from "@/lib/return-path";
 import { mintShareLink, revokeShareLinksForResource } from "@/lib/tokens";
 
 // Minting/revoking share links is director/admin only — the share_links RLS
@@ -22,15 +23,20 @@ function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
 }
 
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce "//evil.com/comms/shifts", which every
+// browser follows off-site. programPath validates the slug and fails closed.
 function shiftsPath(slug: string): string {
-  return `/${slug}/comms/shifts`;
+  return programPath(slug, "comms/shifts") ?? "/";
 }
 
-// A failure that belongs to ONE shift goes back to that shift: `?edit=` reopens
-// its Edit panel and the page renders the message inside it, instead of at the
-// top of a list the writer then has to scroll to find their row again (the
-// Wave-2 section-local error contract). With no shift id there is no row to
-// return to, so it falls back to the page-level message.
+// A failure that belongs to ONE shift goes back to that shift: `?edit=` names
+// the row, and the page renders the message on the control that produced it —
+// inside the Edit panel for an edit failure, next to the add-a-name form for a
+// signup failure — instead of at the top of a list the writer then has to
+// scroll to find their row again (the Wave-2 section-local error contract).
+// With no shift id there is no row to return to, so it falls back to the
+// page-level message.
 function rowErrorPath(slug: string, shiftId: string, code: string): string {
   if (!shiftId) return `${shiftsPath(slug)}?error=${code}`;
   const id = encodeURIComponent(shiftId);
@@ -53,12 +59,29 @@ const ATTACH_TABLES = {
 } as const;
 type AttachKind = keyof typeof ATTACH_TABLES;
 
+// What the drawer's one attach-to select posts: "" for standalone, or a
+// "<kind>:<id>" composite naming BOTH halves of the choice at once.
+//
+// It used to be two independent selects — a kind and a "which one" list that
+// held every competition, trip and event together — so a director could pick
+// "Trip" and then a competition. The help text said a mismatched pick was
+// "ignored"; it was not. The create was refused and the drawer, with everything
+// typed into it, was thrown away. One select cannot express the mismatch, so
+// there is nothing left to explain or to refuse.
+type AttachPick = { kind: AttachKind; id: string } | "standalone" | null;
+
 // Own-property check, not `in` — `in` walks the prototype chain, so a posted
-// attach_kind of "constructor" or "toString" would otherwise read as a valid
-// kind and hand a junk table name to the resolver.
-function attachKind(fd: FormData): AttachKind | null {
-  const kind = str(fd, "attach_kind");
-  return Object.hasOwn(ATTACH_TABLES, kind) ? (kind as AttachKind) : null;
+// kind of "constructor" or "toString" would otherwise read as a valid kind and
+// hand a junk table name to the resolver.
+function parseAttach(fd: FormData): AttachPick {
+  const raw = str(fd, "attach");
+  if (!raw) return "standalone";
+  const split = raw.indexOf(":");
+  if (split < 0) return null;
+  const kind = raw.slice(0, split);
+  const id = raw.slice(split + 1);
+  if (!id || !Object.hasOwn(ATTACH_TABLES, kind)) return null;
+  return { kind: kind as AttachKind, id };
 }
 
 // Spread the attach-to selection into exactly one of competition/trip/event (or
@@ -101,24 +124,24 @@ async function resolveInProgram(
 }
 
 // The attach-to columns for a create, with the posted id resolved inside this
-// program. A kind with no id is a standalone shift (the "Which one" select left
-// blank) — that stays allowed; an id that isn't ours is refused.
+// program. "Nothing (standalone)" stays allowed; an id that isn't ours, or a
+// composite that isn't one of ours to begin with, is refused.
 async function resolvedAttachColumns(
   supabase: Db,
   formData: FormData,
   programId: string,
 ): Promise<ReturnType<typeof attachColumns> | null> {
-  const kind = attachKind(formData);
-  const postedId = str(formData, "attach_id");
-  if (!kind || !postedId) return attachColumns(null, null);
+  const picked = parseAttach(formData);
+  if (picked === null) return null;
+  if (picked === "standalone") return attachColumns(null, null);
 
   const resolved = await resolveInProgram(
     supabase,
-    ATTACH_TABLES[kind],
-    postedId,
+    ATTACH_TABLES[picked.kind],
+    picked.id,
     programId,
   );
-  return resolved ? attachColumns(kind, resolved) : null;
+  return resolved ? attachColumns(picked.kind, resolved) : null;
 }
 
 export async function createShift(formData: FormData): Promise<void> {
@@ -225,8 +248,11 @@ export async function addStaffSignup(formData: FormData): Promise<void> {
   const shiftId = str(formData, "shiftId");
   await requireRole(programId, SHIFT_WRITE_ROLES);
 
+  // The add-a-name form lives ON a shift card, so its failures go back to that
+  // card — not to the top of a page of cards, where the message is nowhere near
+  // the box the name was typed into and the typing is gone besides.
   const name = str(formData, "name");
-  if (!name) redirect(`${shiftsPath(slug)}?error=name`);
+  if (!name) redirect(rowErrorPath(slug, shiftId, "name"));
 
   const supabase = await createClient();
 
@@ -239,7 +265,7 @@ export async function addStaffSignup(formData: FormData): Promise<void> {
     shiftId,
     programId,
   );
-  if (!resolvedShiftId) redirect(`${shiftsPath(slug)}?error=shift`);
+  if (!resolvedShiftId) redirect(rowErrorPath(slug, shiftId, "shift"));
 
   await supabase.from("shift_signups").insert({
     program_id: programId,

@@ -5,9 +5,14 @@ import { createShift } from "./actions";
 // form that makes a new one opens over it instead of parking a permanent
 // nine-input block at the bottom of the scroll.
 //
-// The attach-to pair (what this shift is for, then which one) is the only thing
-// here that needs explaining, so it says so once, next to the controls, and the
-// action resolves whatever is posted inside the program before it writes.
+// What a shift is FOR used to be two selects — a kind, and a "which one" list
+// that held every competition, trip and event at once — with help text promising
+// that a pick which didn't match the kind was "ignored". It was not: the create
+// was refused and the drawer, with everything typed into it, was thrown away.
+// It is one select now, and each option names both halves ("Competition ·
+// Regionals"), so the mismatch it explained away cannot be expressed. No client
+// JavaScript, no dependent dropdown — the value posts as "<kind>:<id>" and the
+// action resolves the id inside the program before it writes.
 
 export interface NamedOption {
   id: string;
@@ -83,47 +88,43 @@ export function AddShift({
               <input type="datetime-local" name="ends_at" />
             </label>
           </div>
-          <div className="row-inline">
-            <label>
-              What it&apos;s for
-              <select name="attach_kind" defaultValue="none">
-                <option value="none">Nothing (standalone)</option>
-                <option value="competition">Competition</option>
-                <option value="trip">Trip</option>
-                <option value="event">Event</option>
-              </select>
-            </label>
-            <label>
-              Which one
-              <select name="attach_id" defaultValue="">
-                <option value="">—</option>
+          <label>
+            What it&apos;s for
+            <select name="attach" defaultValue="">
+              <option value="">Nothing (standalone)</option>
+              {competitions.length > 0 && (
                 <optgroup label="Competitions">
                   {competitions.map((c) => (
-                    <option key={c.id} value={c.id}>
+                    <option key={c.id} value={`competition:${c.id}`}>
                       {c.name}
                     </option>
                   ))}
                 </optgroup>
+              )}
+              {trips.length > 0 && (
                 <optgroup label="Trips">
                   {trips.map((t) => (
-                    <option key={t.id} value={t.id}>
+                    <option key={t.id} value={`trip:${t.id}`}>
                       {t.name}
                     </option>
                   ))}
                 </optgroup>
+              )}
+              {events.length > 0 && (
                 <optgroup label="Events">
                   {events.map((e) => (
-                    <option key={e.id} value={e.id}>
+                    <option key={e.id} value={`event:${e.id}`}>
                       {e.name}
                     </option>
                   ))}
                 </optgroup>
-              </select>
-            </label>
-          </div>
+              )}
+            </select>
+          </label>
           <p className="muted">
-            Pick what the shift is for, then the matching one below it. Anything
-            picked that doesn&apos;t match is ignored.
+            A shift can hang off a competition, a trip or an event — or off
+            nothing at all. What it&apos;s for is set here and stays put; to move
+            it later, delete it and add it where it belongs.
           </p>
           <label>
             Notes
