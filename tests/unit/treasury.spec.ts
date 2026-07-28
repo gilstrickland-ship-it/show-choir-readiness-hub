@@ -16,17 +16,16 @@ import {
   actualForDirection,
   lineActualsFromRows,
   seasonTotalsFromRow,
+  summarizeSeasonLedger,
   totalForLine,
   ledgerPageRange,
   parsePageParam,
   monthKeyForDate,
   firstOfMonth,
   formatMonthKey,
-  listMonthsWithEntries,
   reconciledThroughMonth,
   LEDGER_PAGE_SIZE,
   UNCATEGORIZED_KEY,
-  type LedgerMonthRow,
 } from "@/lib/treasury";
 
 describe("parseDollarsToCents", () => {
@@ -192,6 +191,101 @@ describe("seasonTotalsFromRow", () => {
   });
 });
 
+// The board-snapshot PDF is the ONE money read that cannot call those SQL
+// aggregates: the export runner and the share-link routes build it on a
+// service-role client, where auth.uid() is null and private.ledger_may_read
+// refuses. So it pages the raw rows and reduces them here — and "the PDF agrees
+// with the page" is only true if this reduction IS the SQL's definition. These
+// pin the definition; tests/rls/ledger.spec.ts then runs both over the same rows
+// in real Postgres, past the row cap, and asserts they match.
+describe("summarizeSeasonLedger — the SQL aggregates, restated in TypeScript", () => {
+  const rows = [
+    { direction: "in", amount_cents: 100000, budget_line_id: "L1", entry_date: "2026-07-04" },
+    { direction: "in", amount_cents: 25000, budget_line_id: "L1", entry_date: "2026-07-19" },
+    { direction: "out", amount_cents: 40000, budget_line_id: "L2", entry_date: "2026-06-02" },
+    { direction: "out", amount_cents: 7500, budget_line_id: null, entry_date: "2026-06-30" },
+    { direction: "in", amount_cents: 500, budget_line_id: null, entry_date: "2026-05-11" },
+  ];
+
+  test("totals match ledger_season_totals field for field", () => {
+    expect(summarizeSeasonLedger(rows).totals).toEqual({
+      inCents: 125500,
+      outCents: 47500,
+      netCents: 78000,
+      entryCount: 5,
+      uncategorizedCount: 2,
+      uncategorizedCents: 8000,
+      months: ["2026-07", "2026-06", "2026-05"], // newest first, as array_agg orders it
+    });
+  });
+
+  test("byLine matches ledger_line_actuals, uncategorized in its own bucket", () => {
+    const { byLine } = summarizeSeasonLedger(rows);
+    expect(byLine.get("L1")).toEqual({ inCents: 125000, outCents: 0 });
+    expect(byLine.get("L2")).toEqual({ inCents: 0, outCents: 40000 });
+    expect(byLine.get(UNCATEGORIZED_KEY)).toEqual({ inCents: 500, outCents: 7500 });
+  });
+
+  // Same shape either way: PostgREST hands bigints back as numbers, node-postgres
+  // as strings, and one helper serves the app and the cross-path RLS test.
+  test("bigints delivered as strings count the same", () => {
+    const asStrings = rows.map((r) => ({ ...r, amount_cents: String(r.amount_cents) }));
+    expect(summarizeSeasonLedger(asStrings).totals).toEqual(
+      summarizeSeasonLedger(rows).totals,
+    );
+  });
+
+  // Principle V: a voided entry is not money. The fetch filters them out, and so
+  // does this — a total that counted one would be wrong in the direction that
+  // matters most (money that looks like it is still there).
+  test("voided rows count toward nothing", () => {
+    const withVoid = [
+      ...rows,
+      {
+        direction: "in",
+        amount_cents: 999999,
+        budget_line_id: "L1",
+        entry_date: "2026-07-05",
+        voided_at: "2026-07-06T00:00:00Z",
+      },
+    ];
+    expect(summarizeSeasonLedger(withVoid).totals).toEqual(
+      summarizeSeasonLedger(rows).totals,
+    );
+  });
+
+  test("an empty season is zeros and no months, not an absent answer", () => {
+    expect(summarizeSeasonLedger([]).totals).toEqual({
+      inCents: 0,
+      outCents: 0,
+      netCents: 0,
+      entryCount: 0,
+      uncategorizedCount: 0,
+      uncategorizedCents: 0,
+      months: [],
+    });
+  });
+
+  // A money reducer does not get to guess. An unreadable amount or an unknown
+  // direction means the READ is broken, and a broken read that still returns a
+  // plausible number is how a wrong balance reaches a board.
+  test("an unreadable amount throws instead of contributing zero", () => {
+    expect(() =>
+      summarizeSeasonLedger([
+        { direction: "in", amount_cents: "not money", budget_line_id: null, entry_date: "2026-07-04" },
+      ]),
+    ).toThrow(/unreadable amount/);
+  });
+
+  test("an unknown direction throws instead of being counted as an outflow", () => {
+    expect(() =>
+      summarizeSeasonLedger([
+        { direction: "sideways", amount_cents: 100, budget_line_id: null, entry_date: "2026-07-04" },
+      ]),
+    ).toThrow(/unknown direction/);
+  });
+});
+
 describe("lineActualsFromRows / actualForDirection / totalForLine", () => {
   const rows = [
     { budget_line_id: "L1", in_cents: 10000, out_cents: 0 },
@@ -339,16 +433,6 @@ describe("monthly reconciliation helpers (Wave L)", () => {
     expect(formatMonthKey("2025-12")).toBe("December 2025");
     expect(formatMonthKey(null)).toBe("—");
     expect(formatMonthKey("bad")).toBe("bad");
-  });
-
-  test("listMonthsWithEntries: distinct months of non-voided entries, newest first", () => {
-    const rows: LedgerMonthRow[] = [
-      { entry_date: "2026-05-03", voided_at: null },
-      { entry_date: "2026-05-20", voided_at: null }, // same month, dedup
-      { entry_date: "2026-07-01", voided_at: null },
-      { entry_date: "2026-06-15", voided_at: "2026-06-16" }, // voided → excluded
-    ];
-    expect(listMonthsWithEntries(rows)).toEqual(["2026-07", "2026-05"]);
   });
 
   test("reconciledThroughMonth returns the latest contiguous reconciled month", () => {

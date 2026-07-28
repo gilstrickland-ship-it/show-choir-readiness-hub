@@ -322,6 +322,108 @@ export interface LineActual {
   outCents: number;
 }
 
+// ---------------------------------------------------------------------------
+// The same aggregates in TypeScript — for the ONE read that cannot call them
+// ---------------------------------------------------------------------------
+// The board-snapshot PDF is rendered by the export-all runner and the share-link
+// routes on a SERVICE-ROLE client. There is no auth.uid() there, so
+// private.ledger_may_read refuses — correctly. A fiduciary read guard is not the
+// place to add an exception for convenience, so that path reads the season's
+// live entries directly (PAGED, so no row cap can truncate it — see
+// lib/pdf/queries.ts) and reduces them here.
+//
+// The reduction lives in one pure function, with the SQL definitions restated
+// field for field:
+//   .totals ≡ public.ledger_season_totals(program, season)
+//   .byLine ≡ public.ledger_line_actuals(program, season)
+// That is what makes "the PDF agrees with the page" a testable claim rather than
+// a hope: tests/unit/treasury.spec.ts pins the definitions, and
+// tests/rls/ledger.spec.ts runs BOTH paths over the same rows in real Postgres
+// (past the 1000-row cap) and asserts they match.
+
+// A ledger row as the raw select returns it. `amount_cents` is a bigint, which
+// arrives as a string from node-postgres and as a number from PostgREST; both
+// are accepted so one helper can serve both callers.
+export interface LedgerEntryRow {
+  direction: string;
+  amount_cents: number | string;
+  budget_line_id: string | null;
+  entry_date: string;
+  voided_at?: string | null;
+}
+
+export interface SeasonLedgerSummary {
+  totals: LedgerSeasonTotals;
+  byLine: Map<string, LineActual>;
+}
+
+// A money reducer does not get to guess. An amount that will not read as a
+// finite integer, or a direction that is neither 'in' nor 'out', means the read
+// itself is broken — and a broken read that returns a plausible number is how a
+// wrong balance reaches a board. Throw, and let the caller fail loudly.
+function amountOf(row: LedgerEntryRow): number {
+  const raw = row.amount_cents;
+  const n = typeof raw === "string" ? Number(raw) : raw;
+  if (typeof n !== "number" || !Number.isFinite(n)) {
+    throw new Error("ledger entry with an unreadable amount");
+  }
+  return n;
+}
+
+export function summarizeSeasonLedger(
+  rows: readonly LedgerEntryRow[],
+): SeasonLedgerSummary {
+  const byLine = new Map<string, LineActual>();
+  const months = new Set<string>();
+  let inCents = 0;
+  let outCents = 0;
+  let entryCount = 0;
+  let uncategorizedCount = 0;
+  let uncategorizedCents = 0;
+
+  for (const row of rows) {
+    // Voided entries never count toward any total (Principle V). The fetch
+    // already filters them; this is the belt to that suspenders, and it is what
+    // lets a test feed a mixed list and still get the SQL's answer.
+    if (row.voided_at) continue;
+    if (row.direction !== "in" && row.direction !== "out") {
+      throw new Error(`ledger entry with an unknown direction: ${row.direction}`);
+    }
+    const amount = amountOf(row);
+
+    entryCount += 1;
+    if (row.direction === "in") inCents += amount;
+    else outCents += amount;
+
+    const key = row.budget_line_id ?? UNCATEGORIZED_KEY;
+    const bucket = byLine.get(key) ?? { inCents: 0, outCents: 0 };
+    if (row.direction === "in") bucket.inCents += amount;
+    else bucket.outCents += amount;
+    byLine.set(key, bucket);
+
+    if (row.budget_line_id === null) {
+      uncategorizedCount += 1;
+      uncategorizedCents += amount;
+    }
+
+    const month = monthKeyForDate(row.entry_date);
+    if (month) months.add(month);
+  }
+
+  return {
+    totals: {
+      inCents,
+      outCents,
+      netCents: inCents - outCents,
+      entryCount,
+      uncategorizedCount,
+      uncategorizedCents,
+      months: [...months].sort((a, b) => b.localeCompare(a)),
+    },
+    byLine,
+  };
+}
+
 // public.ledger_line_actuals rows → lookup by budget line id. The row whose
 // budget_line_id is null is the uncategorized bucket; it is keyed under
 // UNCATEGORIZED_KEY so callers can ask for it by name.
@@ -412,24 +514,12 @@ export function formatMonthKey(monthKey: string | null | undefined): string {
   return name ? `${name} ${m[1]}` : String(monthKey);
 }
 
-export interface LedgerMonthRow {
-  entry_date: string;
-  voided_at: string | null;
-}
-
-// Distinct months (year-month keys) that carry at least one NON-VOIDED ledger
-// entry, newest first. Drives the reconciliation card's row list — a month is
-// reconcilable only once it has real activity; voided entries never anchor a
-// month on their own (Principle V).
-export function listMonthsWithEntries(rows: readonly LedgerMonthRow[]): string[] {
-  const set = new Set<string>();
-  for (const r of rows) {
-    if (r.voided_at) continue;
-    const key = monthKeyForDate(r.entry_date);
-    if (key) set.add(key);
-  }
-  return [...set].sort((a, b) => b.localeCompare(a));
-}
+// The month list a reconciliation run works from — distinct months carrying at
+// least one non-voided entry, newest first — now comes from the season
+// aggregate: `ledger_season_totals.months` on every screen, and the identical
+// field of summarizeSeasonLedger on the one service-role path that cannot call
+// it. One definition, so no surface can offer a month another surface does not
+// have.
 
 // The month the books are "reconciled through": the latest month-with-entries
 // such that it AND every earlier month-with-entries is marked reconciled. A gap

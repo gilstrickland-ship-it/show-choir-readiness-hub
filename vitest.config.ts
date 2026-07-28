@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 
 // ============================================================================
 // Octv Platform — Vitest config (T004, RLS suite)
@@ -11,6 +12,14 @@ import { defineConfig } from 'vitest/config';
 // ============================================================================
 
 export default defineConfig({
+  resolve: {
+    // Same "@/*" → project root alias the unit config has. One spec here reads a
+    // SQL aggregate and the app helper that has to agree with it, and compares
+    // them over the same rows; it imports that helper the way the app does.
+    alias: {
+      '@': fileURLToPath(new URL('.', import.meta.url)),
+    },
+  },
   test: {
     environment: 'node',
     globalSetup: ['./tests/rls/global-setup.ts'],

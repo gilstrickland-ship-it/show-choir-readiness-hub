@@ -11,6 +11,11 @@
 import { describe, test, expect } from 'vitest';
 import { A, B, SUPPORT_USER } from './fixtures';
 import { asUser, asAnon, raw, rlsSkipped, RLS_DENIED } from './harness';
+import {
+  summarizeSeasonLedger,
+  UNCATEGORIZED_KEY,
+  type LedgerEntryRow,
+} from '@/lib/treasury';
 
 const treasurer = () => asUser(A.treasurer);
 const board = () => asUser(A.board);
@@ -434,5 +439,110 @@ describe.skipIf(rlsSkipped())('0019 write functions — atomic, treasurer-only, 
       [A.ledgerVoided],
     );
     expect(err.message).toMatch(/un-voided/i);
+  });
+});
+
+// ============================================================================
+// The board-snapshot PDF agrees with the board-snapshot page (review F1)
+// ----------------------------------------------------------------------------
+// One money read in the app cannot call the 0019 aggregates: the board-snapshot
+// PDF is built by the export-all runner and the share-link routes on a
+// SERVICE-ROLE client, where auth.uid() is null and private.ledger_may_read
+// therefore refuses. Loosening that guard to admit a service-role caller would
+// carve an exception into a fiduciary read control, so the PDF pages the raw
+// rows instead and reduces them in TypeScript (lib/treasury summarizeSeasonLedger).
+//
+// That is only safe if the TypeScript reduction IS the SQL's definition. These
+// run BOTH over the same rows, in real Postgres, past PostgREST's 1000-row cap —
+// the point at which the old un-paginated fetch started printing a smaller
+// number to the board than the Reports page showed on screen. Everything happens
+// inside a rolled-back transaction, so no other spec sees these rows.
+// ============================================================================
+
+describe.skipIf(rlsSkipped())('board snapshot: the JS reduction equals the SQL aggregates', () => {
+  const CAP = 1000; // PostgREST max_rows — what the un-paginated fetch stopped at
+
+  // Read every live row of the season the way the PDF's paged fetch does.
+  // bigint and date come back as strings from node-postgres, which is exactly
+  // the shape the helper is written to accept.
+  const LIVE_ROWS = `
+    select direction,
+           amount_cents::text as amount_cents,
+           budget_line_id,
+           to_char(entry_date, 'YYYY-MM-DD') as entry_date,
+           voided_at
+      from ledger_entries
+     where program_id = $1 and season_id = $2 and voided_at is null
+     order by id`;
+
+  // 1,200 entries in one statement: a mix of directions, of dates across several
+  // months, and one in five deliberately left uncategorized.
+  const SEED = `
+    insert into ledger_entries
+      (program_id, season_id, entry_date, direction, amount_cents, budget_line_id, entered_by)
+    select $1, $2,
+           date '2026-01-01' + ((g * 7) % 200),
+           (case when g % 3 = 0 then 'in' else 'out' end)::ledger_entry_direction,
+           100 + g,
+           (case when g % 5 = 0 then null else $3::uuid end),
+           $4
+      from generate_series(1, 1200) g`;
+
+  test('every total matches, and the truncated read would NOT have', async () => {
+    const { sql, rows } = await treasurer().tx(async (c) => {
+      await c.query(SEED, [A.program, A.seasonActive, A.budgetLine, A.treasurer]);
+      const totals = await c.query<{
+        in_cents: string;
+        out_cents: string;
+        net_cents: string;
+        entry_count: string;
+        uncategorized_count: string;
+        uncategorized_cents: string;
+        months: string[];
+      }>(`select * from public.ledger_season_totals($1, $2)`, [A.program, A.seasonActive]);
+      const live = await c.query<LedgerEntryRow>(LIVE_ROWS, [A.program, A.seasonActive]);
+      return { sql: totals.rows[0], rows: live.rows };
+    });
+
+    // Past the cap on purpose: below it there is no defect to catch.
+    expect(rows.length).toBeGreaterThan(CAP);
+
+    const js = summarizeSeasonLedger(rows).totals;
+    expect(js.inCents).toBe(Number(sql.in_cents));
+    expect(js.outCents).toBe(Number(sql.out_cents));
+    expect(js.netCents).toBe(Number(sql.net_cents));
+    expect(js.entryCount).toBe(Number(sql.entry_count));
+    expect(js.uncategorizedCount).toBe(Number(sql.uncategorized_count));
+    expect(js.uncategorizedCents).toBe(Number(sql.uncategorized_cents));
+    expect(js.months).toEqual([...sql.months]);
+
+    // The defect itself, pinned: the same reduction over only the first page —
+    // which is all an un-paginated PostgREST read ever returned — reports a
+    // balance the board would have been read as if it were the whole season.
+    const truncated = summarizeSeasonLedger(rows.slice(0, CAP)).totals;
+    expect(truncated.netCents).not.toBe(js.netCents);
+    expect(truncated.entryCount).toBe(CAP);
+  });
+
+  test('per-line actuals match ledger_line_actuals, uncategorized bucket included', async () => {
+    const { sql, rows } = await treasurer().tx(async (c) => {
+      await c.query(SEED, [A.program, A.seasonActive, A.budgetLine, A.treasurer]);
+      const actuals = await c.query<{
+        budget_line_id: string | null;
+        in_cents: string;
+        out_cents: string;
+      }>(`select * from public.ledger_line_actuals($1, $2)`, [A.program, A.seasonActive]);
+      const live = await c.query<LedgerEntryRow>(LIVE_ROWS, [A.program, A.seasonActive]);
+      return { sql: actuals.rows, rows: live.rows };
+    });
+
+    const js = summarizeSeasonLedger(rows).byLine;
+    expect(js.size).toBe(sql.length);
+    for (const row of sql) {
+      const mine = js.get(row.budget_line_id ?? UNCATEGORIZED_KEY);
+      expect(mine).toBeDefined();
+      expect(mine?.inCents).toBe(Number(row.in_cents));
+      expect(mine?.outCents).toBe(Number(row.out_cents));
+    }
   });
 });
