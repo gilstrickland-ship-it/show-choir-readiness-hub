@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { checkRateLimit, IP_LIMIT, WINDOW_MS } from "@/lib/rate-limit";
+import {
+  isNoIndexPath,
+  NOINDEX_HEADER,
+  NOINDEX_VALUE,
+} from "@/lib/no-index";
 
 // Session refresh per the @supabase/ssr middleware pattern. Runs on every
 // matched request: rehydrates the Supabase auth cookie so server components and
@@ -29,8 +34,10 @@ function clientIp(request: NextRequest): string | null {
 }
 
 export async function middleware(request: NextRequest) {
+  const noIndex = isNoIndexPath(request.nextUrl.pathname);
+
   // Real 429 for the anonymous token surface, per-IP (§10, T039).
-  if (request.nextUrl.pathname.startsWith("/t/")) {
+  if (noIndex) {
     const ip = clientIp(request);
     if (ip) {
       const res = checkRateLimit(`mw-ip:${ip}`, IP_LIMIT, WINDOW_MS);
@@ -40,6 +47,7 @@ export async function middleware(request: NextRequest) {
           headers: {
             "Retry-After": String(Math.ceil(res.retryAfterMs / 1000)),
             "Content-Type": "text/plain",
+            [NOINDEX_HEADER]: NOINDEX_VALUE,
           },
         });
       }
@@ -77,6 +85,13 @@ export async function middleware(request: NextRequest) {
 
   // Touch the session so the cookie is refreshed when near expiry.
   await supabase.auth.getUser();
+
+  // No crawler may index the anonymous parent surface (lib/no-index). Set LAST,
+  // because `response` is replaced whenever the auth cookie is refreshed above —
+  // and set here rather than per-route because the subtree serves PDFs and
+  // calendar feeds from route handlers, which have no <head> to carry the meta
+  // tag the /t/ layout emits.
+  if (noIndex) response.headers.set(NOINDEX_HEADER, NOINDEX_VALUE);
 
   return response;
 }
