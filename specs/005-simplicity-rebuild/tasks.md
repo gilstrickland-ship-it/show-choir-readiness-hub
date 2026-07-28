@@ -50,9 +50,9 @@
 
 ## Phase 6 — Wave 6: People
 
-- [ ] T137a Roster depth (coverage): `roster/ensembles` + `[ensembleId]` adopt drawer-create / row-edit idioms; `roster/import` 3-phase flow gets a real step indicator ("Step 2 of 3") and its three error taxonomies become one reviewable list; `roster/settings` (size fields) plain-language pass.
-- [ ] T137 Guardian row (US10): two affordances (Send family links · Edit popover with update/reset/remove); merge near-synonym send actions into one canonical action; email-issues rows link to the in-place fix; student page grouped Profile · Sizes · Guardians · Status.
-- [ ] T138 Wave-6 verification: full gate + e2e + visual QA.
+- [X] T137a Roster depth (coverage): `roster/ensembles` + `[ensembleId]` adopt drawer-create / row-edit idioms; `roster/import` 3-phase flow gets a real step indicator ("Step 2 of 3") and its three error taxonomies become one reviewable list; `roster/settings` (size fields) plain-language pass.
+- [X] T137 Guardian row (US10): two affordances (Send family links · Edit popover with update/reset/remove); merge near-synonym send actions into one canonical action; email-issues rows link to the in-place fix; student page grouped Profile · Sizes · Guardians · Status.
+- [X] T138 Wave-6 verification: full gate + e2e + visual QA.
 
 ## Phase 7 — Wave 7: Hosting
 
@@ -65,6 +65,7 @@
 - [ ] T142 Shared components: one SubTabs (six copies retired, one visual class), one ShareLinkCard (three duplicated blocks retired), `<Flash>` helper adopted on hotspot pages (shifts, hosting, trip, treasury).
 - [ ] T143 Dead-weight cleanup: `support_access` flag removed from registry (real gate documented), `/costumes/alterations` stub deleted (backTarget default corrected), single `TIMEZONES` source, quick-change explainer sentence.
 - [ ] T143a Slug-redirect hardening (Wave-1 review follow-up): every module-page `fail()`/redirect that interpolates the form's `slug` goes through the fail-closed `returnPath`/`programPath` guard (protocol-relative open-redirect class fixed app-wide, F6 pattern); rollover page `ERR[sp.error]` gets the Object.hasOwn + array-typed-param guards like the season page.
+- [ ] T143b Row panels must leave the last table cell (Wave-6 residual, measured): on the 7-column ledger the `#fix-<id>` panel lands 466px into a 343px viewport — **0% visible at 375px**, and sizing cannot reach it; `.wardrobe-row-panel` has the same flaw on its 8-column table. Move the panel out of the last cell (full-width row beneath, or a details row spanning all columns) rather than resizing it.
 - [ ] T144 Wave-8 verification: full gate + e2e + visual QA (per-role mobile nav screenshots).
 
 ## Phase 10 — Wave 10: Comp-week children (runs after Wave 8)
