@@ -126,7 +126,7 @@ export function verifyToken(raw: string, storedHash: string): boolean {
   }
 }
 
-// ---- The three canonical footer links (email + staff display) --------------
+// ---- The canonical footer links (email + staff display) --------------------
 
 // Base URL for tokenized links (used in emails, so it MUST resolve to a real
 // host). Fallback chain:
@@ -153,23 +153,75 @@ export function appBaseUrl(): string {
   return `https://${brand.domain}`;
 }
 
-// Every generated email footers the same three links so parents learn one
-// pattern: everything is always in the latest email (§8a).
+// Every generated email footers the same links so parents learn one pattern:
+// everything is always in the latest email (§8a).
+//
+// WHICH links is the program's own feature answer — the same PARENT_SURFACE_FLAGS
+// rule the routes apply (stated in full further down this file). A program with
+// `shifts` off used to be emailed "sign up to volunteer" anyway, and the link
+// landed on the page that can only say "not available": the parent cannot tell
+// that apart from a broken app, and nothing they do fixes it. So the footer is
+// built from what this program actually has, exactly like the on-page footer
+// (app/(public)/t/[token]/parts.tsx).
+//
+// Unsubscribe is the one link that is ALWAYS there, whatever the flags say —
+// CAN-SPAM and RFC 8058 make "stop emailing me" unconditional (rule 5 below).
+
+// The surfaces a footer can link to, in the order parents read them. Every entry
+// is a ParentSurface, so the flag question is asked in exactly one place, and
+// each name is also its path segment under /t/<token>.
+export const GUARDIAN_LINK_SURFACES = [
+  "itinerary",
+  "signup",
+  "absence",
+] as const satisfies readonly ParentSurface[];
+
+export type GuardianLinkSurface = (typeof GUARDIAN_LINK_SURFACES)[number];
+
+// What each link is CALLED, and what it lets a family DO. Both live here for the
+// same reason SHARE_RESOURCE_LABELS does: the footer prints the label and the
+// family-links email lists the actions in a sentence, and those two must never
+// name a different set of things.
+const GUARDIAN_LINK_COPY: Record<
+  GuardianLinkSurface,
+  { label: string; action: string }
+> = {
+  itinerary: { label: "Itinerary", action: "view the itinerary" },
+  signup: { label: "Volunteer signup", action: "sign up to volunteer" },
+  absence: { label: "Report an absence", action: "report an absence" },
+};
+
+export interface GuardianLink {
+  surface: GuardianLinkSurface;
+  label: string;
+  action: string;
+  url: string;
+}
+
 export interface GuardianLinks {
-  itinerary: string;
-  signup: string;
-  absence: string;
+  // Only the surfaces this program has turned on, in footer order. Can be empty
+  // — a program that has turned every family feature off has nothing to link to,
+  // and callers must render that honestly rather than assume three links.
+  links: GuardianLink[];
   // Per-recipient unsubscribe page (CAN-SPAM footer link; §8a). Populated off the
-  // same raw token so a leaked footer link still exposes one family only.
+  // same raw token so a leaked footer link still exposes one family only, and
+  // never filtered out.
   unsubscribe: string;
 }
 
-export function guardianLinks(rawToken: string): GuardianLinks {
+export function guardianLinks(
+  rawToken: string,
+  program: FlaggableProgram,
+): GuardianLinks {
   const base = `${appBaseUrl()}/t/${rawToken}`;
   return {
-    itinerary: `${base}/itinerary`,
-    signup: `${base}/signup`,
-    absence: `${base}/absence`,
+    links: GUARDIAN_LINK_SURFACES.filter((surface) =>
+      parentSurfaceAvailable(program, surface),
+    ).map((surface) => ({
+      surface,
+      ...GUARDIAN_LINK_COPY[surface],
+      url: `${base}/${surface}`,
+    })),
     unsubscribe: `${base}/unsubscribe`,
   };
 }

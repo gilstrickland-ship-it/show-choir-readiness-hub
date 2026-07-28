@@ -626,7 +626,7 @@ export default async function LedgerPage({
   const metric = (value: string | null): string => value ?? "—";
 
   return (
-    <section className="stack money">
+    <section className="stack">
       <div className="page-head">
         <div className="page-head-titles">
           <p className="eyebrow">

@@ -28,6 +28,7 @@ import {
   DOCUMENT_TOKEN_KINDS,
   PARENT_SURFACE_FLAGS,
   SEASON_CALENDAR_FLAGS,
+  GUARDIAN_LINK_SURFACES,
   type ParentSurface,
 } from "@/lib/tokens";
 import type { FlagKey, FlaggableProgram } from "@/lib/flags";
@@ -304,13 +305,76 @@ describe("feature flags on the anonymous parent surface (Constitution VIII)", ()
   });
 });
 
-describe("guardianLinks (three canonical footer URLs)", () => {
-  test("builds itinerary / signup / absence / unsubscribe links off the raw token", () => {
-    const links = guardianLinks("RAWTOKEN");
-    expect(links.itinerary).toMatch(/\/t\/RAWTOKEN\/itinerary$/);
-    expect(links.signup).toMatch(/\/t\/RAWTOKEN\/signup$/);
-    expect(links.absence).toMatch(/\/t\/RAWTOKEN\/absence$/);
-    expect(links.unsubscribe).toMatch(/\/t\/RAWTOKEN\/unsubscribe$/);
+// The emailed footer is the same rule as the on-page one: a link to a surface
+// this program has turned off lands on "not available", and a parent cannot tell
+// that apart from a broken app. Unsubscribe is the documented exception and
+// survives every flag being off (CAN-SPAM / RFC 8058).
+describe("guardianLinks (the canonical footer URLs)", () => {
+  function program(
+    overrides: Partial<Record<FlagKey, boolean>>,
+  ): FlaggableProgram {
+    return {
+      tier: "program",
+      feature_overrides: overrides as Record<string, boolean>,
+    };
+  }
+
+  const ALL_ON = program({ competitions: true, comms: true, shifts: true });
+
+  test("builds itinerary / signup / absence off the raw token, in footer order", () => {
+    const { links } = guardianLinks("RAWTOKEN", ALL_ON);
+    expect(links.map((l) => l.surface)).toEqual([
+      "itinerary",
+      "signup",
+      "absence",
+    ]);
+    expect(links.map((l) => l.label)).toEqual([
+      "Itinerary",
+      "Volunteer signup",
+      "Report an absence",
+    ]);
+    expect(links.map((l) => l.url)).toEqual([
+      expect.stringMatching(/\/t\/RAWTOKEN\/itinerary$/),
+      expect.stringMatching(/\/t\/RAWTOKEN\/signup$/),
+      expect.stringMatching(/\/t\/RAWTOKEN\/absence$/),
+    ]);
+  });
+
+  test("unsubscribe is built off the same token", () => {
+    expect(guardianLinks("RAWTOKEN", ALL_ON).unsubscribe).toMatch(
+      /\/t\/RAWTOKEN\/unsubscribe$/,
+    );
+  });
+
+  // The finding itself: shifts off, and every announcement still invited the
+  // family to sign up to volunteer.
+  test("shifts off drops the volunteer signup link and nothing else", () => {
+    const { links } = guardianLinks("RAWTOKEN", program({ shifts: false }));
+    expect(links.map((l) => l.surface)).toEqual(["itinerary", "absence"]);
+  });
+
+  test("competitions off drops both the itinerary and the absence link", () => {
+    const { links } = guardianLinks("RAWTOKEN", program({ competitions: false }));
+    expect(links.map((l) => l.surface)).toEqual(["signup"]);
+  });
+
+  test("every flag off leaves NO links but still unsubscribes (CAN-SPAM)", () => {
+    const allOff = program({
+      competitions: false,
+      comms: false,
+      shifts: false,
+    });
+    const { links, unsubscribe } = guardianLinks("RAWTOKEN", allOff);
+    expect(links).toEqual([]);
+    expect(unsubscribe).toMatch(/\/t\/RAWTOKEN\/unsubscribe$/);
+  });
+
+  // Every surface the footer offers must be one the flag map knows about —
+  // otherwise a link could be added here that no rule ever gates.
+  test("every footer surface is in PARENT_SURFACE_FLAGS", () => {
+    for (const surface of GUARDIAN_LINK_SURFACES) {
+      expect(PARENT_SURFACE_FLAGS).toHaveProperty(surface);
+    }
   });
 });
 

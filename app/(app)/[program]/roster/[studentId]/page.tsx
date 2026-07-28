@@ -320,7 +320,13 @@ export default async function StudentDetailPage({
         </p>
       )}
       {guardiansError && <p className="alert-error">{guardiansError}</p>}
-      {token && <FreshLinks token={token} emailedNoKey={emailed === "nokey"} />}
+      {token && (
+        <FreshLinks
+          token={token}
+          program={program}
+          emailedNoKey={emailed === "nokey"}
+        />
+      )}
 
       <div className="stack guardian-list">
         {guardians.map((g) => (

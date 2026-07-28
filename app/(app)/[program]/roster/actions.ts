@@ -468,7 +468,7 @@ async function programName(
 
 // SEND FAMILY LINKS — the one per-guardian send, and the row's first affordance.
 // It mints a FRESH token (append-only, so links from earlier emails keep
-// working) and emails the three parent links to this one guardian. This is the
+// working) and emails this program's parent links to one guardian. This is the
 // everyday "get the family into the system" path. Graceful no-key mode: when
 // email isn't configured the send is 'skipped_no_key' and the page shows the
 // freshly-minted links so staff can copy them into a message instead.
@@ -522,7 +522,7 @@ export async function sendFamilyLinks(formData: FormData): Promise<void> {
 
 // RESET THIS FAMILY'S LINKS — mint a fresh guardian token AND revoke every prior
 // one, handing the raw token back to the page for a one-time on-screen display
-// so staff can copy the three canonical links. This BREAKS every link previously
+// so staff can copy the canonical links. This BREAKS every link previously
 // sent to this family, which is the point: it is the answer to "an email was
 // forwarded outside the family". It is not a send, so it does not sit on the row
 // next to one — it lives inside Edit behind a confirm.
@@ -557,7 +557,7 @@ export async function resetFamilyLinks(formData: FormData): Promise<void> {
 
 // BULK EMAIL LINKS TO ALL FAMILIES: for every guardian with email_status='ok'
 // (deduped per family by computeRecipients — one message per household), mint a
-// fresh token and email the three links. Reports sent / skipped / failed counts.
+// fresh token and email their links. Reports sent / skipped / failed counts.
 // No-key mode reports every recipient as skipped. Director/admin only.
 export async function emailAllGuardianLinks(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
