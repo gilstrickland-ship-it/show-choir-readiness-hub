@@ -76,7 +76,12 @@ test.describe("wardrobe (spec 005 Wave W)", () => {
     await expect(
       page.locator("summary", { hasText: "More filters" }),
     ).toBeVisible();
-    await expect(page.getByRole("link", { name: "Riser 3" })).toBeVisible();
+    // `exact` for the same reason as "Dress #1" above: a row's Edit trigger is
+    // a link whose accessible name embeds the piece name, and getByRole matches
+    // a substring, so an inexact name resolves to two elements.
+    await expect(
+      page.getByRole("link", { name: "Riser 3", exact: true }),
+    ).toBeVisible();
     // Every writable row carries its own edit control, in the pinned action
     // column.
     const editLinks = page.locator("table.members td.table-action a", {
