@@ -152,7 +152,7 @@ describe("createShift — one composite attach value, no mismatch to explain", (
       title: "Concessions crew",
       needed_count: 4,
     });
-    expect(redirectedTo).toContain("created=1");
+    expect(redirectedTo).toContain("ok=created");
   });
 
   test("a competition pick lands in the competition column only", async () => {
@@ -263,7 +263,7 @@ describe("addStaffSignup — the message goes back to the row that failed", () =
       source: "staff_entered",
       status: "confirmed",
     });
-    expect(redirectedTo).toContain("signed=1");
+    expect(redirectedTo).toContain("ok=signed");
   });
 });
 

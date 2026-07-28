@@ -1,7 +1,8 @@
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { ROSTER_WRITE_ROLES } from "@/lib/nav";
-import { RosterTabs } from "../RosterTabs";
+import { SubTabs } from "../../SubTabs";
+import { rosterTabs } from "@/lib/subnav";
 import { updateSizeFields } from "../actions";
 
 // Size-field config (architecture-spec §3, open decision §14.4). Programs measure
@@ -27,7 +28,7 @@ export default async function RosterSettingsPage({
 
   return (
     <section className="stack">
-      <RosterTabs slug={slug} active="settings" canWrite />
+      <SubTabs strip={rosterTabs(slug, "settings", true)} />
       <h1>Size fields</h1>
       <p className="muted">
         Programs measure differently, so you choose what gets measured. Whatever

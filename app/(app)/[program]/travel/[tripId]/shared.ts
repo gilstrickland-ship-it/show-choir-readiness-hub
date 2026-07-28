@@ -1,4 +1,5 @@
 import { TRAVEL_GROUP_KINDS, type TravelGroupKind } from "@/lib/travel";
+import { flashFrom, type FlashEntry, type FlashMap } from "@/lib/flash";
 
 // Shapes and small helpers shared by the trip page and its section components
 // (spec 005 Wave 2). The page runs every query once and hands the rows down;
@@ -47,57 +48,61 @@ export function studentName(s: {
 // the section that owns what failed — not in one page-top pile the reader has to
 // map back to a form. The two codes that could belong to either group section
 // also carry `?errorKind=bus|room`, so the message lands in exactly one.
+//
+// The shape and the prototype-safe lookup are the app's shared ones (lib/flash,
+// Wave 8 / T142); this file keeps what is the trip page's own — which codes
+// exist, what they say, and which of its four sections owns each.
 
-export type TripErrorSlot = "overview" | "group" | "chaperones" | "danger";
+export type TripSection = "overview" | "group" | "chaperones" | "danger";
 
-const TRIP_ERROR: Record<string, { slot: TripErrorSlot; message: string }> = {
-  name: { slot: "overview", message: "A trip needs a name." },
-  dates: { slot: "overview", message: "A trip can't end before it starts." },
+const TRIP_ERROR: FlashMap<string, TripSection> = {
+  name: { section: "overview", message: "A trip needs a name." },
+  dates: { section: "overview", message: "A trip can't end before it starts." },
   overnight_rooms: {
-    slot: "overview",
+    section: "overview",
     message: "Remove this trip's rooms before making it a day trip.",
   },
   competition: {
-    slot: "overview",
+    section: "overview",
     message: "Pick a competition from this program's list.",
   },
-  save: { slot: "overview", message: "Couldn't save the trip. Try again." },
-  group: { slot: "group", message: "A bus or a room needs a name." },
+  save: { section: "overview", message: "Couldn't save the trip. Try again." },
+  group: { section: "group", message: "A bus or a room needs a name." },
   group_missing: {
-    slot: "group",
+    section: "group",
     message: "That bus or room isn't on this trip anymore.",
   },
   group_delete: {
-    slot: "group",
+    section: "group",
     message: "Couldn't delete that bus or room. Try again.",
   },
   room_daytrip: {
-    slot: "group",
+    section: "group",
     message: "Rooms are for overnight trips — turn on Overnight in Overview first.",
   },
-  assign: { slot: "group", message: "Couldn't place that student. Try again." },
+  assign: { section: "group", message: "Couldn't place that student. Try again." },
   student: {
-    slot: "group",
+    section: "group",
     message: "That student isn't on this trip's roster.",
   },
   chaperone: {
-    slot: "chaperones",
+    section: "chaperones",
     message: "Pick a guardian or type a name for the chaperone.",
   },
   chaperone_group: {
-    slot: "chaperones",
+    section: "chaperones",
     message: "That bus or room isn't on this trip anymore.",
   },
   chaperone_guardian: {
-    slot: "chaperones",
+    section: "chaperones",
     message: "Pick a parent from this program's list.",
   },
   chaperone_name: {
-    slot: "chaperones",
+    section: "chaperones",
     message: "Keep a one-off helper's name under 120 characters.",
   },
   trip_delete: {
-    slot: "danger",
+    section: "danger",
     message: "Couldn't delete this trip. Try again.",
   },
 };
@@ -105,11 +110,8 @@ const TRIP_ERROR: Record<string, { slot: TripErrorSlot; message: string }> = {
 // The code rides in the URL, so the lookup has to be a lookup and not a walk up
 // Object.prototype — ?error=constructor would otherwise hand React a function to
 // render. Anything unrecognized shows nothing, as it always did.
-export function tripError(
-  code: string | null,
-): { slot: TripErrorSlot; message: string } | null {
-  if (!code || !Object.hasOwn(TRIP_ERROR, code)) return null;
-  return TRIP_ERROR[code];
+export function tripError(code: string | null): FlashEntry<TripSection> | null {
+  return flashFrom(TRIP_ERROR, code);
 }
 
 // A group kind off the URL (?errorKind=, ?conflictKind=), or null when it isn't

@@ -5,6 +5,12 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { programPath } from "@/lib/return-path";
+import {
+  entryAnchor,
+  isRowLedgerError,
+  type LedgerErrorKey,
+  type LedgerOkKey,
+} from "./flash";
 import { zonedDateKey } from "@/lib/datetime";
 import {
   TREASURY_WRITE_ROLES,
@@ -49,11 +55,19 @@ function ledgerPath(slug: string): string {
 // the row again (the Wave-2 section-local error contract). The page falls the
 // message back to a page-level banner when that row will not actually render —
 // without an entry id there is no row to return to at all.
-function rowErrorPath(slug: string, entryId: string, code: string): string {
+// Which of the two it is, is the MAP's answer (flash.ts), not this file's.
+function fail(slug: string, key: LedgerErrorKey, entryId?: string): string {
   const base = ledgerPath(slug);
-  if (!entryId) return `${base}?error=${code}`;
-  const id = encodeURIComponent(entryId);
-  return `${base}?edit=${id}&error=${code}#fix-${id}`;
+  if (isRowLedgerError(key) && entryId) {
+    const id = encodeURIComponent(entryId);
+    return `${base}?edit=${id}&error=${key}#${entryAnchor(id)}`;
+  }
+  return `${base}?error=${key}`;
+}
+
+// The success half of the same contract: one `?ok=<key>`.
+function done(slug: string, key: LedgerOkKey): string {
+  return `${ledgerPath(slug)}?ok=${key}`;
 }
 
 // The 0020 money functions raise a distinct SQLSTATE per outcome, so the error
@@ -75,11 +89,11 @@ const OC = {
 
 // `code` on a PostgREST error is the SQLSTATE verbatim. Own-property lookup, not
 // `in`, for the same reason every error map in the app uses it.
-function codeMessage(
-  map: Record<string, string>,
+function codeMessage<T extends string>(
+  map: Record<string, T>,
   error: { code?: string } | null,
-  fallback: string,
-): string {
+  fallback: T,
+): T {
   const code = error?.code;
   return code && Object.hasOwn(map, code) ? map[code] : fallback;
 }
@@ -198,7 +212,7 @@ async function uploadReceipt(
 ): Promise<string | null> {
   if (!(file instanceof File) || file.size === 0) return null;
   if (!RECEIPT_TYPES.has(file.type)) {
-    redirect(`${ledgerPath(slug)}?error=receipt_type`);
+    redirect(fail(slug, "receipt_type"));
   }
   const path = `${programId}/${Date.now()}-${sanitizeName(file.name)}`;
   const bytes = Buffer.from(await file.arrayBuffer());
@@ -206,7 +220,7 @@ async function uploadReceipt(
     .from("receipts")
     .upload(path, bytes, { contentType: file.type, upsert: false });
   if (error) {
-    redirect(`${ledgerPath(slug)}?error=receipt_upload`);
+    redirect(fail(slug, "receipt_upload"));
   }
   return path;
 }
@@ -226,7 +240,7 @@ export async function addEntry(formData: FormData): Promise<void> {
   const postedDate = String(formData.get("entry_date") ?? "").trim();
 
   if (!seasonId || !direction || amount === null || amount <= 0) {
-    redirect(`${ledgerPath(slug)}?error=entry`);
+    redirect(fail(slug, "entry"));
   }
 
   const supabase = await createClient();
@@ -245,7 +259,7 @@ export async function addEntry(formData: FormData): Promise<void> {
       .maybeSingle();
     const tz = (prog as { timezone: string } | null)?.timezone;
     if (!tz) {
-      redirect(`${ledgerPath(slug)}?error=entry`);
+      redirect(fail(slug, "entry"));
     }
     entryDate = zonedDateKey(new Date(), tz);
   }
@@ -276,10 +290,10 @@ export async function addEntry(formData: FormData): Promise<void> {
     ),
   ]);
   if (!season) {
-    redirect(`${ledgerPath(slug)}?error=entry`);
+    redirect(fail(slug, "entry"));
   }
   if (budgetLineId === false || competitionId === false || tripId === false) {
-    redirect(`${ledgerPath(slug)}?error=entry_tag`);
+    redirect(fail(slug, "entry_tag"));
   }
 
   // Tracked separately from `receiptPath` because only an object THIS request
@@ -338,21 +352,24 @@ export async function addEntry(formData: FormData): Promise<void> {
     // Every rejection used to read as advice about the amount format, including
     // "that competition is from last season". One code, one sentence (0020).
     redirect(
-      `${ledgerPath(slug)}?error=${codeMessage(
-        {
-          [OC.amount]: "entry",
-          [OC.season]: "entry_season",
-          [OC.budgetLine]: "entry_line",
-          [OC.competition]: "entry_competition",
-          [OC.trip]: "entry_trip",
-        },
-        error,
-        "entry",
-      )}`,
+      fail(
+        slug,
+        codeMessage<LedgerErrorKey>(
+          {
+            [OC.amount]: "entry",
+            [OC.season]: "entry_season",
+            [OC.budgetLine]: "entry_line",
+            [OC.competition]: "entry_competition",
+            [OC.trip]: "entry_trip",
+          },
+          error,
+          "entry",
+        ),
+      ),
     );
   }
   revalidatePath(ledgerPath(slug));
-  redirect(`${ledgerPath(slug)}?saved=1`);
+  redirect(done(slug, "saved"));
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +386,7 @@ export async function voidEntry(formData: FormData): Promise<void> {
 
   const reason = String(formData.get("reason") ?? "").trim();
   if (!reason) {
-    redirect(rowErrorPath(slug, entryId, "void_reason"));
+    redirect(fail(slug, "void_reason", entryId));
   }
 
   const supabase = await createClient();
@@ -384,10 +401,9 @@ export async function voidEntry(formData: FormData): Promise<void> {
   });
   if (error || voided !== true) {
     redirect(
-      rowErrorPath(
+      fail(
         slug,
-        entryId,
-        codeMessage(
+        codeMessage<LedgerErrorKey>(
           {
             [OC.notOurs]: "void_missing",
             [OC.alreadyVoided]: "void_already",
@@ -396,6 +412,7 @@ export async function voidEntry(formData: FormData): Promise<void> {
           error,
           "void",
         ),
+        entryId,
       ),
     );
   }
@@ -407,7 +424,7 @@ export async function voidEntry(formData: FormData): Promise<void> {
       `${ledgerPath(slug)}?reenter=${encodeURIComponent(entryId)}#add-entry`,
     );
   }
-  redirect(`${ledgerPath(slug)}?saved=1`);
+  redirect(done(slug, "saved"));
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +446,7 @@ export async function markReconciled(formData: FormData): Promise<void> {
   const actor = await requireRole(programId, TREASURY_WRITE_ROLES);
 
   if (!MONTH_KEY_RE.test(monthKey)) {
-    redirect(`${ledgerPath(slug)}?error=reconcile`);
+    redirect(fail(slug, "reconcile"));
   }
 
   const supabase = await createClient();
@@ -441,11 +458,11 @@ export async function markReconciled(formData: FormData): Promise<void> {
   });
   // A duplicate (already reconciled) is a benign no-op, not an error surface.
   if (error && error.code !== "23505") {
-    redirect(`${ledgerPath(slug)}?error=reconcile`);
+    redirect(fail(slug, "reconcile"));
   }
 
   revalidatePath(ledgerPath(slug));
-  redirect(`${ledgerPath(slug)}?saved=1`);
+  redirect(done(slug, "saved"));
 }
 
 export async function unmarkReconciled(formData: FormData): Promise<void> {
@@ -455,7 +472,7 @@ export async function unmarkReconciled(formData: FormData): Promise<void> {
   await requireRole(programId, TREASURY_WRITE_ROLES);
 
   if (!MONTH_KEY_RE.test(monthKey)) {
-    redirect(`${ledgerPath(slug)}?error=reconcile`);
+    redirect(fail(slug, "reconcile"));
   }
 
   const supabase = await createClient();
@@ -465,11 +482,11 @@ export async function unmarkReconciled(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .eq("month", firstOfMonth(monthKey));
   if (error) {
-    redirect(`${ledgerPath(slug)}?error=reconcile`);
+    redirect(fail(slug, "reconcile"));
   }
 
   revalidatePath(ledgerPath(slug));
-  redirect(`${ledgerPath(slug)}?saved=1`);
+  redirect(done(slug, "saved"));
 }
 
 // ---------------------------------------------------------------------------
@@ -489,7 +506,7 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
   await requireRole(programId, TREASURY_WRITE_ROLES);
 
   if (!budgetLineId || !entryId) {
-    redirect(rowErrorPath(slug, entryId, "categorize"));
+    redirect(fail(slug, "categorize", entryId));
   }
 
   const supabase = await createClient();
@@ -505,10 +522,9 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
     // that had already worked. 0020 tells them apart (see its header): the
     // second press now says the entry is filed, because it is.
     redirect(
-      rowErrorPath(
+      fail(
         slug,
-        entryId,
-        codeMessage(
+        codeMessage<LedgerErrorKey>(
           {
             [OC.notOurs]: "categorize_missing",
             [OC.alreadyFiled]: "categorize_already",
@@ -520,10 +536,11 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
           error,
           "categorize",
         ),
+        entryId,
       ),
     );
   }
 
   revalidatePath(ledgerPath(slug));
-  redirect(`${ledgerPath(slug)}?saved=1`);
+  redirect(done(slug, "saved"));
 }

@@ -3,7 +3,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
-import { RosterTabs } from "../RosterTabs";
+import { SubTabs } from "../../SubTabs";
+import { rosterTabs } from "@/lib/subnav";
 import {
   GUARDIAN_EMAIL_STATUS_LABELS,
   guardianAnchor,
@@ -74,7 +75,7 @@ export default async function EmailIssuesPage({
 
   return (
     <section className="stack">
-      <RosterTabs slug={slug} active="directory" canWrite={canWrite} />
+      <SubTabs strip={rosterTabs(slug, "directory", canWrite)} />
       <p>
         <Link href={`/${slug}/roster`}>← Directory</Link>
       </p>

@@ -9,7 +9,8 @@ import {
   parsePieceCondition,
   pieceSearchTerm,
 } from "@/lib/costumes";
-import { CostumeTabs } from "../CostumeTabs";
+import { SubTabs } from "../../SubTabs";
+import { costumeTabs } from "@/lib/subnav";
 import { AddPiece } from "./AddPiece";
 import { InventoryFilters } from "./InventoryFilters";
 import { PieceRow, type PieceListRow } from "./PieceRow";
@@ -142,7 +143,7 @@ export default async function CostumesInventoryPage({
         )}
       </div>
 
-      <CostumeTabs slug={slug} active="inventory" />
+      <SubTabs strip={costumeTabs(slug, "inventory")} />
 
       <p className="muted">
         Everything the program owns, kept from year to year. Props and set pieces

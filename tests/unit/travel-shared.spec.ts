@@ -21,12 +21,12 @@ import {
 describe("tripError", () => {
   test("resolves a known code to its section and message", () => {
     expect(tripError("name")).toEqual({
-      slot: "overview",
+      section: "overview",
       message: "A trip needs a name.",
     });
-    expect(tripError("group")?.slot).toBe("group");
-    expect(tripError("chaperone")?.slot).toBe("chaperones");
-    expect(tripError("trip_delete")?.slot).toBe("danger");
+    expect(tripError("group")?.section).toBe("group");
+    expect(tripError("chaperone")?.section).toBe("chaperones");
+    expect(tripError("trip_delete")?.section).toBe("danger");
   });
 
   test("returns null for an absent or unrecognized code", () => {

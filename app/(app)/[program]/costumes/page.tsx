@@ -12,7 +12,8 @@ import {
   type PieceKind,
   type AlterationStatus,
 } from "@/lib/costumes";
-import { CostumeTabs } from "./CostumeTabs";
+import { SubTabs } from "../SubTabs";
+import { costumeTabs } from "@/lib/subnav";
 import { AltQueue, type QueueItem } from "./AltQueue";
 
 // Wardrobe landing — the Alterations queue, which is the tab this seat works
@@ -243,7 +244,7 @@ export default async function WardrobePage({
         </div>
       </div>
 
-      <CostumeTabs slug={slug} active="alterations" />
+      <SubTabs strip={costumeTabs(slug, "alterations")} />
 
       {!season && <p className="muted">No active season — nothing to alter yet.</p>}
       {one("saved") && <p className="alert-ok">Saved.</p>}

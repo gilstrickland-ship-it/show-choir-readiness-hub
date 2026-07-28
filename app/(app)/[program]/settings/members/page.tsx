@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import type { Role } from "@/lib/auth";
 import { inviteMember, reRoleMember, removeMember } from "../actions";
-import { SettingsTabs } from "../SettingsTabs";
+import { SubTabs } from "../../SubTabs";
+import { settingsTabs } from "@/lib/subnav";
 
 const ROLE_OPTIONS: readonly { value: Role; label: string }[] = [
   { value: "director", label: "Director" },
@@ -105,7 +106,7 @@ export default async function MembersPage({
         </div>
       </div>
 
-      <SettingsTabs slug={slug} active="members" />
+      <SubTabs strip={settingsTabs(slug, "members")} />
 
       {saved && <p className="alert-ok">Saved.</p>}
       {invited && (

@@ -3,7 +3,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { ATTENDANCE_WRITE_ROLES } from "@/lib/competitions";
-import { CompetitionTabs } from "../CompetitionTabs";
+import { SubTabs } from "../../../SubTabs";
+import { competitionTabs } from "@/lib/subnav";
 import { setAttendance } from "./actions";
 
 // Attendance screen (§5, T012) — mobile-first roster list with a three-way
@@ -64,7 +65,7 @@ export default async function AttendancePage({
 
   return (
     <section className="stack">
-      <CompetitionTabs slug={slug} competitionId={competitionId} active="attendance" />
+      <SubTabs strip={competitionTabs(slug, competitionId, "attendance")} />
       <h1>Attendance</h1>
 
       {error === "save" && (

@@ -917,6 +917,14 @@
     padding: 1rem 1.1rem;
   }
 
+  /* The shared mint/rotate card (season calendar · itinerary · open shifts).
+     It is the width of what it interrupts — a `.stack` otherwise sizes a flex
+     child to its content, and the card came out narrower than the section it
+     belongs to. Was three copies of an inline width:100%. */
+  .share-link-card {
+    width: 100%;
+  }
+
   .invite-link {
     display: inline-block;
     font-family: var(--font-mono-stack);

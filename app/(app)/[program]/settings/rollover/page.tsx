@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import { archiveSeason, unarchiveSeason } from "../actions";
 import { ArchivedBanner } from "../../ArchivedBanner";
-import { SettingsTabs } from "../SettingsTabs";
+import { SubTabs } from "../../SubTabs";
+import { settingsTabs } from "@/lib/subnav";
 import {
   createRolloverSeason,
   confirmEnsembles,
@@ -105,7 +106,7 @@ export default async function RolloverPage({
         </div>
       </div>
 
-      <SettingsTabs slug={slug} active="seasons" />
+      <SubTabs strip={settingsTabs(slug, "seasons")} />
       <p className="muted">
         Roll over into next year — new season, who is coming back, costume set
         names — and archive past seasons to freeze them read-only.

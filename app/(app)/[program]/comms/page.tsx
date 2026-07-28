@@ -12,7 +12,8 @@ import {
 import { emailConfigured } from "@/lib/email";
 import { formatDateInTz } from "@/lib/datetime";
 import { activeShareLinks } from "@/lib/tokens";
-import { CommsTabs } from "./CommsTabs";
+import { SubTabs } from "../SubTabs";
+import { commsTabs } from "@/lib/subnav";
 import { DigestStatus, type DigestState } from "./DigestStatus";
 
 // Comms landing (§7 redesign, reshaped by spec 005 US9-1). This page answers
@@ -198,12 +199,12 @@ export default async function CommsPage({
         )}
       </div>
 
-      <CommsTabs
-        slug={slug}
-        active="digest"
-        digestEnabled={flags.digest}
-        announcementsEnabled={flags.announcements}
-        shiftsEnabled={flags.shifts}
+      <SubTabs
+        strip={commsTabs(slug, "digest", {
+          digestEnabled: flags.digest,
+          announcementsEnabled: flags.announcements,
+          shiftsEnabled: flags.shifts,
+        })}
       />
 
       {!emailConfigured() && (

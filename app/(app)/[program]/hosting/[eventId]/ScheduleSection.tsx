@@ -1,3 +1,6 @@
+import type { PageFlash } from "@/lib/flash";
+import { Flash } from "../../Flash";
+import type { HostSection } from "./shared";
 import { formatTimeInTz } from "@/lib/datetime";
 import { groupItemsByDay } from "@/lib/itinerary-days";
 import {
@@ -37,8 +40,7 @@ export function ScheduleSection({
   canWrite,
   open,
   confirmDeleteId,
-  ok,
-  error,
+  flash,
 }: {
   programId: string;
   slug: string;
@@ -53,8 +55,7 @@ export function ScheduleSection({
   // ("generate").
   open: string | null;
   confirmDeleteId: string | null;
-  ok: string | null;
-  error: string | null;
+  flash: PageFlash<HostSection>;
 }) {
   const schoolName = new Map(schools.map((s) => [s.id, s.school_name]));
 
@@ -108,8 +109,7 @@ export function ScheduleSection({
         <h2>Schedule</h2>
         <span className="comp-section-summary">{summary}</span>
       </div>
-      {ok && <p className="alert-ok">{ok}</p>}
-      {error && <p className="alert-error">{error}</p>}
+      <Flash flash={flash} section="schedule" />
 
       {slots.length === 0 ? (
         <p className="muted">

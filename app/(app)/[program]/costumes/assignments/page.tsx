@@ -10,7 +10,8 @@ import {
   isDirectKind,
   type PieceKind,
 } from "@/lib/costumes";
-import { CostumeTabs } from "../CostumeTabs";
+import { SubTabs } from "../../SubTabs";
+import { costumeTabs } from "@/lib/subnav";
 import { AddSet } from "./AddSet";
 import { SetSettings } from "./SetSettings";
 import {
@@ -174,7 +175,7 @@ export default async function AssignmentsPage({
         )}
       </div>
 
-      <CostumeTabs slug={slug} active="assignments" />
+      <SubTabs strip={costumeTabs(slug, "assignments")} />
 
       {!season && (
         <p className="muted">

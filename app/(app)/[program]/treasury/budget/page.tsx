@@ -11,7 +11,8 @@ import {
   NO_HEALTH_LABEL,
   type CategoryDirection,
 } from "@/lib/treasury";
-import { TreasuryTabs } from "../TreasuryTabs";
+import { SubTabs } from "../../SubTabs";
+import { treasuryTabs } from "@/lib/subnav";
 import { IntroStrip, HelpDot } from "../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
 import {
@@ -197,7 +198,7 @@ export default async function BudgetPage({
 
   return (
     <section className="stack">
-      <TreasuryTabs slug={slug} active="budget" />
+      <SubTabs strip={treasuryTabs(slug, "budget")} />
       <div className="page-title-row">
         <h1>Budget</h1>
         {showGuide && <HelpDot href={`/${slug}/treasury/budget?help=1`} />}

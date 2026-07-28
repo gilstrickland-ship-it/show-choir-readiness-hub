@@ -1,3 +1,6 @@
+import type { PageFlash } from "@/lib/flash";
+import { Flash } from "../../Flash";
+import type { HostSection } from "./shared";
 import { NO_HEALTH_LABEL, type HostedSchoolRow } from "@/lib/hosting";
 import { addHostedSchool } from "../actions";
 import { SchoolCard, SchoolFields } from "./SchoolCard";
@@ -22,8 +25,7 @@ export function SchoolsSection({
   canWrite,
   open,
   confirmRemoveId,
-  ok,
-  error,
+  flash,
 }: {
   programId: string;
   slug: string;
@@ -34,8 +36,7 @@ export function SchoolsSection({
   // `?open=` addresses one card by id, or the add form by the word "school".
   open: string | null;
   confirmRemoveId: string | null;
-  ok: string | null;
-  error: string | null;
+  flash: PageFlash<HostSection>;
 }) {
   // Rooms-in-use + duplicate-homeroom detection (warn, never block): two schools
   // sharing a room is legal — sometimes deliberate — so it is a chip, not a block.
@@ -62,8 +63,7 @@ export function SchoolsSection({
         <h2>Visiting schools</h2>
         <span className="comp-section-summary">{summary}</span>
       </div>
-      {ok && <p className="alert-ok">{ok}</p>}
-      {error && <p className="alert-error">{error}</p>}
+      <Flash flash={flash} section="schools" />
       <p className="muted">
         Adult director contact and a performer count only — never
         visiting-school student data. {NO_HEALTH_LABEL}

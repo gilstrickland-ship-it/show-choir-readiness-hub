@@ -2,7 +2,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
-import { RosterTabs } from "../RosterTabs";
+import { SubTabs } from "../../SubTabs";
+import { rosterTabs } from "@/lib/subnav";
 import { AddEnsemble } from "./AddEnsemble";
 import { EnsembleRow, type EnsembleListRow } from "./EnsembleRow";
 
@@ -117,7 +118,7 @@ export default async function EnsemblesPage({
         )}
       </div>
 
-      <RosterTabs slug={slug} active="ensembles" canWrite={canWrite} />
+      <SubTabs strip={rosterTabs(slug, "ensembles", canWrite)} />
 
       {!season && (
         <p className="muted">

@@ -19,7 +19,8 @@ import {
   type LineActual,
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
-import { TreasuryTabs } from "../TreasuryTabs";
+import { SubTabs } from "../../SubTabs";
+import { treasuryTabs } from "@/lib/subnav";
 
 // Reports (T020): per-event cost report (competition or trip → income/expense/
 // net + line breakdown) and a read-only board-snapshot data page (totals,
@@ -224,7 +225,7 @@ export default async function ReportsPage({
 
   return (
     <section className="stack">
-      <TreasuryTabs slug={slug} active="reports" />
+      <SubTabs strip={treasuryTabs(slug, "reports")} />
       <h1>Reports</h1>
 
       {!season && <p className="alert-error">No active season.</p>}

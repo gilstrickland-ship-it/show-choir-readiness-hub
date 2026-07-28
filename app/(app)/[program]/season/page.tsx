@@ -14,6 +14,7 @@ import { TRAVEL_WRITE_ROLES } from "@/lib/travel";
 import { loadCompReadiness } from "@/lib/readiness";
 import { activeShareLinks, seasonCalendarUrl } from "@/lib/tokens";
 import { regenerateSeasonCalendarShareLink } from "./actions";
+import { ShareLinkCard } from "../ShareLinkCard";
 import {
   zonedWallToUtc,
   zonedDateKey,
@@ -622,60 +623,35 @@ export default async function SeasonPage({
           open={Boolean(calShare || calError)}
         >
           <summary>📅 Subscribe in your calendar</summary>
-          <div className="confirm-box stack" style={{ width: "100%" }}>
-            {calError === "season" && (
-              <p className="alert-error">Activate a season before creating a calendar link.</p>
-            )}
-            {calError === "mint" && (
-              <p className="alert-error">
-                The old calendar link was retired, but a new one couldn&apos;t be created. Try
-                again.
-              </p>
-            )}
-            {freshSeasonCalUrl ? (
+          <ShareLinkCard
+            resource="season_calendar"
+            programId={program.id}
+            slug={slug}
+            subject={season.label}
+            resourceIdField={{ name: "seasonId", value: season.id }}
+            action={regenerateSeasonCalendarShareLink}
+            liveCount={activeSeasonCalLinks.length}
+            freshUrls={
+              freshSeasonCalUrl && freshSeasonCalWebcal
+                ? [freshSeasonCalUrl, freshSeasonCalWebcal]
+                : null
+            }
+            message={
               <>
-                <p className="muted">
-                  A live calendar feed of {season.label} — every competition, event,
-                  and trip. Copy it now (for privacy the URL is shown only this once).
-                  It stays current all season — new comps and time changes appear
-                  automatically.
-                </p>
-                <p className="muted">
-                  <strong>Google Calendar:</strong> use the https link (Other calendars →
-                  From URL).
-                </p>
-                <code style={{ wordBreak: "break-all" }}>{freshSeasonCalUrl}</code>
-                <p className="muted">
-                  <strong>Apple Calendar:</strong> the webcal link opens Subscribe directly.
-                </p>
-                <code style={{ wordBreak: "break-all" }}>{freshSeasonCalWebcal}</code>
+                {calError === "season" && (
+                  <p className="alert-error">
+                    Activate a season before creating a calendar link.
+                  </p>
+                )}
+                {calError === "mint" && (
+                  <p className="alert-error">
+                    The old calendar link was retired, but a new one couldn&apos;t be
+                    created. Try again.
+                  </p>
+                )}
               </>
-            ) : activeSeasonCalLinks.length > 0 ? (
-              <p className="muted">
-                A season calendar link is active for {season.label}. For privacy the
-                URL is only shown once at creation — regenerate to get a fresh copyable
-                link (the old one stops working). Active links are listed in{" "}
-                <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
-              </p>
-            ) : (
-              <p className="muted">
-                Create a live calendar feed of the whole season. Paste it into Google
-                Calendar (<strong>Other calendars → From URL</strong>) or Apple
-                Calendar — it updates itself as the season changes, so you never
-                re-enter a date.
-              </p>
-            )}
-            <form action={regenerateSeasonCalendarShareLink}>
-              <input type="hidden" name="programId" value={program.id} />
-              <input type="hidden" name="slug" value={slug} />
-              <input type="hidden" name="seasonId" value={season.id} />
-              <button type="submit" className="secondary">
-                {activeSeasonCalLinks.length > 0
-                  ? "Regenerate calendar link"
-                  : "Create calendar link"}
-              </button>
-            </form>
-          </div>
+            }
+          />
         </details>
       )}
 

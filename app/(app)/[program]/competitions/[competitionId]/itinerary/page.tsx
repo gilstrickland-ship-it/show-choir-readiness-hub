@@ -16,7 +16,9 @@ import {
   changedItemsSincePublish,
 } from "@/lib/itinerary-days";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
-import { CompetitionTabs } from "../CompetitionTabs";
+import { SubTabs } from "../../../SubTabs";
+import { ShareLinkCard } from "../../../ShareLinkCard";
+import { competitionTabs } from "@/lib/subnav";
 import { PacketPipeline } from "../PacketPipeline";
 import { IntroStrip, HelpDot } from "../../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
@@ -299,11 +301,7 @@ export default async function ItineraryPage({
 
   return (
     <section className="stack">
-      <CompetitionTabs
-        slug={slug}
-        competitionId={competitionId}
-        active="itinerary"
-      />
+      <SubTabs strip={competitionTabs(slug, competitionId, "itinerary")} />
       <div className="page-title-row">
         <h1>Itinerary</h1>
         {showGuide && canWrite && (
@@ -366,40 +364,16 @@ export default async function ItineraryPage({
 
       {/* Broadcast share link (FR-002 / §8a) — read-only URL anyone can open. */}
       {canWrite && isPublished && (
-        <div className="confirm-box stack" style={{ width: "100%" }}>
-          <h2>Broadcast link</h2>
-          {freshShareUrl ? (
-            <>
-              <p className="muted">
-                A read-only link to this itinerary — copy it now (for privacy
-                the URL is shown only this once):
-              </p>
-              <code style={{ wordBreak: "break-all" }}>{freshShareUrl}</code>
-            </>
-          ) : activeItinShareLinks.length > 0 ? (
-            <p className="muted">
-              A broadcast link is active for this itinerary. For your privacy
-              the URL is only shown once at creation — regenerate to get a fresh
-              copyable link (the old one stops working). Active links are listed
-              in <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
-            </p>
-          ) : (
-            <p className="muted">
-              No broadcast link yet. Generate a read-only link to share this
-              itinerary with anyone.
-            </p>
-          )}
-          <form action={regenerateItineraryShareLink}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="competitionId" value={competitionId} />
-            <button type="submit" className="secondary">
-              {activeItinShareLinks.length > 0
-                ? "Regenerate broadcast link"
-                : "Create broadcast link"}
-            </button>
-          </form>
-        </div>
+        <ShareLinkCard
+          resource="itinerary"
+          programId={program.id}
+          slug={slug}
+          subject=""
+          resourceIdField={{ name: "competitionId", value: competitionId }}
+          action={regenerateItineraryShareLink}
+          liveCount={activeItinShareLinks.length}
+          freshUrls={freshShareUrl ? [freshShareUrl] : null}
+        />
       )}
 
       {!itinerary && (

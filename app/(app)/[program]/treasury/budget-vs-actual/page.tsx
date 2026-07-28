@@ -14,7 +14,8 @@ import {
   type LineActual,
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
-import { TreasuryTabs } from "../TreasuryTabs";
+import { SubTabs } from "../../SubTabs";
+import { treasuryTabs } from "@/lib/subnav";
 
 // Budget vs Actual (T020). Per line: planned / actual (non-voided ledger sum) /
 // variance, grouped income then expense, category subtotals, and a season header
@@ -231,7 +232,7 @@ export default async function BudgetVsActualPage({
 
   return (
     <section className="stack">
-      <TreasuryTabs slug={slug} active="bva" />
+      <SubTabs strip={treasuryTabs(slug, "bva")} />
       <h1>Budget vs Actual</h1>
       <p className="muted">
         Planned versus what actually cleared the ledger (voided entries excluded).

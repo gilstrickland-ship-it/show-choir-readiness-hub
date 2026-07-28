@@ -8,6 +8,12 @@ import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { zonedWallToUtc } from "@/lib/datetime";
 import { programPath } from "@/lib/return-path";
 import { mintShareLink, revokeShareLinksForResource } from "@/lib/tokens";
+import {
+  isRowShiftError,
+  shiftAnchor,
+  type ShiftErrorKey,
+  type ShiftOkKey,
+} from "./shared";
 
 // Minting/revoking share links is director/admin only — the share_links RLS
 // write policy gates on those roles, so treasurer/costume_manager (who can edit
@@ -30,17 +36,26 @@ function shiftsPath(slug: string): string {
   return programPath(slug, "comms/shifts") ?? "/";
 }
 
-// A failure that belongs to ONE shift goes back to that shift: `?edit=` names
-// the row, and the page renders the message on the control that produced it —
+// Where a message goes is the MAP's answer, not this file's (shared.ts). A
+// failure that belongs to ONE shift goes back to that shift: `?edit=` names the
+// row, and the page renders the message on the control that produced it —
 // inside the Edit panel for an edit failure, next to the add-a-name form for a
 // signup failure — instead of at the top of a list the writer then has to
 // scroll to find their row again (the Wave-2 section-local error contract).
 // With no shift id there is no row to return to, so it falls back to the
 // page-level message.
-function rowErrorPath(slug: string, shiftId: string, code: string): string {
-  if (!shiftId) return `${shiftsPath(slug)}?error=${code}`;
-  const id = encodeURIComponent(shiftId);
-  return `${shiftsPath(slug)}?edit=${id}&error=${code}#shift-${id}`;
+function fail(slug: string, key: ShiftErrorKey, shiftId?: string): string {
+  if (isRowShiftError(key) && shiftId) {
+    const id = encodeURIComponent(shiftId);
+    return `${shiftsPath(slug)}?edit=${id}&error=${key}#${shiftAnchor(id)}`;
+  }
+  return `${shiftsPath(slug)}?error=${key}`;
+}
+
+// The success half of the same contract: one `?ok=<key>` where five params used
+// to each print their own toast.
+function done(slug: string, key: ShiftOkKey): string {
+  return `${shiftsPath(slug)}?ok=${key}`;
 }
 
 // Convert a datetime-local wall-clock value in the program tz to a UTC ISO
@@ -152,8 +167,8 @@ export async function createShift(formData: FormData): Promise<void> {
   await requireRole(programId, SHIFT_WRITE_ROLES);
 
   const title = str(formData, "title");
-  if (!title) redirect(`${shiftsPath(slug)}?error=title`);
-  if (!seasonId) redirect(`${shiftsPath(slug)}?error=season`);
+  if (!title) redirect(fail(slug, "title"));
+  if (!seasonId) redirect(fail(slug, "season"));
 
   const neededRaw = Number(str(formData, "needed_count"));
   const needed = Number.isFinite(neededRaw) && neededRaw > 0 ? Math.floor(neededRaw) : 1;
@@ -161,10 +176,10 @@ export async function createShift(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   if (!(await resolveInProgram(supabase, "seasons", seasonId, programId))) {
-    redirect(`${shiftsPath(slug)}?error=season`);
+    redirect(fail(slug, "season"));
   }
   const attach = await resolvedAttachColumns(supabase, formData, programId);
-  if (!attach) redirect(`${shiftsPath(slug)}?error=attach`);
+  if (!attach) redirect(fail(slug, "attach"));
 
   const { error } = await supabase.from("shifts").insert({
     program_id: programId,
@@ -176,10 +191,10 @@ export async function createShift(formData: FormData): Promise<void> {
     needed_count: needed,
     notes: str(formData, "notes") || null,
   });
-  if (error) redirect(`${shiftsPath(slug)}?error=save`);
+  if (error) redirect(fail(slug, "save"));
 
   revalidatePath(shiftsPath(slug));
-  redirect(`${shiftsPath(slug)}?created=1`);
+  redirect(done(slug, "created"));
 }
 
 export async function updateShift(formData: FormData): Promise<void> {
@@ -190,7 +205,7 @@ export async function updateShift(formData: FormData): Promise<void> {
   await requireRole(programId, SHIFT_WRITE_ROLES);
 
   const title = str(formData, "title");
-  if (!title) redirect(rowErrorPath(slug, shiftId, "title"));
+  if (!title) redirect(fail(slug, "row_title", shiftId));
   const neededRaw = Number(str(formData, "needed_count"));
   const needed = Number.isFinite(neededRaw) && neededRaw > 0 ? Math.floor(neededRaw) : 1;
 
@@ -209,7 +224,7 @@ export async function updateShift(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   revalidatePath(shiftsPath(slug));
-  redirect(`${shiftsPath(slug)}?saved=1`);
+  redirect(done(slug, "saved"));
 }
 
 export async function deleteShift(formData: FormData): Promise<void> {
@@ -236,8 +251,8 @@ export async function deleteShift(formData: FormData): Promise<void> {
   // belonging to another program leaves the shift referenced and the delete
   // fails. Say so, on the row that is still there — reporting "deleted" for a
   // shift that is still listed is the worst outcome, because staff stop looking.
-  if (error) redirect(rowErrorPath(slug, shiftId, "in_use"));
-  redirect(`${shiftsPath(slug)}?deleted=1`);
+  if (error) redirect(fail(slug, "in_use", shiftId));
+  redirect(done(slug, "deleted"));
 }
 
 // Staff adds a signup on a parent's behalf (source 'staff_entered'). No
@@ -252,7 +267,7 @@ export async function addStaffSignup(formData: FormData): Promise<void> {
   // card — not to the top of a page of cards, where the message is nowhere near
   // the box the name was typed into and the typing is gone besides.
   const name = str(formData, "name");
-  if (!name) redirect(rowErrorPath(slug, shiftId, "name"));
+  if (!name) redirect(fail(slug, "name", shiftId));
 
   const supabase = await createClient();
 
@@ -265,7 +280,7 @@ export async function addStaffSignup(formData: FormData): Promise<void> {
     shiftId,
     programId,
   );
-  if (!resolvedShiftId) redirect(rowErrorPath(slug, shiftId, "shift"));
+  if (!resolvedShiftId) redirect(fail(slug, "shift", shiftId));
 
   await supabase.from("shift_signups").insert({
     program_id: programId,
@@ -278,7 +293,7 @@ export async function addStaffSignup(formData: FormData): Promise<void> {
   });
 
   revalidatePath(shiftsPath(slug));
-  redirect(`${shiftsPath(slug)}?signed=1`);
+  redirect(done(slug, "signed"));
 }
 
 // Staff cancels a signup (parent or staff-entered). Sets status 'cancelled' so
@@ -297,7 +312,7 @@ export async function cancelSignup(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   revalidatePath(shiftsPath(slug));
-  redirect(`${shiftsPath(slug)}?cancelled=1`);
+  redirect(done(slug, "cancelled"));
 }
 
 // Broadcast a read-only volunteer-signup browse link (FR-002 / §8a). The public
@@ -313,7 +328,7 @@ export async function regenerateSignupShareLink(formData: FormData): Promise<voi
   const slug = str(formData, "slug");
   const seasonId = str(formData, "seasonId");
   await requireRole(programId, SHARE_LINK_ROLES);
-  if (!seasonId) redirect(`${shiftsPath(slug)}?error=season`);
+  if (!seasonId) redirect(fail(slug, "season"));
 
   const supabase = await createClient();
   await revokeShareLinksForResource(supabase, {
@@ -331,7 +346,7 @@ export async function regenerateSignupShareLink(formData: FormData): Promise<voi
   });
 
   revalidatePath(shiftsPath(slug));
-  if (!("raw" in minted)) redirect(`${shiftsPath(slug)}?error=share`);
+  if (!("raw" in minted)) redirect(fail(slug, "share"));
   redirect(`${shiftsPath(slug)}?share=${encodeURIComponent(minted.raw)}`);
 }
 
@@ -346,7 +361,7 @@ export async function createSuggestedShifts(formData: FormData): Promise<void> {
   const competitionId = str(formData, "competitionId");
   const tz = str(formData, "tz");
   await requireRole(programId, SHIFT_WRITE_ROLES);
-  if (!seasonId) redirect(`${shiftsPath(slug)}?error=season`);
+  if (!seasonId) redirect(fail(slug, "season"));
 
   const count = Number(str(formData, "count")) || 0;
   const supabase = await createClient();
@@ -354,13 +369,13 @@ export async function createSuggestedShifts(formData: FormData): Promise<void> {
   // Same resolution as createShift — the season and the competition these
   // suggestions hang off both arrive as hidden fields.
   if (!(await resolveInProgram(supabase, "seasons", seasonId, programId))) {
-    redirect(`${shiftsPath(slug)}?error=season`);
+    redirect(fail(slug, "season"));
   }
   const attachedCompetitionId = competitionId
     ? await resolveInProgram(supabase, "competitions", competitionId, programId)
     : null;
   if (competitionId && !attachedCompetitionId) {
-    redirect(`${shiftsPath(slug)}?error=attach`);
+    redirect(fail(slug, "attach"));
   }
 
   const rows: Record<string, unknown>[] = [];
@@ -388,5 +403,5 @@ export async function createSuggestedShifts(formData: FormData): Promise<void> {
   }
 
   revalidatePath(shiftsPath(slug));
-  redirect(`${shiftsPath(slug)}?created=${rows.length}`);
+  redirect(done(slug, "suggested"));
 }

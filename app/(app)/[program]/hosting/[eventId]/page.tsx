@@ -19,7 +19,9 @@ import { loadGuideState } from "@/lib/guide";
 import { EventEdit } from "./EventEdit";
 import { SchoolsSection } from "./SchoolsSection";
 import { ScheduleSection } from "./ScheduleSection";
-import { hostOk, hostError, type HostSection } from "./shared";
+import { HOST_FLASH_MAPS, type HostSection } from "./shared";
+import { Flash } from "../../Flash";
+import { readFlash, oneParam } from "@/lib/flash";
 
 // The host command center (spec 005 Wave 7 / US11). Four titled sections in one
 // constant order — Overview · Visiting schools · Schedule · Day-of documents —
@@ -72,10 +74,7 @@ export default async function HostingEventPage({
   const eventBase = `${base}/hosting/${eventId}`;
 
   const sp = await searchParams;
-  const one = (key: string): string | null => {
-    const v = sp[key];
-    return typeof v === "string" ? v : null;
-  };
+  const one = (key: string): string | null => oneParam(sp, key);
 
   const supabase = await createClient();
 
@@ -132,12 +131,9 @@ export default async function HostingEventPage({
 
   // One `?ok=` and one `?error=`, each resolving to the SECTION that owns the
   // message (shared.ts) — the eight toast-only params are gone.
-  const okFlash = hostOk(one("ok"));
-  const errFlash = hostError(one("error"));
-  const okIn = (s: HostSection) =>
-    okFlash?.section === s ? okFlash.message : null;
+  const flash = readFlash<HostSection>(sp, HOST_FLASH_MAPS);
   const errIn = (s: HostSection) =>
-    errFlash?.section === s ? errFlash.message : null;
+    flash.error?.section === s ? flash.error.message : null;
 
   // `?open=` addresses ONE disclosure: a school card or slot row by id, or the
   // word for a section-level form ("event", "school", "slot", "generate"). It
@@ -213,10 +209,7 @@ export default async function HostingEventPage({
             {dateStr} · {statusLabel}
           </span>
         </div>
-        {okIn("overview") && <p className="alert-ok">{okIn("overview")}</p>}
-        {errIn("overview") && (
-          <p className="alert-error">{errIn("overview")}</p>
-        )}
+        <Flash flash={flash} section="overview" />
         <dl className="detail-list">
           <dt>Season</dt>
           <dd>{event.seasons?.label ?? "—"}</dd>
@@ -254,8 +247,7 @@ export default async function HostingEventPage({
         canWrite={canWrite}
         open={openParam}
         confirmRemoveId={confirmRemoveSchoolId}
-        ok={okIn("schools")}
-        error={errIn("schools")}
+        flash={flash}
       />
 
       {/* ================= SCHEDULE ================= */}
@@ -271,8 +263,7 @@ export default async function HostingEventPage({
         canWrite={canWrite}
         open={openParam}
         confirmDeleteId={confirmDeleteSlotId}
-        ok={okIn("schedule")}
-        error={errIn("schedule")}
+        flash={flash}
       />
 
       {/* ================= DAY-OF DOCUMENTS ================= */}

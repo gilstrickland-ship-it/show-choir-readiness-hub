@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
 import { COSTUME_WRITE_ROLES, PIECE_KIND_LABELS, type PieceKind } from "@/lib/costumes";
 import { formatDateInTz } from "@/lib/datetime";
-import { CostumeTabs } from "../CostumeTabs";
+import { SubTabs } from "../../SubTabs";
+import { costumeTabs } from "@/lib/subnav";
 import { CheckoutList, type CheckoutRow, type CheckoutState } from "./CheckoutList";
 import { seedCheckout } from "./actions";
 
@@ -121,7 +122,7 @@ export default async function CheckoutPage({
         </div>
       </div>
 
-      <CostumeTabs slug={slug} active="checkout" />
+      <SubTabs strip={costumeTabs(slug, "checkout")} />
 
       {!season && (
         <p className="muted">No active season — no competitions to check out for.</p>

@@ -19,7 +19,11 @@ import {
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
 import { zonedDateKey } from "@/lib/datetime";
-import { TreasuryTabs } from "./TreasuryTabs";
+import { SubTabs } from "../SubTabs";
+import { Flash } from "../Flash";
+import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
+import { LEDGER_FLASH_MAPS, type LedgerSection } from "./flash";
+import { treasuryTabs } from "@/lib/subnav";
 import { IntroStrip, HelpDot } from "../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
 import { AddEntry, type EntryPrefill } from "./AddEntry";
@@ -44,64 +48,6 @@ import type { CatOpt, LineOpt, NamedOpt, TagOptions } from "./shared";
 
 const ENTRY_COLUMNS =
   "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, memo, counterparty, receipt_path, voided_at, void_reason";
-
-// Page-level messages. Anything a row owns (a failed void, a failed filing)
-// renders inside that row's popover instead — see ROW_ERR below.
-const ERR: Record<string, string> = {
-  entry:
-    "Could not save the entry. Check the amount (e.g. 1,234.56), direction, and date.",
-  entry_tag:
-    "That budget line, competition, or trip isn't in this season. Pick one from this season's lists.",
-  // One sentence per rejection the database can raise (0020). These used to be
-  // one message about the amount format, so a tag from last season sent the
-  // treasurer to re-check a number that was fine.
-  entry_season:
-    "That season isn't this program's, or it's archived — an archived season's books are closed. Nothing was saved.",
-  entry_line:
-    "That budget line isn't on this season's budget. Pick one from this season's list. Nothing was saved.",
-  entry_competition:
-    "That competition isn't in this season. Pick one from this season's list. Nothing was saved.",
-  entry_trip:
-    "That trip isn't in this season. Pick one from this season's list. Nothing was saved.",
-  receipt_type: "Receipts must be a PDF or image.",
-  receipt_upload: "The receipt failed to upload. The entry was not saved.",
-  reconcile: "Could not update the reconciliation record.",
-};
-
-// Errors that belong to one entry. They arrive with `?edit=<entryId>`, which is
-// also what reopens that row's popover, so the message lands where the control
-// that produced it is — WHEN that row is actually on screen. When it is not
-// (filtered out, on another page, or voided and therefore rendered as inert
-// text with no popover), the message falls open to the page banner instead. A
-// money failure that renders nowhere is worse than one in the wrong place.
-const ROW_ERR: Record<string, string> = {
-  void: "Could not void that entry. Nothing changed.",
-  void_reason: "A void needs a reason. Nothing changed.",
-  void_missing:
-    "That entry isn't in this program. Reload the page and try again — nothing changed.",
-  void_already: "That entry was already voided. Nothing changed.",
-  void_archived:
-    "That season is archived, so its books are closed. Nothing changed.",
-  categorize:
-    "Could not put that entry on a budget line. Nothing changed — the entry is still there, uncategorized.",
-  // The double-submit case, said plainly: the filing WORKED, and the row this
-  // message is about is the voided original it replaced.
-  categorize_already:
-    "Already filed. That amount is on a budget line now — this row is the voided original it replaced, and the replacement is in the list above.",
-  categorize_voided:
-    "That entry was voided, so there is nothing to file. Nothing changed.",
-  categorize_missing:
-    "That entry isn't in this program. Reload the page and try again — nothing changed.",
-  categorize_archived:
-    "That season is archived, so its books are closed. Nothing changed.",
-  categorize_line:
-    "That budget line isn't on this season's budget. Pick one from this season's list — nothing changed.",
-};
-
-function message(map: Record<string, string>, code: string | null): string | null {
-  if (!code) return null;
-  return Object.hasOwn(map, code) ? map[code] : null;
-}
 
 // The filter chain, described once and applied to BOTH the count query and the
 // page query, so "showing 1–100 of 412" can never be describing a different set
@@ -178,10 +124,7 @@ export default async function LedgerPage({
   const canWrite = TREASURY_WRITE_ROLES.includes(role);
 
   const sp = await searchParams;
-  const one = (key: string): string | null => {
-    const v = sp[key];
-    return typeof v === "string" ? v : null;
-  };
+  const one = (key: string): string | null => oneParam(sp, key);
 
   const supabase = await createClient();
 
@@ -445,15 +388,17 @@ export default async function LedgerPage({
   // renders as inert text with no popover (and is filtered out entirely by the
   // default "live rows only" filter), so a message aimed at it would render
   // nowhere at all. Fail OPEN to the page banner in that case.
-  const errorCode = one("error");
+  const flash = readFlash<LedgerSection>(sp, LEDGER_FLASH_MAPS);
   const openId = canWrite ? one("edit") : null;
   const rowWillRender =
     !!openId && entries.some((e) => e.id === openId && !e.voided_at);
-  const rowError = rowWillRender ? message(ROW_ERR, errorCode) : null;
-  const pageError = rowError
-    ? null
-    : (message(ERR, errorCode) ?? message(ROW_ERR, errorCode));
-  const unknownError = errorCode && !rowError && !pageError;
+  const rowOwned = flash.error?.section === "row";
+  const rowError = rowOwned && rowWillRender ? flash.error!.message : null;
+  // A row-owned message with nowhere to land falls open to the page banner.
+  const pageFlash: PageFlash<LedgerSection> =
+    rowOwned && !rowWillRender
+      ? { ok: flash.ok, error: { section: "page", message: flash.error!.message } }
+      : flash;
 
   // Paging links keep every filter and drop the one-shot params (a flash, an
   // error, a reopened popover) so page 2 is not still shouting about page 1.
@@ -461,7 +406,7 @@ export default async function LedgerPage({
     "page",
     "edit",
     "error",
-    "saved",
+    "ok",
     "confirm",
     "reenter",
   ]);
@@ -515,12 +460,9 @@ export default async function LedgerPage({
         />
       )}
 
-      <TreasuryTabs slug={slug} active="ledger" />
+      <SubTabs strip={treasuryTabs(slug, "ledger")} />
 
-      {one("saved") && <p className="alert-ok">Saved.</p>}
-      {(pageError || unknownError) && (
-        <p className="alert-error">{pageError ?? "Something went wrong."}</p>
-      )}
+      <Flash flash={pageFlash} section="page" />
 
       {!season && (
         <p className="alert-error">

@@ -6,10 +6,15 @@ import { createClient } from "@/lib/supabase/server";
 import { COMMS_ROLES, SETTINGS_ROLES } from "@/lib/nav";
 import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
-import { CommsTabs } from "../CommsTabs";
+import { SubTabs } from "../../SubTabs";
+import { commsTabs } from "@/lib/subnav";
 import { AddShift, type NamedOption } from "./AddShift";
 import { ShiftCard, type ShiftRow, type SignupRow } from "./ShiftCard";
 import { regenerateSignupShareLink } from "./actions";
+import { ShareLinkCard } from "../../ShareLinkCard";
+import { Flash } from "../../Flash";
+import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
+import { SHIFT_FLASH_MAPS, type ShiftSection } from "./shared";
 
 // Comms — Shifts tab (§8, T024). Volunteer shift CRUD + per-shift signups with
 // open-slot counts. Attach a shift to a competition, a trip, an event, or
@@ -36,42 +41,6 @@ interface ShiftQueryRow extends ShiftRow {
   event_id: string | null;
 }
 
-// Messages the page owns — the create drawer and the signup link, neither of
-// which belongs to a particular shift row.
-const ERR: Record<string, string> = {
-  title: "A shift needs a title.",
-  season: "Activate a season before adding shifts.",
-  save: "Couldn't save. Try again.",
-  attach:
-    "That competition, trip, or event isn't part of this program. Reload the page and pick one from the list.",
-  share:
-    "Couldn't make a signup link. The old link has been retired, so make a new one before sharing.",
-};
-
-// Messages that belong to ONE shift's EDIT PANEL. They arrive with
-// `?edit=<shiftId>`, which is also what reopens that panel, so the message lands
-// on the control that produced it.
-const PANEL_ERR: Record<string, string> = {
-  title: "A shift needs a title.",
-  in_use:
-    "Couldn't delete this shift — something still refers to it, so it's still here.",
-};
-
-// Messages that belong to ONE shift's ADD-A-NAME form. Same `?edit=<shiftId>`
-// row address, but they must NOT spring the edit panel open: the control that
-// failed is the signup box on the card, and that is where the message renders.
-const SIGNUP_ERR: Record<string, string> = {
-  name: "A signup needs a name.",
-  shift: "That shift isn't part of this program. Reload the page and try again.",
-};
-
-// The code rides in the URL, so the lookup must be a lookup and not a walk up
-// Object.prototype — `?error=constructor` would otherwise hand React a function.
-function message(map: Record<string, string>, code: string | null): string | null {
-  if (!code) return null;
-  return Object.hasOwn(map, code) ? map[code] : null;
-}
-
 export default async function ShiftsPage({
   params,
   searchParams,
@@ -95,10 +64,7 @@ export default async function ShiftsPage({
   const tz = program.timezone;
 
   const sp = await searchParams;
-  const one = (key: string): string | null => {
-    const v = sp[key];
-    return typeof v === "string" ? v : null;
-  };
+  const one = (key: string): string | null => oneParam(sp, key);
 
   const supabase = await createClient();
 
@@ -190,28 +156,28 @@ export default async function ShiftsPage({
     return "Standalone";
   }
 
-  // `?edit=<shiftId>` addresses a ROW; the code decides which of that row's two
-  // controls owns the message. Without an `edit` the code belongs to the page
-  // (the create drawer or the signup link). A row-addressed code whose row is
-  // not on this page (a deleted shift, a season switch) would render nowhere at
-  // all, so it falls open to the page banner instead.
-  const errorCode = one("error");
+  // One `?ok=` and one `?error=`, each resolving to the SECTION that owns the
+  // message (shared.ts). `?edit=<shiftId>` says WHICH row a row-owned message
+  // belongs to; a row-addressed code whose row is not on this page (a deleted
+  // shift, a season switch) would render nowhere at all, so it falls back to
+  // the page banner instead.
+  const flash = readFlash<ShiftSection>(sp, SHIFT_FLASH_MAPS);
   const openId = canWrite ? one("edit") : null;
   const rowOnPage = !!openId && shifts.some((s) => s.id === openId);
-  const panelError = rowOnPage ? message(PANEL_ERR, errorCode) : null;
-  const signupError = rowOnPage ? message(SIGNUP_ERR, errorCode) : null;
-  const pageError =
-    panelError || signupError
-      ? null
-      : (message(ERR, errorCode) ??
-        message(PANEL_ERR, errorCode) ??
-        message(SIGNUP_ERR, errorCode));
-  const unknownError = !!errorCode && !panelError && !signupError && !pageError;
+  const errSection = flash.error?.section ?? null;
+  const rowOwned = errSection === "panel" || errSection === "signup";
+  const stranded = rowOwned && !rowOnPage;
+  const pageFlash: PageFlash<ShiftSection> = stranded
+    ? { ok: flash.ok, error: { section: "page", message: flash.error!.message } }
+    : flash;
+  const panelError =
+    !stranded && errSection === "panel" ? (flash.error?.message ?? null) : null;
+  const signupError =
+    !stranded && errSection === "signup" ? (flash.error?.message ?? null) : null;
   // A create that came back rejected reopens the drawer with its message inside,
   // rather than dropping it at the top of a page the drawer is closed over.
-  const DRAWER_CODES = ["title", "save", "attach", "season"];
   const drawerError =
-    pageError && DRAWER_CODES.includes(errorCode ?? "") ? pageError : null;
+    errSection === "drawer" ? (flash.error?.message ?? null) : null;
 
   return (
     <section className="stack">
@@ -239,22 +205,15 @@ export default async function ShiftsPage({
         )}
       </div>
 
-      <CommsTabs
-        slug={slug}
-        active="shifts"
-        digestEnabled={flags.digest}
-        announcementsEnabled={flags.announcements}
-        shiftsEnabled
+      <SubTabs
+        strip={commsTabs(slug, "shifts", {
+          digestEnabled: flags.digest,
+          announcementsEnabled: flags.announcements,
+          shiftsEnabled: true,
+        })}
       />
 
-      {one("created") && <p className="alert-ok">Created {one("created")} shift(s).</p>}
-      {one("saved") && <p className="alert-ok">Shift saved.</p>}
-      {one("deleted") && <p className="alert-ok">Shift deleted.</p>}
-      {one("signed") && <p className="alert-ok">Signup added.</p>}
-      {one("cancelled") && <p className="alert-ok">Signup cancelled.</p>}
-      {((pageError && !drawerError) || unknownError) && (
-        <p className="alert-error">{pageError ?? "Something went wrong."}</p>
-      )}
+      <Flash flash={pageFlash} section="page" />
 
       {canWrite && (
         <p className="muted">
@@ -268,40 +227,16 @@ export default async function ShiftsPage({
           and sends people here, because the raw URL is shown once and it has to
           be shown where the button was pressed. */}
       {canShare && season && (
-        <div className="confirm-box stack" style={{ width: "100%" }}>
-          <h2>Open shifts anyone can browse</h2>
-          {freshSignupShareUrl ? (
-            <>
-              <p className="muted">
-                One page listing the open shifts for {season.label}, that anyone
-                with the link can read. Copy it now — for privacy the URL is
-                shown only this once (parents claim shifts from their own family
-                link, not from here):
-              </p>
-              <code style={{ wordBreak: "break-all" }}>{freshSignupShareUrl}</code>
-            </>
-          ) : signupShareLinks.length > 0 ? (
-            <p className="muted">
-              A link is live for {season.label}. The URL is only shown once, when
-              it&apos;s made — make a new one to get a copyable link again (the
-              old one stops working). Live links are listed in{" "}
-              <Link href={`/${slug}/settings`}>Settings → Share links</Link>.
-            </p>
-          ) : (
-            <p className="muted">
-              No link yet. Make one and anyone you send it to can read this
-              season&apos;s open shifts — a booster newsletter, a class group.
-            </p>
-          )}
-          <form action={regenerateSignupShareLink}>
-            <input type="hidden" name="programId" value={program.id} />
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="seasonId" value={season.id} />
-            <button type="submit" className="secondary">
-              {signupShareLinks.length > 0 ? "Make a new link" : "Make the link"}
-            </button>
-          </form>
-        </div>
+        <ShareLinkCard
+          resource="signup_page"
+          programId={program.id}
+          slug={slug}
+          subject={season.label}
+          resourceIdField={{ name: "seasonId", value: season.id }}
+          action={regenerateSignupShareLink}
+          liveCount={signupShareLinks.length}
+          freshUrls={freshSignupShareUrl ? [freshSignupShareUrl] : null}
+        />
       )}
 
       {!season && (

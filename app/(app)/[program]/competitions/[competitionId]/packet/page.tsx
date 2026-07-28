@@ -5,7 +5,8 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateTimeInTz } from "@/lib/datetime";
-import { CompetitionTabs } from "../CompetitionTabs";
+import { SubTabs } from "../../../SubTabs";
+import { competitionTabs } from "@/lib/subnav";
 import { PacketPipeline } from "../PacketPipeline";
 import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { uploadPacket, reparsePacket, runParseNow } from "./actions";
@@ -122,7 +123,7 @@ export default async function PacketPage({
 
   return (
     <section className="stack">
-      <CompetitionTabs slug={slug} competitionId={competitionId} active="packet" />
+      <SubTabs strip={competitionTabs(slug, competitionId, "packet")} />
       <h1>Host packet</h1>
       {pipeline && <PacketPipeline steps={pipeline} />}
 

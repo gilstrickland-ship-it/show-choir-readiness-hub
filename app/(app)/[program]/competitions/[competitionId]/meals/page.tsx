@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateInTz } from "@/lib/datetime";
 import { loadMealData } from "@/lib/pdf/queries";
-import { CompetitionTabs } from "../CompetitionTabs";
+import { SubTabs } from "../../../SubTabs";
+import { competitionTabs } from "@/lib/subnav";
 import { saveMealNote } from "./actions";
 
 // Meal count (T031, §9 / §1.7 / US4). Staff screen: per-ensemble headcount for a
@@ -46,7 +47,7 @@ export default async function MealsPage({
 
   return (
     <section className="stack">
-      <CompetitionTabs slug={slug} competitionId={competitionId} active="meals" />
+      <SubTabs strip={competitionTabs(slug, competitionId, "meals")} />
       <h1>Meal count</h1>
 
       {sp.saved && <p className="alert-ok">Saved.</p>}

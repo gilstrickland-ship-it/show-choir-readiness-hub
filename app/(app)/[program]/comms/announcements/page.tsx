@@ -11,7 +11,8 @@ import {
 } from "@/lib/comms";
 import { emailConfigured } from "@/lib/email";
 import { formatDateTimeInTz } from "@/lib/datetime";
-import { CommsTabs } from "../CommsTabs";
+import { SubTabs } from "../../SubTabs";
+import { commsTabs } from "@/lib/subnav";
 import { sendAnnouncement } from "../actions";
 
 // Comms — Announcements tab (§7 redesign; was the old /comms landing). Immediate
@@ -150,12 +151,12 @@ export default async function AnnouncementsPage({
         </div>
       </div>
 
-      <CommsTabs
-        slug={slug}
-        active="announcements"
-        digestEnabled={flags.digest}
-        announcementsEnabled
-        shiftsEnabled={flags.shifts}
+      <SubTabs
+        strip={commsTabs(slug, "announcements", {
+          digestEnabled: flags.digest,
+          announcementsEnabled: true,
+          shiftsEnabled: flags.shifts,
+        })}
       />
 
       {(emailIssueCount ?? 0) > 0 && (

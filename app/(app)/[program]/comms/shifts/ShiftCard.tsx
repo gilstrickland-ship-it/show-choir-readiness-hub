@@ -5,6 +5,10 @@ import {
   addStaffSignup,
   cancelSignup,
 } from "./actions";
+// The row's panel opens on `?edit=<shiftId>` — the same param the ledger and the
+// budget builder use — and a failed save or a refused delete comes back on it,
+// so the message lands inside the panel that produced it.
+import { shiftAnchor } from "./shared";
 
 // One shift, and the two things staff do to it (spec 005 US9-3): add a name to
 // it, or edit it. Both live on the card.
@@ -41,13 +45,6 @@ export interface SignupRow {
   email: string | null;
   status: string;
   source: string;
-}
-
-// The row's panel opens on `?edit=<shiftId>` — the same param the ledger and the
-// budget builder use — and a failed save or a refused delete comes back on it,
-// so the message lands inside the panel that produced it.
-export function shiftAnchor(shiftId: string): string {
-  return `shift-${shiftId}`;
 }
 
 export function ShiftCard({

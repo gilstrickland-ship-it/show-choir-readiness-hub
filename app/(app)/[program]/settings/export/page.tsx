@@ -5,7 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { requestExport } from "./actions";
-import { SettingsTabs } from "../SettingsTabs";
+import { SubTabs } from "../../SubTabs";
+import { settingsTabs } from "@/lib/subnav";
 
 // Settings → Export & Data (§13.2, §13.3, T029). director/admin. Two halves:
 //   • Export everything — a real button producing one zip of CSVs + generated
@@ -89,7 +90,7 @@ export default async function ExportPage({
         </div>
       </div>
 
-      <SettingsTabs slug={slug} active="export" />
+      <SubTabs strip={settingsTabs(slug, "export")} />
 
       {sp.requested && (
         <p className="alert-ok">

@@ -2,7 +2,8 @@ import Link from "next/link";
 import { brand } from "@/lib/brand";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../Restricted";
-import { SettingsTabs } from "./SettingsTabs";
+import { SubTabs } from "../SubTabs";
+import { settingsTabs } from "@/lib/subnav";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { formatDateTimeInTz, formatTimeZoneLabel } from "@/lib/datetime";
@@ -144,7 +145,7 @@ export default async function SettingsPage({
         </div>
       </div>
 
-      <SettingsTabs slug={slug} active="program" />
+      <SubTabs strip={settingsTabs(slug, "program")} />
 
       {saved && <p className="alert-ok">Saved.</p>}
       {error === "missing" && (

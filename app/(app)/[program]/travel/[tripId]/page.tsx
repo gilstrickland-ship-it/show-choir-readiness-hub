@@ -285,11 +285,11 @@ export default async function TripPage({
   // failed; the two that could belong to either group section carry the kind.
   const err = tripError(one("error"));
   const errKind = asGroupKind(one("errorKind")) ?? "bus";
-  const overviewError = err?.slot === "overview" ? err.message : null;
-  const chaperoneError = err?.slot === "chaperones" ? err.message : null;
-  const dangerError = err?.slot === "danger" ? err.message : null;
+  const overviewError = err?.section === "overview" ? err.message : null;
+  const chaperoneError = err?.section === "chaperones" ? err.message : null;
+  const dangerError = err?.section === "danger" ? err.message : null;
   const groupError = (k: TravelGroupKind): string | null =>
-    err?.slot === "group" && errKind === k ? err.message : null;
+    err?.section === "group" && errKind === k ? err.message : null;
 
   // The friendly one-room-one-bus message (§6), rendered in the section of the
   // kind it happened in.

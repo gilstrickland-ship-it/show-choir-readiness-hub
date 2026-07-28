@@ -12,7 +12,8 @@ import {
 import { emailConfigured } from "@/lib/email";
 import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import Link from "next/link";
-import { CommsTabs } from "../CommsTabs";
+import { SubTabs } from "../../SubTabs";
+import { commsTabs } from "@/lib/subnav";
 import { IntroStrip, HelpDot } from "../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
 import { draftNow, reviewDigest, discardDigest } from "./actions";
@@ -167,12 +168,12 @@ export default async function DigestPage({
         />
       )}
 
-      <CommsTabs
-        slug={slug}
-        active="digest"
-        digestEnabled={digestEnabled}
-        announcementsEnabled={flags.announcements}
-        shiftsEnabled={flags.shifts}
+      <SubTabs
+        strip={commsTabs(slug, "digest", {
+          digestEnabled,
+          announcementsEnabled: flags.announcements,
+          shiftsEnabled: flags.shifts,
+        })}
       />
 
       <p className="muted">

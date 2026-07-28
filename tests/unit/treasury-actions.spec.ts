@@ -146,7 +146,7 @@ describe("categorizeEntry — a double submit says ALREADY FILED", () => {
   test("a filing that lands redirects to Saved", async () => {
     h.rpcResult = { data: "new-entry-id", error: null };
     const url = await run(categorizeEntry, fields);
-    expect(url).toBe("/westfield/treasury?saved=1");
+    expect(url).toBe("/westfield/treasury?ok=saved");
   });
 
   // THE DEFECT. OC002 is "already on a line" / "already filed" — the second
@@ -198,7 +198,7 @@ describe("voidEntry — 'not yours' and 'already voided' are different sentences
 
   test("a void that lands redirects to Saved", async () => {
     h.rpcResult = { data: true, error: null };
-    expect(await run(voidEntry, fields)).toBe("/westfield/treasury?saved=1");
+    expect(await run(voidEntry, fields)).toBe("/westfield/treasury?ok=saved");
   });
 
   test("Void & redo carries the entry into a prefilled drawer", async () => {
@@ -242,7 +242,7 @@ describe("addEntry — the rejection names what it rejected", () => {
 
   test("a saved entry redirects to Saved, in integer cents", async () => {
     h.rpcResult = { data: "new-entry-id", error: null };
-    expect(await run(addEntry, fields)).toBe("/westfield/treasury?saved=1");
+    expect(await run(addEntry, fields)).toBe("/westfield/treasury?ok=saved");
     expect(h.rpcCalls[0].args.p_amount_cents).toBe(123456);
   });
 

@@ -1,3 +1,5 @@
+import { flashFrom, flashSection, type FlashEntry, type FlashMap } from "@/lib/flash";
+
 // The host command center's URL contract (spec 005 Wave 7 / US11).
 //
 // The page used to declare EIGHT search params whose only job was to show a
@@ -8,9 +10,11 @@
 // `?error=<key>`, and every key names the section it belongs to, so a message
 // renders inside the section that owns what happened (the Wave-2 trip contract).
 //
-// Both lookups go through Object.hasOwn: the code rides in the URL, so
-// `?error=constructor` must resolve to nothing rather than walking up
-// Object.prototype and handing React a function to render.
+// This file is now the CONTENT of that contract and nothing else: the shape, the
+// prototype-safe lookup, and the writing half live in lib/flash, where the trip
+// page, the ledger and shifts read them too (Wave 8 / T142). What stays here is
+// what is genuinely host-mode's — which codes exist, what they say, and which
+// of the three sections owns each one.
 
 export type HostSection = "overview" | "schools" | "schedule";
 
@@ -44,12 +48,9 @@ export type HostErrorKey =
   | "delta"
   | "slot_save";
 
-export interface HostFlash {
-  section: HostSection;
-  message: string;
-}
+export type HostFlash = FlashEntry<HostSection>;
 
-const HOST_OK: Record<HostOkKey, HostFlash> = {
+const HOST_OK: FlashMap<HostOkKey, HostSection> = {
   created: { section: "overview", message: "Invitational created." },
   saved: { section: "overview", message: "Saved." },
   school_saved: { section: "schools", message: "School saved." },
@@ -78,7 +79,7 @@ const HOST_OK: Record<HostOkKey, HostFlash> = {
   },
 };
 
-const HOST_ERROR: Record<HostErrorKey, HostFlash> = {
+const HOST_ERROR: FlashMap<HostErrorKey, HostSection> = {
   archived: {
     section: "overview",
     message: "This season is archived — nothing here can be changed.",
@@ -129,13 +130,11 @@ const HOST_ERROR: Record<HostErrorKey, HostFlash> = {
 };
 
 export function hostOk(code: string | null): HostFlash | null {
-  if (!code || !Object.hasOwn(HOST_OK, code)) return null;
-  return HOST_OK[code as HostOkKey];
+  return flashFrom(HOST_OK, code);
 }
 
 export function hostError(code: string | null): HostFlash | null {
-  if (!code || !Object.hasOwn(HOST_ERROR, code)) return null;
-  return HOST_ERROR[code as HostErrorKey];
+  return flashFrom(HOST_ERROR, code);
 }
 
 // The writing half of the contract: an action building a redirect asks the map
@@ -143,12 +142,16 @@ export function hostError(code: string | null): HostFlash | null {
 // site, so the anchor it scrolls to and the section that renders the message can
 // never drift apart. Keyed by the union, so both halves are compile-checked.
 export function hostOkSection(key: HostOkKey): HostSection {
-  return HOST_OK[key].section;
+  return flashSection(HOST_OK, key);
 }
 
 export function hostErrorSection(key: HostErrorKey): HostSection {
-  return HOST_ERROR[key].section;
+  return flashSection(HOST_ERROR, key);
 }
+
+// The page reads both codes in one call; the maps are not exported, so nothing
+// outside this file can look a code up without the guards.
+export const HOST_FLASH_MAPS = { ok: HOST_OK, error: HOST_ERROR } as const;
 
 // The page anchor each section's messages scroll to — the same strings the
 // actions append to their redirects, kept in one place so the two halves of the

@@ -7,7 +7,8 @@ import {
   COMPETITION_WRITE_ROLES,
   ITINERARY_ITEM_KINDS,
 } from "@/lib/competitions";
-import { CompetitionTabs } from "../../../CompetitionTabs";
+import { SubTabs } from "../../../../../SubTabs";
+import { competitionTabs } from "@/lib/subnav";
 import { PacketPipeline } from "../../../PacketPipeline";
 import { IntroStrip, HelpDot } from "../../../../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
@@ -133,11 +134,7 @@ export default async function ReviewPage({
       <p>
         <Link href={`${compBase}/packet`}>← Packet</Link>
       </p>
-      <CompetitionTabs
-        slug={slug}
-        competitionId={competitionId}
-        active="packet"
-      />
+      <SubTabs strip={competitionTabs(slug, competitionId, "packet")} />
       <PacketPipeline steps={pipeline} />
       <div className="page-title-row">
         <h1>Review parsed packet</h1>

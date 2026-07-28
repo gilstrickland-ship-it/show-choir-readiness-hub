@@ -3,7 +3,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
-import { RosterTabs } from "./RosterTabs";
+import { SubTabs } from "../SubTabs";
+import { rosterTabs } from "@/lib/subnav";
 import { addStudent, emailAllGuardianLinks } from "./actions";
 
 // People (season-workflow redesign, "People" design ref) — the roster directory
@@ -201,7 +202,7 @@ export default async function RosterPage({
         </div>
       </div>
 
-      <RosterTabs slug={slug} active="directory" canWrite={canWrite} />
+      <SubTabs strip={rosterTabs(slug, "directory", canWrite)} />
 
       {!season && (
         <p className="muted">

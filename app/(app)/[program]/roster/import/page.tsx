@@ -2,7 +2,8 @@ import { getTenantContext } from "@/lib/tenant";
 import { createClient } from "@/lib/supabase/server";
 import { Restricted } from "../../Restricted";
 import { ROSTER_WRITE_ROLES } from "@/lib/nav";
-import { RosterTabs } from "../RosterTabs";
+import { SubTabs } from "../../SubTabs";
+import { rosterTabs } from "@/lib/subnav";
 import { ImportClient } from "./ImportClient";
 import { IntroStrip, HelpDot } from "../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
@@ -46,7 +47,7 @@ export default async function RosterImportPage({
 
   return (
     <section className="stack">
-      <RosterTabs slug={slug} active="import" canWrite />
+      <SubTabs strip={rosterTabs(slug, "import", true)} />
       <div className="page-title-row">
         <h1>Import roster</h1>
         {showGuide && <HelpDot href={`/${slug}/roster/import?help=1`} />}
