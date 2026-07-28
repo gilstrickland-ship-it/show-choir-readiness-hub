@@ -25,21 +25,43 @@ import { readFlash } from "@/lib/flash";
 const PROGRAM = "11111111-1111-1111-1111-111111111111";
 const DIRECTOR = "22222222-2222-2222-2222-222222222222";
 const ADMIN = "33333333-3333-3333-3333-333333333333";
+const SEASON = "44444444-4444-4444-4444-444444444444";
 
 const h = vi.hoisted(() => ({
   // The member row each lookup answers with, keyed by program_members.id.
   members: {} as Record<string, { role: string; status: string }>,
   // How many ACTIVE directors the program has right now.
   directorCount: 2,
+  // WHO IS ASKING. Both member writes are open to director/admin, and the seat
+  // the caller holds is what decides whether they may hand out `director`.
+  callerRole: "director" as string,
+  // Whether the share-link revoke actually killed the URL.
+  revokeOk: true,
+  // The season rows this program has, keyed by seasons.id. A season id NOT in
+  // here is another program's — which the archive guard has to resolve away
+  // before it writes anything.
+  seasons: {} as Record<string, { is_active: boolean }>,
   updates: [] as { table: string; payload: Record<string, unknown> }[],
+  inserts: [] as { table: string; payload: Record<string, unknown> }[],
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ host: "localhost:3000" }),
+}));
 vi.mock("@/lib/auth", () => ({
-  requireRole: async () => ({ user: { id: "u1" } }),
+  requireRole: async () => ({
+    user: { id: "u1" },
+    membership: { id: "m1", role: h.callerRole, status: "active" },
+  }),
   ROLE_LABELS: {},
 }));
-vi.mock("@/lib/tokens", () => ({ revokeShareLink: async () => undefined }));
+// revokeShareLink now REPORTS whether the URL is actually dead, and the action's
+// message ("That URL stops working immediately") is only said when it is. The
+// mock answers with whatever the test set.
+vi.mock("@/lib/tokens", () => ({
+  revokeShareLink: async () => ({ ok: h.revokeOk }),
+}));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
 
 vi.mock("next/navigation", () => ({
@@ -53,18 +75,32 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/supabase/server", () => {
   const builderFor = (table: string) => {
     const filters: Record<string, unknown> = {};
-    let op: "select" | "update" = "select";
+    let op: "select" | "update" | "insert" = "select";
     let payload: Record<string, unknown> = {};
     let counting = false;
 
     const settle = (): unknown => {
+      if (op === "insert") {
+        h.inserts.push({ table, payload });
+        return { data: { id: "new-member" }, error: null };
+      }
       if (op === "update") {
         h.updates.push({ table, payload });
         return { data: null, error: null };
       }
       // The head/count query is activeDirectorCount asking how many are left.
       if (counting) return { count: h.directorCount, error: null };
-      const row = h.members[String(filters.id ?? "")];
+      const id = String(filters.id ?? "");
+      if (table === "seasons") {
+        const season = h.seasons[id];
+        // Program-scoped, like the real query: the fixture holds only this
+        // program's seasons, so anything else resolves to nothing.
+        return {
+          data: season ? { id, is_active: season.is_active } : null,
+          error: null,
+        };
+      }
+      const row = h.members[id];
       return { data: row ?? null, error: null };
     };
 
@@ -78,12 +114,18 @@ vi.mock("@/lib/supabase/server", () => {
         payload = p;
         return builder;
       },
+      insert: (p: Record<string, unknown>) => {
+        op = "insert";
+        payload = p;
+        return builder;
+      },
       eq: (key: string, value: unknown) => {
         filters[key] = value;
         return builder;
       },
       is: () => builder,
       maybeSingle: () => builder,
+      single: () => builder,
       then: (onOk: (value: unknown) => unknown, onErr?: (r: unknown) => unknown) =>
         Promise.resolve(settle()).then(onOk, onErr),
     };
@@ -97,9 +139,11 @@ vi.mock("@/lib/supabase/server", () => {
 import {
   reRoleMember,
   removeMember,
+  inviteMember,
   updateProgram,
   grantSupportAccess,
   revokeShareLinkAction,
+  archiveSeason,
 } from "@/app/(app)/[program]/settings/actions";
 import { SETTINGS_FLASH_MAPS, MEMBER_FLASH_MAPS } from "@/app/(app)/[program]/settings/shared";
 import { ROLLOVER_FLASH_MAPS } from "@/app/(app)/[program]/settings/rollover/shared";
@@ -126,11 +170,112 @@ async function run(
 
 beforeEach(() => {
   h.updates = [];
+  h.inserts = [];
   h.directorCount = 2;
+  h.callerRole = "director";
+  h.revokeOk = true;
+  h.seasons = {};
   h.members = {
     [DIRECTOR]: { role: "director", status: "active" },
     [ADMIN]: { role: "admin", status: "active" },
   };
+});
+
+// ---------------------------------------------------------------------------
+// Only a director hands out the director seat. `director` is the seat every
+// DIRECTOR_ONLY control answers to — support consent, unarchiving a season — so
+// an admin able to grant it has defeated all of them at once, and the shortest
+// route there is naming their OWN memberId.
+describe("granting the director seat", () => {
+  test("an admin cannot promote someone else to director", async () => {
+    h.callerRole = "admin";
+    const url = await run(reRoleMember, {
+      programId: PROGRAM,
+      slug: "westfield",
+      memberId: DIRECTOR,
+      role: "director",
+    });
+    expect(url).toContain("error=director_only");
+    expect(h.updates).toHaveLength(0);
+  });
+
+  test("an admin cannot promote THEMSELVES — the same check, no self-case", async () => {
+    h.callerRole = "admin";
+    const url = await run(reRoleMember, {
+      programId: PROGRAM,
+      slug: "westfield",
+      // Their own row: the hole was that nothing looked at who was asking.
+      memberId: ADMIN,
+      role: "director",
+    });
+    expect(url).toContain("error=director_only");
+    expect(h.updates).toHaveLength(0);
+  });
+
+  test("the refusal reopens the row that tried", async () => {
+    h.callerRole = "admin";
+    const url = await run(reRoleMember, {
+      programId: PROGRAM,
+      slug: "westfield",
+      memberId: ADMIN,
+      role: "director",
+    });
+    expect(url).toContain(`edit=${ADMIN}`);
+    expect(url).toContain(`#member-${ADMIN}`);
+  });
+
+  test("a director can", async () => {
+    h.callerRole = "director";
+    const url = await run(reRoleMember, {
+      programId: PROGRAM,
+      slug: "westfield",
+      memberId: ADMIN,
+      role: "director",
+    });
+    expect(url).toBe("/westfield/settings/members?ok=saved");
+    expect(h.updates).toEqual([
+      { table: "program_members", payload: { role: "director" } },
+    ]);
+  });
+
+  test("an admin's other role changes are untouched", async () => {
+    h.callerRole = "admin";
+    const url = await run(reRoleMember, {
+      programId: PROGRAM,
+      slug: "westfield",
+      memberId: ADMIN,
+      role: "treasurer",
+    });
+    expect(url).toBe("/westfield/settings/members?ok=saved");
+    expect(h.updates).toEqual([
+      { table: "program_members", payload: { role: "treasurer" } },
+    ]);
+  });
+
+  test("and the invite door is shut the same way", async () => {
+    h.callerRole = "admin";
+    const url = await run(inviteMember, {
+      programId: PROGRAM,
+      slug: "westfield",
+      email: "me+2@example.com",
+      role: "director",
+    });
+    expect(url).toContain("error=invite_director_only");
+    expect(h.inserts).toHaveLength(0);
+  });
+
+  test("a director may still invite a director", async () => {
+    h.callerRole = "director";
+    const url = await run(inviteMember, {
+      programId: PROGRAM,
+      slug: "westfield",
+      email: "new@example.com",
+      role: "director",
+    });
+    expect(url).toContain("invited=");
+    expect(h.inserts).toHaveLength(1);
+    expect(h.inserts[0].payload.role).toBe("director");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -258,6 +403,83 @@ describe("every outcome lands in the section that produced it", () => {
         shareLinkId: "abc",
       }),
     ).toBe("/d/settings?ok=revoked#share-links");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revocation is the ONE control a director has over a URL they have already
+// handed out, and the message it prints — "That URL stops working immediately"
+// — used to be unconditional: lib/tokens' revokeShareLink was `Promise<void>`
+// and threw its result away, so a refused write, or a link id belonging to
+// another program, read as a successful revoke. Being told a live link is dead
+// is worse than being told nothing.
+describe("revoking a share link says only what happened", () => {
+  test("the URL really is dead → the confident message", async () => {
+    h.revokeOk = true;
+    expect(
+      await run(revokeShareLinkAction, {
+        programId: PROGRAM,
+        slug: "d",
+        shareLinkId: "abc",
+      }),
+    ).toBe("/d/settings?ok=revoked#share-links");
+  });
+
+  test("nothing was revoked → a refusal, in the same section", async () => {
+    h.revokeOk = false;
+    const url = await run(revokeShareLinkAction, {
+      programId: PROGRAM,
+      slug: "d",
+      shareLinkId: "abc",
+    });
+    expect(url).toBe("/d/settings?error=revoke#share-links");
+    // And emphatically NOT the reassurance.
+    expect(url).not.toContain("ok=revoked");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Archiving is the vault door (§9.4): it freezes every season-scoped write.
+// Doing it to the ACTIVE season freezes the one season every page reads, with
+// nothing to fall back to and no way out except unarchiving — which only a
+// director may do. The Seasons table renders no Archive button on the active
+// row, and the header comment claimed the action was guarded; it was not, and a
+// hidden control is not a guard (Constitution I) — this is a form POST with a
+// season id in it.
+describe("archiving the active season", () => {
+  test("is refused, and nothing is written", async () => {
+    h.seasons = { [SEASON]: { is_active: true } };
+    const url = await run(archiveSeason, {
+      programId: PROGRAM,
+      slug: "d",
+      seasonId: SEASON,
+    });
+    expect(url).toBe("/d/settings/rollover?error=archive_active#all-seasons");
+    expect(h.updates).toHaveLength(0);
+  });
+
+  test("an inactive season still archives", async () => {
+    h.seasons = { [SEASON]: { is_active: false } };
+    const url = await run(archiveSeason, {
+      programId: PROGRAM,
+      slug: "d",
+      seasonId: SEASON,
+    });
+    expect(url).toBe("/d/settings/rollover?ok=archived#all-seasons");
+    expect(h.updates).toHaveLength(1);
+    expect(h.updates[0].table).toBe("seasons");
+    expect(h.updates[0].payload.archived_at).toBeTypeOf("string");
+  });
+
+  test("a season id that is not this program's is refused, not written", async () => {
+    h.seasons = {};
+    const url = await run(archiveSeason, {
+      programId: PROGRAM,
+      slug: "d",
+      seasonId: "someone-elses-season",
+    });
+    expect(url).toBe("/d/settings/rollover?error=archive#all-seasons");
+    expect(h.updates).toHaveLength(0);
   });
 });
 

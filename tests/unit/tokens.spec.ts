@@ -8,6 +8,7 @@
 // ============================================================================
 
 import { describe, test, expect } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   generateToken,
   hashToken,
@@ -16,6 +17,7 @@ import {
   guardianCan,
   shareCan,
   shareResourceTable,
+  revokeShareLink,
   CAPABILITIES,
   GUARDIAN_CAPABILITIES,
   SHARE_CAPABILITIES,
@@ -139,5 +141,86 @@ describe("guardianLinks (three canonical footer URLs)", () => {
     expect(links.signup).toMatch(/\/t\/RAWTOKEN\/signup$/);
     expect(links.absence).toMatch(/\/t\/RAWTOKEN\/absence$/);
     expect(links.unsubscribe).toMatch(/\/t\/RAWTOKEN\/unsubscribe$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revoking is the ONE control a director has over a URL they have already handed
+// out — an emailed link, a link in a program newsletter. The Settings button
+// says "That URL stops working immediately", and revokeShareLink used to be
+// `Promise<void>`: it threw the result away, so a refused write, or a link id
+// belonging to another program, produced exactly the same confident message.
+// Being told a live link is dead is worse than being told nothing.
+//
+// Zero rows is NOT automatically a failure, though — the update is filtered on
+// `revoked_at is null`, so a second press of a button on a stale page matches
+// nothing while the link genuinely IS dead. That case is confirmed with a read
+// rather than guessed at in either direction. All three outcomes below.
+describe("revokeShareLink reports whether the URL is actually dead", () => {
+  // A client just complete enough for this one function: an update chain that
+  // settles with what the test says, and a follow-up select that answers
+  // whether the link was already revoked.
+  function client(opts: {
+    updated: { id: string }[] | null;
+    updateError?: boolean;
+    alreadyRevoked?: boolean;
+  }): SupabaseClient {
+    return {
+      from: () => {
+        let op: "select" | "update" = "select";
+        const builder: Record<string, unknown> = {
+          update: () => ((op = "update"), builder),
+          select: () => builder,
+          eq: () => builder,
+          is: () => builder,
+          not: () => builder,
+          maybeSingle: () => builder,
+          then: (onOk: (v: unknown) => unknown) =>
+            Promise.resolve(
+              op === "update"
+                ? {
+                    data: opts.updated,
+                    error: opts.updateError ? { message: "refused" } : null,
+                  }
+                : {
+                    data: opts.alreadyRevoked ? { id: "sl1" } : null,
+                    error: null,
+                  },
+            ).then(onOk),
+        };
+        return builder;
+      },
+    } as unknown as SupabaseClient;
+  }
+
+  const args = { programId: "p1", shareLinkId: "sl1" };
+
+  test("a live link it revoked → ok", async () => {
+    const res = await revokeShareLink(client({ updated: [{ id: "sl1" }] }), args);
+    expect(res.ok).toBe(true);
+  });
+
+  test("a link that was ALREADY revoked → still ok, because the URL is dead", async () => {
+    const res = await revokeShareLink(
+      client({ updated: [], alreadyRevoked: true }),
+      args,
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  test("a link that is not this program's → NOT ok, so nothing reassuring is said", async () => {
+    const res = await revokeShareLink(
+      client({ updated: [], alreadyRevoked: false }),
+      args,
+    );
+    expect(res.ok).toBe(false);
+  });
+
+  test("a refused write → NOT ok", async () => {
+    const res = await revokeShareLink(
+      client({ updated: null, updateError: true }),
+      args,
+    );
+    expect(res.ok).toBe(false);
   });
 });
