@@ -95,12 +95,14 @@
 ## Phase 14 — Wave 14: Parent surface (verification and polish, NOT a rebuild)
 
 - [ ] T143d CSS handoff from Wave 12 (globals.css, currently owned by a separate 44px task): `td.num`/`th.num` are unstyled so every money column outside `.money-ledger` left-aligns — add `table.members td.num { text-align: right }` and let `.money-ledger` go back to being ledger-specific; `.money-filters a` (the Clear link, 33×21) and `.subtabs` links (36px) are under the 44px target across all six surfaces; add a comment on `.stack`'s `align-items:flex-start` shrink-wrap trap, which silently rendered two money tables 81px and 94px wide at 1280px.
-- [ ] T167 Re-verify every parent route after the staff-side changes: published-only gates, token capability allow-list unchanged, directory-tier PII only, program-tz dates, ≥44px tap targets, absence/signup outcome emails still send; `link-help` enumeration-safe + rate-limited behavior verbatim.
-- [ ] T168 Wave-14 verification: full gate + e2e + visual pass (parent surface at 375px is the primary case).
+- [X] T167 Re-verify every parent route after the staff-side changes: published-only gates, token capability allow-list unchanged, directory-tier PII only, program-tz dates, ≥44px tap targets, absence/signup outcome emails still send; `link-help` enumeration-safe + rate-limited behavior verbatim.
+- [X] T168 Wave-14 verification: full gate + e2e + visual pass (parent surface at 375px is the primary case).
 
 ## Phase 9 — Wave 9: Tutorials & first-use refresh (runs LAST, after ALL waves above)
 
 - [ ] T143e Destructive one-click share-link revoke has no confirm (Wave-13 finding): revoking kills the URL irrecoverably — the family must be re-issued and re-told — and it is the only irreversible action in the app without a confirm step. Decide: add the app-wide confirm idiom, or document why this one stays one click.
+- [ ] T169 ESCALATION (needs schema, RQ-3): the "Updated {when}" living-itinerary banner is blind to DELETIONS — `changedItemsSincePublish` reads `itinerary_items.updated_at`, and a deleted row leaves no row to read. A director who removes an item after publishing gets no banner, so families keep a schedule line that no longer exists. Closing it needs a deleted-at or audit column; decide before it ships.
+- [ ] T143f Parent-surface tap targets (Wave-14 measured, globals.css): `.itinerary-links a` 24.8px, `.token-footer a` 36.3px (four links, every page), absence `select` 36.4px, link-help email input 41.2px. Wave 14 verified three rules take all four to 44px with no overflow regression — see its report.
 - [ ] T145 Journey re-derivation (US12): all role journeys in `lib/guide.ts` re-pointed at rebuilt flows (steps, links, labels, verifiers); non-director journeys reflect rebuilt surfaces + Wave-8 mobile nav; e2e guide contracts updated coherently.
 - [ ] T146 Strip re-justification (US12-2): each of the eight IntroStrips rewritten for the new UI, shortened, or removed where the rebuilt surface self-explains; `?help=1` + Got-it semantics preserved for survivors; parent welcome card reviewed.
 - [ ] T147 Wave-9 verification: full gate + e2e + visual QA (fresh-program walkthrough per role, journey panel states, surviving strips).
