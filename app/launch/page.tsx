@@ -3,11 +3,14 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { signOut } from "@/app/auth/actions";
+import { Flash } from "@/app/(app)/[program]/Flash";
 import { brand } from "@/lib/brand";
 import { escapeLike } from "@/lib/email";
+import { readFlash } from "@/lib/flash";
 import { formatTimeZoneLabel, TIMEZONES } from "@/lib/datetime";
 import { ROLE_LABELS, type Role } from "@/lib/auth";
 import { createProgram } from "./actions";
+import { LAUNCH_FLASH_MAPS, type LaunchSection } from "./shared";
 
 // Post-sign-in router. The sign-in flow lands here by default and this page
 // decides where the user actually belongs:
@@ -19,6 +22,10 @@ import { createProgram } from "./actions";
 // Membership lookups use the service-role client because an INVITED membership
 // is not readable under RLS (reads require ACTIVE membership) — the queries are
 // scoped strictly to the signed-in user's id and verified email.
+//
+// The time zone offered here is lib/datetime's one list — the same one Settings
+// offers, so a program cannot be created in a zone Settings can't then show
+// (spec 005 Wave 8 unified it; T165 keeps it that way).
 
 export const dynamic = "force-dynamic";
 
@@ -29,17 +36,14 @@ interface MembershipRow {
   program: { slug: string; name: string } | null;
 }
 
-const ERRORS: Record<string, string> = {
-  missing: "A program name and timezone are required.",
-  create: "We couldn't create that program. Please try again.",
-};
-
 export default async function LaunchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  // A duplicated param (?error=a&error=b) arrives as an ARRAY, so this is typed
+  // as what it really is and the read goes through lib/flash (./shared).
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { error } = await searchParams;
+  const flash = readFlash<LaunchSection>(await searchParams, LAUNCH_FLASH_MAPS);
   const supabase = await createClient();
   const {
     data: { user },
@@ -124,7 +128,7 @@ export default async function LaunchPage({
           this email from Settings → Members, or contact{" "}
           <a href={`mailto:${brand.supportEmail}`}>{brand.supportEmail}</a>.
         </p>
-        {error && ERRORS[error] && <p className="alert-error">{ERRORS[error]}</p>}
+        <Flash flash={flash} section="page" />
         {createForm}
         <form action={signOut}>
           <button type="submit" className="secondary">
@@ -138,7 +142,7 @@ export default async function LaunchPage({
   return (
     <main className="auth stack">
       <h1>Choose a program</h1>
-      {error && ERRORS[error] && <p className="alert-error">{ERRORS[error]}</p>}
+      <Flash flash={flash} section="page" />
 
       {active.length > 0 && (
         <ul className="stack" style={{ listStyle: "none", padding: 0 }}>
@@ -177,7 +181,7 @@ export default async function LaunchPage({
       )}
 
       <details className="stack">
-        <summary>Start a new program</summary>
+        <summary className="people-disclosure">Start a new program</summary>
         <p className="muted">
           Create another program you&apos;ll run — you become its director.
         </p>

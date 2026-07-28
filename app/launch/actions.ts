@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { programPath } from "@/lib/return-path";
+import type { LaunchErrorKey } from "./shared";
 
 // Self-serve program creation (F1). A signed-in user with no program can create
 // one and become its director in a single step. RLS can't cover this: there is
@@ -17,6 +18,14 @@ import { programPath } from "@/lib/return-path";
 // that accepts a row id from a client must therefore resolve that id inside its
 // own program before trusting it (Constitution I) — a program_id column and a
 // role check are not enough on their own.
+
+// /launch is not under the [program] segment, so there is no slug to fail closed
+// on: the path is a constant and only the CODE varies. Typing it against the
+// page's key union is what keeps the two halves together — a code no map defines
+// is a compile error here rather than a blank screen there (spec 005 T165).
+function launchFail(key: LaunchErrorKey): string {
+  return `/launch?error=${key}`;
+}
 
 // Turn a program name into a URL-safe slug. Falls back to "program" if the name
 // has no slug-able characters (e.g. all punctuation).
@@ -62,7 +71,7 @@ export async function createProgram(formData: FormData): Promise<void> {
   const state = String(formData.get("state") ?? "").trim();
 
   if (!name || !timezone) {
-    redirect("/launch?error=missing");
+    redirect(launchFail("missing"));
   }
 
   const admin = createAdminClient();
@@ -82,7 +91,7 @@ export async function createProgram(formData: FormData): Promise<void> {
     .single();
 
   if (programError || !program) {
-    redirect("/launch?error=create");
+    redirect(launchFail("create"));
   }
 
   const { error: memberError } = await admin.from("program_members").insert({
@@ -95,7 +104,7 @@ export async function createProgram(formData: FormData): Promise<void> {
   if (memberError) {
     // Roll back the orphaned program so a retry gets a clean slug.
     await admin.from("programs").delete().eq("id", program.id);
-    redirect("/launch?error=create");
+    redirect(launchFail("create"));
   }
 
   // The slug was just minted by slugify above, so it is already a slug — but
