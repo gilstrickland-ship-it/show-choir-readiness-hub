@@ -973,8 +973,18 @@
     border-bottom: 1px solid var(--line);
   }
 
+  /* The three answers and the note, on the line under the name. This is the one
+     screen in the app worked standing up in a hallway with a phone in one hand,
+     so its buttons get a real thumb target — the base button rule comes out at
+     41px, measured, which is under the 44px every other deliberate hit area in
+     this file holds. Compound (class + element), so nothing here outranks the
+     base-layer button styles it sits beside (the T061/T066 cascade trap). */
   .attendance-row {
     margin-top: 0.35rem;
+  }
+
+  .attendance-row button {
+    min-height: 44px;
   }
 
   /* ---------------- Public token surface ---------------- */
