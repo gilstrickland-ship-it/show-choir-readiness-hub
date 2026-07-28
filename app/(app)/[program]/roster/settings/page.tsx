@@ -30,14 +30,21 @@ export default async function RosterSettingsPage({
       <RosterTabs slug={slug} active="settings" canWrite />
       <h1>Size fields</h1>
       <p className="muted">
-        These keys become the size inputs on every student and the size columns
-        the CSV import recognizes. One key per line (or comma-separated), e.g.{" "}
-        <code>top</code>, <code>bottom</code>, <code>dress</code>, <code>shoe</code>.
+        Programs measure differently, so you choose what gets measured. Whatever
+        you list here becomes the size boxes on every student&apos;s page, and
+        the size columns the spreadsheet import knows to look for.
+      </p>
+      <p className="muted">
+        One per line. Most programs use <code>top</code>, <code>bottom</code>,{" "}
+        <code>dress</code> and <code>shoe</code>.
       </p>
 
       {saved && <p className="alert-ok">Saved.</p>}
       {error === "empty" && (
-        <p className="alert-error">Enter at least one size field.</p>
+        <p className="alert-error">
+          List at least one thing to measure — an empty list would leave every
+          student with nowhere to record a size.
+        </p>
       )}
       {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
 
@@ -45,11 +52,16 @@ export default async function RosterSettingsPage({
         <input type="hidden" name="programId" value={program.id} />
         <input type="hidden" name="slug" value={slug} />
         <label>
-          Size fields
+          What you measure
           <textarea name="size_fields" rows={5} defaultValue={keys.join("\n")} />
         </label>
         <button type="submit">Save size fields</button>
       </form>
+      <p className="page-foot">
+        Removing a line takes that box off the student pages. Sizes already
+        recorded under it stop being shown, so rename with care — a line you take
+        out and put back under a different spelling starts empty.
+      </p>
     </section>
   );
 }
