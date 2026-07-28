@@ -7,15 +7,17 @@ import { formatDateTimeInTz } from "@/lib/datetime";
 import { TREASURY_ROLES } from "@/lib/nav";
 import {
   formatCents,
-  sumActuals,
-  listMonthsWithEntries,
+  lineActualsFromRows,
+  seasonTotalsFromRow,
+  totalForLine,
   monthKeyForDate,
   reconciledThroughMonth,
   formatMonthKey,
+  UNCATEGORIZED_KEY,
   CATEGORY_DIRECTION_LABELS,
   type CategoryDirection,
-  type LedgerDirection,
-  type LedgerMonthRow,
+  type LineActual,
+  type LedgerSeasonTotals,
 } from "@/lib/treasury";
 import { TreasuryTabs } from "../TreasuryTabs";
 
@@ -23,6 +25,12 @@ import { TreasuryTabs } from "../TreasuryTabs";
 // net + line breakdown) and a read-only board-snapshot data page (totals,
 // category rollups, uncategorized note, as-of stamp) that links to the P5 PDF
 // at /api/pdf/board-snapshot?season=... . Read-only; no writes.
+//
+// Every number here is a SQL aggregate (0019), not a sum over a fetched entry
+// list. This is the page a treasurer reads to a board from, so it is the last
+// place that may quietly stop at PostgREST's 1000-row cap. The per-event report
+// asks for one event's aggregate instead of pulling the season and filtering it
+// in memory.
 
 interface CatRow {
   id: string;
@@ -33,15 +41,6 @@ interface LineRow {
   id: string;
   category_id: string;
   name: string;
-}
-interface EntryRow {
-  direction: LedgerDirection;
-  amount_cents: number;
-  voided_at: string | null;
-  budget_line_id: string | null;
-  competition_id: string | null;
-  trip_id: string | null;
-  entry_date: string;
 }
 interface NamedRow {
   id: string;
@@ -69,12 +68,13 @@ export default async function ReportsPage({
 
   let cats: CatRow[] = [];
   let lines: LineRow[] = [];
-  let entries: EntryRow[] = [];
   let comps: NamedRow[] = [];
   let trips: NamedRow[] = [];
+  let seasonByLine = new Map<string, LineActual>();
+  let totals: LedgerSeasonTotals | null = null;
 
   if (season) {
-    const [{ data: budget }, { data: compData }, { data: tripData }, { data: entryData }] =
+    const [{ data: budget }, { data: compData }, { data: tripData }, lineRes, totalsRes] =
       await Promise.all([
         supabase
           .from("budgets")
@@ -97,20 +97,24 @@ export default async function ReportsPage({
           .eq("program_id", program.id)
           .eq("season_id", season.id)
           .order("starts_on", { ascending: false }),
-        supabase
-          .from("ledger_entries")
-          .select(
-            "direction, amount_cents, voided_at, budget_line_id, competition_id, trip_id, entry_date",
-          )
-          .eq("program_id", program.id)
-          .eq("season_id", season.id)
-          .is("voided_at", null),
+        supabase.rpc("ledger_line_actuals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
+        supabase.rpc("ledger_season_totals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
       ]);
 
     const b = budget as { id: string; name: string } | null;
     comps = (compData as NamedRow[] | null) ?? [];
     trips = (tripData as NamedRow[] | null) ?? [];
-    entries = (entryData as EntryRow[] | null) ?? [];
+    seasonByLine = lineRes.error ? new Map() : lineActualsFromRows(lineRes.data);
+    const totalsRow = Array.isArray(totalsRes.data)
+      ? totalsRes.data[0]
+      : totalsRes.data;
+    totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
 
     if (b) {
       const { data: catData } = await supabase
@@ -139,26 +143,24 @@ export default async function ReportsPage({
   const lineCat = new Map(lines.map((l) => [l.id, l.category_id]));
 
   // ---- Board snapshot rollups ----------------------------------------------
-  const snapshot = sumActuals(entries);
+  // Category rollup = every cent booked to that category's lines, both
+  // directions, which is what the board reads as "what this category cost/
+  // brought in". Uncategorized comes back as its own bucket from the aggregate.
   const catActual = new Map<string, number>();
-  let uncategorizedCount = 0;
-  let uncategorizedTotal = 0;
-  for (const e of entries) {
-    if (e.budget_line_id) {
-      const catId = lineCat.get(e.budget_line_id);
-      if (catId) {
-        catActual.set(catId, (catActual.get(catId) ?? 0) + e.amount_cents);
-      }
-    } else {
-      uncategorizedCount += 1;
-      uncategorizedTotal += e.amount_cents;
-    }
+  for (const [lineId, actual] of seasonByLine) {
+    if (lineId === UNCATEGORIZED_KEY) continue;
+    const catId = lineCat.get(lineId);
+    if (!catId) continue;
+    catActual.set(catId, (catActual.get(catId) ?? 0) + totalForLine(actual));
   }
+  const uncategorizedCount = totals?.uncategorizedCount ?? 0;
+  const uncategorizedTotal = totals?.uncategorizedCents ?? 0;
   const asOf = formatDateTimeInTz(new Date(), program.timezone);
 
   // "Reconciled through" (Wave L): the latest contiguous month whose books were
-  // checked against the bank statement. `entries` is already void-free.
-  const monthsWithEntries = listMonthsWithEntries(entries as LedgerMonthRow[]);
+  // checked against the bank statement. The month list is void-free by
+  // construction (the aggregate excludes voided rows).
+  const monthsWithEntries = totals?.months ?? [];
   let reconciledThroughLabel: string | null = null;
   if (season && monthsWithEntries.length > 0) {
     const { data: recRows } = await supabase
@@ -185,18 +187,25 @@ export default async function ReportsPage({
       : (trips.find((t) => t.id === eventId)?.name ?? null)
     : null;
 
-  const eventEntries = eventId
-    ? entries.filter((e) =>
-        kind === "comp" ? e.competition_id === eventId : e.trip_id === eventId,
-      )
-    : [];
-  const eventTotals = sumActuals(eventEntries);
-  // Line breakdown within the event.
-  const eventByLine = new Map<string | null, number>();
-  for (const e of eventEntries) {
-    const key = e.budget_line_id;
-    eventByLine.set(key, (eventByLine.get(key) ?? 0) + e.amount_cents);
+  // One aggregate scoped to the chosen event — asked for only when an event is
+  // chosen, and grouped by budget line so the breakdown and the totals are the
+  // same numbers by construction.
+  let eventByLine = new Map<string, LineActual>();
+  if (season && eventId && kind) {
+    const { data, error } = await supabase.rpc("ledger_line_actuals", {
+      p_program_id: program.id,
+      p_season_id: season.id,
+      p_competition_id: kind === "comp" ? eventId : null,
+      p_trip_id: kind === "trip" ? eventId : null,
+    });
+    if (!error) eventByLine = lineActualsFromRows(data);
   }
+  const eventTotals = { inCents: 0, outCents: 0, netCents: 0 };
+  for (const actual of eventByLine.values()) {
+    eventTotals.inCents += actual.inCents;
+    eventTotals.outCents += actual.outCents;
+  }
+  eventTotals.netCents = eventTotals.inCents - eventTotals.outCents;
 
   return (
     <section className="stack">
@@ -266,8 +275,8 @@ export default async function ReportsPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {[...eventByLine.entries()].map(([lid, amt]) => (
-                      <tr key={lid ?? "uncat"}>
+                    {[...eventByLine.entries()].map(([lid, actual]) => (
+                      <tr key={lid || "uncat"}>
                         <td>
                           {lid ? (
                             (lineName.get(lid) ?? "—")
@@ -275,10 +284,10 @@ export default async function ReportsPage({
                             <span className="muted">uncategorized</span>
                           )}
                         </td>
-                        <td className="num">{formatCents(amt)}</td>
+                        <td className="num">{formatCents(totalForLine(actual))}</td>
                       </tr>
                     ))}
-                    {eventEntries.length === 0 && (
+                    {eventByLine.size === 0 && (
                       <tr>
                         <td colSpan={2} className="muted">
                           No entries tagged to this event.
@@ -305,14 +314,26 @@ export default async function ReportsPage({
                 : "No months reconciled yet."}
             </p>
 
+            {!totals && (
+              <p className="alert-error">
+                The season totals could not be read just now, so the figures
+                below are blank rather than wrong. Reload to try again — do not
+                present this page to the board until it shows numbers.
+              </p>
+            )}
+
             <dl className="detail-list">
               <dt>Income (actual)</dt>
-              <dd className="num">{formatCents(snapshot.inCents)}</dd>
+              <dd className="num">
+                {totals ? formatCents(totals.inCents) : "—"}
+              </dd>
               <dt>Expense (actual)</dt>
-              <dd className="num">{formatCents(snapshot.outCents)}</dd>
+              <dd className="num">
+                {totals ? formatCents(totals.outCents) : "—"}
+              </dd>
               <dt>Net</dt>
               <dd className="num">
-                <strong>{formatCents(snapshot.netCents)}</strong>
+                <strong>{totals ? formatCents(totals.netCents) : "—"}</strong>
               </dd>
             </dl>
 

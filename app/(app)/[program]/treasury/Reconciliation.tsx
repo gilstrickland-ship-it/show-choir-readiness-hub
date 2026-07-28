@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { formatDateOnly, formatMonthKey } from "@/lib/treasury";
+import { zonedDateKey } from "@/lib/datetime";
 import { markReconciled, unmarkReconciled } from "./actions";
 
 // The monthly bank-statement check (Wave L), lifted out of the ledger page so
@@ -16,6 +17,7 @@ export function Reconciliation({
   reconciledBy,
   canWrite,
   confirmMonth,
+  timeZone,
 }: {
   programId: string;
   slug: string;
@@ -23,6 +25,10 @@ export function Reconciliation({
   reconciledBy: Map<string, { date: string; note: string | null }>;
   canWrite: boolean;
   confirmMonth: string | null;
+  // "Reconciled on" is an INSTANT (created_at), so it has to be bucketed to the
+  // program's calendar day before it is printed. Rendering the raw ISO prefix
+  // showed the UTC day, which dates an evening reconciliation to tomorrow.
+  timeZone: string;
 }) {
   return (
     <div className="confirm-box stack" style={{ width: "100%" }}>
@@ -49,7 +55,8 @@ export function Reconciliation({
                 <td>
                   {rec ? (
                     <span>
-                      <strong>Reconciled ✓</strong> {formatDateOnly(rec.date)}
+                      <strong>Reconciled ✓</strong>{" "}
+                      {formatDateOnly(zonedDateKey(rec.date, timeZone))}
                       {rec.note ? (
                         <span className="muted"> · {rec.note}</span>
                       ) : null}

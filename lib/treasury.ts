@@ -139,19 +139,84 @@ export function formatDateOnly(dateStr: string | null | undefined): string {
 // Free-text ledger search (spec 005 US8-3). PostgREST's `or()` takes a
 // comma-separated FILTER STRING, so whatever a treasurer types has to be
 // neutralized before it becomes part of that grammar: a comma would start a new
-// filter, a paren would close the group, and `%`/`*` are ilike wildcards we add
-// ourselves. Strip that punctuation, collapse whitespace, and cap the length —
-// a ledger search is a payee or a word from a memo, never an expression.
-// Returns null for anything that leaves nothing to search on.
+// filter, a paren would close the group, and `%`, `*` and `_` are all ilike
+// wildcards we add ourselves (`_` matches any ONE character, which is why
+// searching for "check_no" would otherwise quietly match "check-no" too).
+// Strip that punctuation, collapse whitespace, and cap the length — a ledger
+// search is a payee or a word from a memo, never an expression. Returns null
+// for anything that leaves nothing to search on.
 export function ledgerSearchTerm(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") return null;
   const cleaned = raw
-    .replace(/[,()*%\\"']/g, " ")
+    .replace(/[,()*%_\\"']/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 60)
     .trim();
   return cleaned || null;
+}
+
+// ---------------------------------------------------------------------------
+// Ledger pagination (money-integrity fix, Wave-4 review F2)
+// ---------------------------------------------------------------------------
+// PostgREST caps a response at `max_rows` (1000 here and on the hosted default),
+// so an un-paginated ledger silently stopped at an arbitrary prefix once a
+// season grew past it — with nothing on screen saying so. The list now asks for
+// one explicit page and states "showing X–Y of N", and every TOTAL is computed
+// in SQL (ledger_season_totals) rather than summed over whatever rows arrived.
+// The math is here so it is unit-testable and so the page and the footer can
+// never disagree about which rows they are describing.
+
+export const LEDGER_PAGE_SIZE = 100;
+
+export interface LedgerPageRange {
+  page: number; // 1-based, clamped into [1, pages]
+  pages: number; // at least 1, even when there is nothing to show
+  from: number; // 0-based inclusive index for PostgREST .range()
+  to: number; // 0-based inclusive index for PostgREST .range()
+  firstShown: number; // 1-based row number of the first row on this page (0 when empty)
+  lastShown: number; // 1-based row number of the last row on this page (0 when empty)
+  total: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+}
+
+// `?page=` off the URL: a positive integer, or 1 for anything else (a hand-typed
+// "0", "-3", "2e9" or an array-valued param must not produce a negative range).
+export function parsePageParam(raw: string | null | undefined): number {
+  if (typeof raw !== "string") return 1;
+  const n = Number(raw.trim());
+  if (!Number.isSafeInteger(n) || n < 1) return 1;
+  return n;
+}
+
+export function ledgerPageRange(
+  total: number,
+  page: number,
+  pageSize: number = LEDGER_PAGE_SIZE,
+): LedgerPageRange {
+  const size = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : LEDGER_PAGE_SIZE;
+  const n = Number.isSafeInteger(total) && total > 0 ? total : 0;
+  const pages = Math.max(1, Math.ceil(n / size));
+  // Past the end is clamped rather than shown empty: a treasurer who bookmarked
+  // page 9 of a ledger that shrank should land on the last real page, not on a
+  // blank table that reads as "no entries".
+  const current = Math.min(Math.max(parsePageParam(String(page)), 1), pages);
+  const from = (current - 1) * size;
+  const to = from + size - 1;
+  const firstShown = n === 0 ? 0 : from + 1;
+  const lastShown = n === 0 ? 0 : Math.min(to + 1, n);
+  return {
+    page: current,
+    pages,
+    from,
+    to,
+    firstShown,
+    lastShown,
+    total: n,
+    hasPrev: current > 1,
+    hasNext: current < pages,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -193,51 +258,107 @@ export const BUDGET_TEMPLATE: readonly BudgetTemplateCategory[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Aggregation helpers (pure) — actuals from live ledger rows, kept out of the
-// pages so the money math is unit-testable and consistent across every view.
+// Season aggregates — read from SQL, shaped here
 // ---------------------------------------------------------------------------
+// Every money total now comes from the 0019 aggregate functions, which return
+// ONE row each, so no balance can depend on how many rows PostgREST was willing
+// to hand back (`max_rows`, Wave-4 review F2). What is left in TypeScript is
+// shaping and null-handling — and the null-handling is deliberate: a failed
+// totals read returns null, never zeros, because "$0.00" is a number a
+// treasurer would read to a board and a blank is not.
 
-export interface LedgerAmountRow {
-  direction: LedgerDirection;
-  amount_cents: number;
-  voided_at: string | null;
-  budget_line_id: string | null;
-}
-
-// Sum non-voided in/out totals over a set of ledger rows. Voided rows never
-// count toward any balance (Principle V).
-export function sumActuals(rows: readonly LedgerAmountRow[]): {
+export interface LedgerSeasonTotals {
   inCents: number;
   outCents: number;
   netCents: number;
-} {
-  let inCents = 0;
-  let outCents = 0;
-  for (const r of rows) {
-    if (r.voided_at) continue;
-    if (r.direction === "in") inCents += r.amount_cents;
-    else outCents += r.amount_cents;
-  }
-  return { inCents, outCents, netCents: inCents - outCents };
+  entryCount: number;
+  uncategorizedCount: number;
+  uncategorizedCents: number;
+  // "YYYY-MM" keys with at least one live entry, newest first.
+  months: string[];
 }
 
-// Actual cents booked against one budget line (non-voided only). A line is
-// income or expense by its category direction; we sum whichever ledger
-// direction matches so a stray misdirected entry doesn't distort the line.
-export function actualForLine(
-  lineId: string,
-  categoryDirection: CategoryDirection,
-  rows: readonly LedgerAmountRow[],
-): number {
-  const want: LedgerDirection = categoryDirection === "income" ? "in" : "out";
-  let total = 0;
-  for (const r of rows) {
-    if (r.voided_at) continue;
-    if (r.budget_line_id !== lineId) continue;
-    if (r.direction !== want) continue;
-    total += r.amount_cents;
+// One row of public.ledger_season_totals, or null/garbage when the read failed.
+export function seasonTotalsFromRow(row: unknown): LedgerSeasonTotals | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  const num = (key: string): number | null => {
+    const v = r[key];
+    const n = typeof v === "string" ? Number(v) : v;
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  };
+  const inCents = num("in_cents");
+  const outCents = num("out_cents");
+  const netCents = num("net_cents");
+  const entryCount = num("entry_count");
+  const uncategorizedCount = num("uncategorized_count");
+  const uncategorizedCents = num("uncategorized_cents");
+  if (
+    inCents === null ||
+    outCents === null ||
+    netCents === null ||
+    entryCount === null ||
+    uncategorizedCount === null ||
+    uncategorizedCents === null
+  ) {
+    return null;
   }
-  return total;
+  const months = Array.isArray(r.months)
+    ? r.months.filter((m): m is string => typeof m === "string")
+    : [];
+  return {
+    inCents,
+    outCents,
+    netCents,
+    entryCount,
+    uncategorizedCount,
+    uncategorizedCents,
+    months,
+  };
+}
+
+export interface LineActual {
+  inCents: number;
+  outCents: number;
+}
+
+// public.ledger_line_actuals rows → lookup by budget line id. The row whose
+// budget_line_id is null is the uncategorized bucket; it is keyed under
+// UNCATEGORIZED_KEY so callers can ask for it by name.
+export const UNCATEGORIZED_KEY = "";
+
+export function lineActualsFromRows(rows: unknown): Map<string, LineActual> {
+  const out = new Map<string, LineActual>();
+  if (!Array.isArray(rows)) return out;
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    const id = typeof r.budget_line_id === "string" ? r.budget_line_id : UNCATEGORIZED_KEY;
+    const toNum = (v: unknown): number => {
+      const n = typeof v === "string" ? Number(v) : v;
+      return typeof n === "number" && Number.isFinite(n) ? n : 0;
+    };
+    out.set(id, { inCents: toNum(r.in_cents), outCents: toNum(r.out_cents) });
+  }
+  return out;
+}
+
+// Actual cents booked against a budget line, read the way its category means it:
+// an income line counts money IN, an expense line counts money OUT, so a stray
+// misdirected entry never inflates a line it does not belong to.
+export function actualForDirection(
+  actual: LineActual | undefined,
+  categoryDirection: CategoryDirection,
+): number {
+  if (!actual) return 0;
+  return categoryDirection === "income" ? actual.inCents : actual.outCents;
+}
+
+// Every cent booked against a line regardless of direction — what the board
+// snapshot's category rollup and the per-event breakdown report.
+export function totalForLine(actual: LineActual | undefined): number {
+  if (!actual) return 0;
+  return actual.inCents + actual.outCents;
 }
 
 // Variance for a line, oriented so a positive number is always "good":

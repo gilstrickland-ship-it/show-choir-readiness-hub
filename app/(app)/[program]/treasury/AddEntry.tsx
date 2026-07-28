@@ -21,10 +21,13 @@ import { LineSelect, optionName, type TagOptions } from "./shared";
 // count then nudges. Filing it later is a void plus a fresh row, never an edit:
 // the 0002 trigger freezes every money column after insert (Constitution V).
 
-// Everything the drawer prefills after a "Void & redo". `hadReceipt` is a flag,
-// not a path: a file input cannot be prefilled, so the panel says so instead of
-// silently dropping the receipt.
+// Everything the drawer prefills after a "Void & redo". `redoOf` is the voided
+// entry's id, posted back so the server can carry its RECEIPT forward: a file
+// input cannot be prefilled, and dropping the receipt silently would lose the
+// only proof of what the money bought. `hadReceipt` is what the panel says about
+// it, so the treasurer can tell whether to attach a different file.
 export interface EntryPrefill {
+  redoOf: string;
   entry_date: string;
   direction: LedgerDirection;
   amount_cents: number;
@@ -77,6 +80,9 @@ export function AddEntry({
           <input type="hidden" name="programId" value={programId} />
           <input type="hidden" name="slug" value={slug} />
           <input type="hidden" name="seasonId" value={seasonId} />
+          {prefill && (
+            <input type="hidden" name="redo_of" value={prefill.redoOf} />
+          )}
 
           <div className="money-decisions">
             <label>
@@ -174,12 +180,13 @@ export function AddEntry({
                 </label>
                 <label>
                   Date
-                  <input
-                    type="date"
-                    name="entry_date"
-                    required
-                    defaultValue={date}
-                  />
+                  {/* Deliberately NOT required. A required field inside a
+                      collapsed <details> cannot be focused, so a browser
+                      refuses the whole submit and reports nothing the
+                      treasurer can see — the form just stops working. Blank
+                      means today on the program's calendar, filled in by the
+                      server. */}
+                  <input type="date" name="entry_date" defaultValue={date} />
                 </label>
               </div>
               <label>
@@ -192,8 +199,8 @@ export function AddEntry({
               </label>
               {prefill?.hadReceipt && (
                 <p className="muted">
-                  The voided entry had a receipt. A file can&apos;t ride along —
-                  attach it again here.
+                  The voided entry&apos;s receipt comes along automatically.
+                  Attach a file here only if you want to replace it.
                 </p>
               )}
               <p className="muted">

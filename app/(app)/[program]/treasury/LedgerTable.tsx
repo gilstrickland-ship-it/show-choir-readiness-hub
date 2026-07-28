@@ -1,4 +1,10 @@
-import { formatCents, formatDateOnly, type LedgerDirection } from "@/lib/treasury";
+import Link from "next/link";
+import {
+  formatCents,
+  formatDateOnly,
+  type LedgerDirection,
+  type LedgerPageRange,
+} from "@/lib/treasury";
 import { voidEntry, categorizeEntry } from "./actions";
 import { LineSelect, optionName, type TagOptions } from "./shared";
 
@@ -40,6 +46,8 @@ export function LedgerTable({
   canWrite,
   openId,
   error,
+  range,
+  pageHref,
 }: {
   programId: string;
   slug: string;
@@ -49,8 +57,12 @@ export function LedgerTable({
   canWrite: boolean;
   openId: string | null;
   error: string | null;
+  range: LedgerPageRange;
+  pageHref: (page: number) => string;
 }) {
+  const columns = canWrite ? 7 : 6;
   return (
+    <>
     <table className="members money-ledger">
       <thead>
         <tr>
@@ -103,7 +115,23 @@ export function LedgerTable({
                 )}
               </td>
               <td>{party || <span className="muted">—</span>}</td>
-              <td>{e.receipt_path ? "📎" : <span className="muted">—</span>}</td>
+              <td>
+                {e.receipt_path ? (
+                  // The receipt was write-only until now: it uploaded, and
+                  // nothing in the app could ever open it again. The link is
+                  // program-scoped and re-checks the money read roles, then
+                  // hands back a short-lived signed URL.
+                  <Link
+                    href={`/${slug}/treasury/receipt/${e.id}`}
+                    prefetch={false}
+                    aria-label={`Open the receipt for the ${formatDateOnly(e.entry_date)} entry`}
+                  >
+                    📎 Receipt
+                  </Link>
+                ) : (
+                  <span className="muted">—</span>
+                )}
+              </td>
               <td className="right">
                 {voided ? (
                   <span className="muted">—</span>
@@ -135,13 +163,49 @@ export function LedgerTable({
         })}
         {entries.length === 0 && (
           <tr>
-            <td colSpan={canWrite ? 7 : 6} className="muted">
+            <td colSpan={columns} className="muted">
               No entries match.
             </td>
           </tr>
         )}
       </tbody>
     </table>
+    <LedgerPager range={range} pageHref={pageHref} />
+    </>
+  );
+}
+
+// How much of the ledger this page is actually showing, said out loud. The list
+// used to stop at PostgREST's 1000-row cap with no indication, so a treasurer
+// scrolling to the bottom of a long season had no way to know entries were
+// missing. Prev/Next are plain links — the page re-renders on the server, so
+// paging works with no client JavaScript.
+function LedgerPager({
+  range,
+  pageHref,
+}: {
+  range: LedgerPageRange;
+  pageHref: (page: number) => string;
+}) {
+  if (range.total === 0) return null;
+  return (
+    <div className="row-inline">
+      <span className="muted">
+        Showing {range.firstShown}–{range.lastShown} of {range.total}{" "}
+        {range.total === 1 ? "entry" : "entries"}
+        {range.pages > 1 ? ` · page ${range.page} of ${range.pages}` : ""}
+      </span>
+      {range.hasPrev && (
+        <Link href={pageHref(range.page - 1)} rel="prev">
+          ← Newer
+        </Link>
+      )}
+      {range.hasNext && (
+        <Link href={pageHref(range.page + 1)} rel="next">
+          Older →
+        </Link>
+      )}
+    </div>
   );
 }
 

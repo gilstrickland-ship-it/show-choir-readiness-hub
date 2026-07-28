@@ -15,7 +15,7 @@ import { OPEN_ALTERATION_STATUSES } from "@/lib/costumes";
 import { loadGuideState, loadJourneyPanel } from "@/lib/guide";
 import { JourneyPanel } from "../JourneyPanel";
 import { StartSeasonCard } from "../StartSeasonCard";
-import { formatCents, sumActuals, type LedgerAmountRow } from "@/lib/treasury";
+import { formatCents, seasonTotalsFromRow } from "@/lib/treasury";
 import { loadCompReadiness, type ReadinessCheck } from "@/lib/readiness";
 import {
   zonedWallToUtc,
@@ -316,18 +316,21 @@ export default async function DashboardPage({
   let uncatCount = 0;
   let uncatCents = 0;
   if (show.treasury && seasonId) {
-    const { data: ledger } = await supabase
-      .from("ledger_entries")
-      .select("direction, amount_cents, voided_at, budget_line_id")
-      .eq("program_id", program.id)
-      .eq("season_id", seasonId);
-    const rows = (ledger as LedgerAmountRow[] | null) ?? [];
-    balanceCents = sumActuals(rows).netCents;
-    for (const r of rows) {
-      if (!r.voided_at && r.budget_line_id == null) {
-        uncatCount += 1;
-        uncatCents += r.amount_cents;
-      }
+    // One SQL aggregate (0019), not a sum over a fetched row list: PostgREST
+    // caps a response at 1000 rows, so the old fetch quietly turned "Balance"
+    // into "balance of the first thousand entries" on a busy season. A failed
+    // read leaves this null, and the card renders "—" rather than "$0.00".
+    const { data, error } = await supabase.rpc("ledger_season_totals", {
+      p_program_id: program.id,
+      p_season_id: seasonId,
+    });
+    const totals = error
+      ? null
+      : seasonTotalsFromRow(Array.isArray(data) ? data[0] : data);
+    if (totals) {
+      balanceCents = totals.netCents;
+      uncatCount = totals.uncategorizedCount;
+      uncatCents = totals.uncategorizedCents;
     }
   }
 

@@ -9,12 +9,12 @@ import {
   LEDGER_DIRECTIONS,
   formatCents,
   ledgerSearchTerm,
-  sumActuals,
-  listMonthsWithEntries,
+  seasonTotalsFromRow,
+  ledgerPageRange,
+  parsePageParam,
   monthKeyForDate,
   type LedgerDirection,
-  type LedgerAmountRow,
-  type LedgerMonthRow,
+  type LedgerSeasonTotals,
 } from "@/lib/treasury";
 import { zonedDateKey } from "@/lib/datetime";
 import { TreasuryTabs } from "./TreasuryTabs";
@@ -30,15 +30,26 @@ import type { CatOpt, LineOpt, NamedOpt, TagOptions } from "./shared";
 // load-and-compose page: the season metric strip and the Uncategorized nudge
 // live here, and the four surfaces that hold controls are their own files
 // (AddEntry, LedgerFilters, LedgerTable, Reconciliation).
+//
+// NOTHING ON THIS PAGE IS SUMMED FROM A FETCHED ROW LIST ANY MORE. PostgREST
+// caps a response at `max_rows` (1000), so the old season-wide fetches meant
+// that past a thousand entries the Balance, the In/Out totals, the
+// Uncategorized count and the reconciliation month list were all computed from
+// an arbitrary prefix — a treasurer could read a wrong balance to the board with
+// nothing on screen indicating truncation. Totals now come from the 0019 SQL
+// aggregates (one row each, no cap), and the LIST is explicitly paginated and
+// says which slice of how many it is showing.
 
 const ENTRY_COLUMNS =
-  "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, memo, counterparty, receipt_path, voided_at, void_reason, created_at";
+  "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, memo, counterparty, receipt_path, voided_at, void_reason";
 
 // Page-level messages. Anything a row owns (a failed void, a failed filing)
 // renders inside that row's popover instead — see ROW_ERR below.
 const ERR: Record<string, string> = {
   entry:
     "Could not save the entry. Check the amount (e.g. 1,234.56), direction, and date.",
+  entry_tag:
+    "That budget line, competition, or trip isn't in this season. Pick one from this season's lists.",
   receipt_type: "Receipts must be a PDF or image.",
   receipt_upload: "The receipt failed to upload. The entry was not saved.",
   reconcile: "Could not update the reconciliation record.",
@@ -46,16 +57,68 @@ const ERR: Record<string, string> = {
 
 // Errors that belong to one entry. They arrive with `?edit=<entryId>`, which is
 // also what reopens that row's popover, so the message lands where the control
-// that produced it is.
+// that produced it is — WHEN that row is actually on screen. When it is not
+// (filtered out, on another page, or voided and therefore rendered as inert
+// text with no popover), the message falls open to the page banner instead. A
+// money failure that renders nowhere is worse than one in the wrong place.
 const ROW_ERR: Record<string, string> = {
-  void: "Could not void that entry.",
-  void_reason: "A void needs a reason.",
-  categorize: "Could not put that entry on a budget line.",
+  void: "Could not void that entry. Nothing changed.",
+  void_reason: "A void needs a reason. Nothing changed.",
+  categorize:
+    "Could not put that entry on a budget line. Nothing changed — the entry is still there, uncategorized.",
 };
 
 function message(map: Record<string, string>, code: string | null): string | null {
   if (!code) return null;
   return Object.hasOwn(map, code) ? map[code] : null;
+}
+
+// The filter chain, described once and applied to BOTH the count query and the
+// page query, so "showing 1–100 of 412" can never be describing a different set
+// of rows than the table underneath it.
+type FilterOp =
+  | { kind: "eq"; column: string; value: string }
+  | { kind: "isNull"; column: string }
+  | { kind: "gte"; column: string; value: string }
+  | { kind: "lte"; column: string; value: string }
+  | { kind: "or"; filters: string };
+
+interface LedgerFilterSpec {
+  seasonId: string | null;
+  includeVoided: boolean;
+  uncategorizedOnly: boolean;
+  direction: LedgerDirection | "all";
+  from: string;
+  to: string;
+  line: string;
+  competition: string;
+  trip: string;
+  search: string | null;
+}
+
+function ledgerFilterOps(f: LedgerFilterSpec): FilterOp[] {
+  const ops: FilterOp[] = [];
+  if (f.seasonId) ops.push({ kind: "eq", column: "season_id", value: f.seasonId });
+  if (!f.includeVoided) ops.push({ kind: "isNull", column: "voided_at" });
+  if (f.uncategorizedOnly) ops.push({ kind: "isNull", column: "budget_line_id" });
+  if (f.direction !== "all") {
+    ops.push({ kind: "eq", column: "direction", value: f.direction });
+  }
+  if (f.from) ops.push({ kind: "gte", column: "entry_date", value: f.from });
+  if (f.to) ops.push({ kind: "lte", column: "entry_date", value: f.to });
+  if (f.line) ops.push({ kind: "eq", column: "budget_line_id", value: f.line });
+  if (f.competition) {
+    ops.push({ kind: "eq", column: "competition_id", value: f.competition });
+  }
+  if (f.trip) ops.push({ kind: "eq", column: "trip_id", value: f.trip });
+  // Who and what — the two free-text columns the four decisions write.
+  if (f.search) {
+    ops.push({
+      kind: "or",
+      filters: `counterparty.ilike.%${f.search}%,memo.ilike.%${f.search}%`,
+    });
+  }
+  return ops;
 }
 
 export default async function LedgerPage({
@@ -181,97 +244,101 @@ export default async function LedgerPage({
   const compFilter = one("competition") ?? "";
   const tripFilter = one("trip") ?? "";
 
-  let query = supabase
+  const filterSpec: LedgerFilterSpec = {
+    seasonId: season?.id ?? null,
+    includeVoided,
+    uncategorizedOnly,
+    direction: dirFilter,
+    from,
+    to,
+    line: lineFilter,
+    competition: compFilter,
+    trip: tripFilter,
+    search,
+  };
+
+  // ---- The list: count first, then exactly one page -------------------------
+  const ops = ledgerFilterOps(filterSpec);
+
+  let countQuery = supabase
+    .from("ledger_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("program_id", program.id);
+  for (const op of ops) {
+    if (op.kind === "eq") countQuery = countQuery.eq(op.column, op.value);
+    else if (op.kind === "isNull") countQuery = countQuery.is(op.column, null);
+    else if (op.kind === "gte") countQuery = countQuery.gte(op.column, op.value);
+    else if (op.kind === "lte") countQuery = countQuery.lte(op.column, op.value);
+    else countQuery = countQuery.or(op.filters);
+  }
+  const { count: matchCount } = await countQuery;
+  const range = ledgerPageRange(matchCount ?? 0, parsePageParam(one("page")));
+
+  let listQuery = supabase
     .from("ledger_entries")
     .select(ENTRY_COLUMNS)
-    .eq("program_id", program.id)
-    .order("entry_date", { ascending: false })
-    .order("created_at", { ascending: false });
-
-  if (season) query = query.eq("season_id", season.id);
-  if (!includeVoided) query = query.is("voided_at", null);
-  if (uncategorizedOnly) query = query.is("budget_line_id", null);
-  if (dirFilter !== "all") query = query.eq("direction", dirFilter);
-  if (from) query = query.gte("entry_date", from);
-  if (to) query = query.lte("entry_date", to);
-  if (lineFilter) query = query.eq("budget_line_id", lineFilter);
-  if (compFilter) query = query.eq("competition_id", compFilter);
-  if (tripFilter) query = query.eq("trip_id", tripFilter);
-  // Who and what — the two free-text columns the four decisions write.
-  if (search) {
-    query = query.or(`counterparty.ilike.%${search}%,memo.ilike.%${search}%`);
+    .eq("program_id", program.id);
+  for (const op of ops) {
+    if (op.kind === "eq") listQuery = listQuery.eq(op.column, op.value);
+    else if (op.kind === "isNull") listQuery = listQuery.is(op.column, null);
+    else if (op.kind === "gte") listQuery = listQuery.gte(op.column, op.value);
+    else if (op.kind === "lte") listQuery = listQuery.lte(op.column, op.value);
+    else listQuery = listQuery.or(op.filters);
   }
+  const { data: entryData } = await listQuery
+    .order("entry_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .range(range.from, range.to);
+  const entries = (entryData as EntryRow[] | null) ?? [];
 
-  const { data: entryData } = await query;
-  const entries = (entryData as (EntryRow & { created_at: string })[] | null) ?? [];
-
-  // Running balance over the displayed non-voided rows, computed chronologically
-  // then rendered date-desc. (With filters applied the balance is "as of this
-  // row within the current view"; voided rows never contribute — Principle V.)
-  const chrono = entries
-    .filter((e) => !e.voided_at)
-    .slice()
-    .sort((a, b) =>
-      a.entry_date === b.entry_date
-        ? a.created_at.localeCompare(b.created_at)
-        : a.entry_date.localeCompare(b.entry_date),
-    );
+  // Running balance for the rows on THIS page — computed in SQL over the whole
+  // season, so it is the season balance as of each entry rather than a total
+  // that restarts at zero on page 2 or shifts when a filter is applied.
   const balanceById = new Map<string, number>();
-  let running = 0;
-  for (const e of chrono) {
-    running += e.direction === "in" ? e.amount_cents : -e.amount_cents;
-    balanceById.set(e.id, running);
+  if (season && entries.length > 0) {
+    const { data: balRows } = await supabase.rpc("ledger_running_balance", {
+      p_program_id: program.id,
+      p_season_id: season.id,
+      p_entry_ids: entries.filter((e) => !e.voided_at).map((e) => e.id),
+    });
+    for (const r of (balRows as
+      | { entry_id: string; balance_cents: number }[]
+      | null) ?? []) {
+      balanceById.set(r.entry_id, Number(r.balance_cents));
+    }
   }
 
   // ---- Season metric strip + uncategorized nudge ----------------------------
-  // One season-wide fetch drives Balance/In/Out (via sumActuals, which excludes
-  // voids) and the Uncategorized cell (live rows with no budget line).
-  let metrics = { inCents: 0, outCents: 0, netCents: 0 };
-  let unCount = 0;
-  let unTotal = 0;
-  {
-    let mq = supabase
-      .from("ledger_entries")
-      .select("amount_cents, direction, voided_at, budget_line_id")
-      .eq("program_id", program.id);
-    if (season) mq = mq.eq("season_id", season.id);
-    const { data: mData } = await mq;
-    const rows = (mData as LedgerAmountRow[] | null) ?? [];
-    metrics = sumActuals(rows);
-    for (const r of rows) {
-      if (r.voided_at || r.budget_line_id) continue;
-      unCount += 1;
-      unTotal += r.amount_cents;
-    }
+  // One SQL aggregate drives Balance/In/Out, the Uncategorized cell, and the
+  // reconciliation month list. A failed read renders as "—", never as $0.00: a
+  // zero balance is a number a treasurer would read aloud to a board.
+  let totals: LedgerSeasonTotals | null = null;
+  if (season) {
+    const { data: totalsData, error: totalsError } = await supabase.rpc(
+      "ledger_season_totals",
+      { p_program_id: program.id, p_season_id: season.id },
+    );
+    const row = Array.isArray(totalsData) ? totalsData[0] : totalsData;
+    totals = totalsError ? null : seasonTotalsFromRow(row);
   }
+  const totalsUnavailable = !!season && !totals;
 
   // ---- Reconciliation (Wave L) ----------------------------------------------
   // Months (this season) that carry non-voided entries, and which of those the
   // treasurer has marked reconciled against the bank statement. Reconciliation
   // rows are program-scoped (not season-scoped) — we look them up by month key.
-  let reconMonths: string[] = [];
+  const reconMonths = totals?.months ?? [];
   const reconciledBy = new Map<string, { date: string; note: string | null }>();
-  if (season) {
-    const { data: monthRows } = await supabase
-      .from("ledger_entries")
-      .select("entry_date, voided_at")
-      .eq("program_id", program.id)
-      .eq("season_id", season.id);
-    reconMonths = listMonthsWithEntries(
-      (monthRows as LedgerMonthRow[] | null) ?? [],
-    );
-
-    if (reconMonths.length > 0) {
-      const { data: recRows } = await supabase
-        .from("ledger_reconciliations")
-        .select("month, note, created_at")
-        .eq("program_id", program.id);
-      for (const r of (recRows as
-        { month: string; note: string | null; created_at: string }[] | null) ??
-        []) {
-        const key = monthKeyForDate(r.month);
-        if (key) reconciledBy.set(key, { date: r.created_at, note: r.note });
-      }
+  if (reconMonths.length > 0) {
+    const { data: recRows } = await supabase
+      .from("ledger_reconciliations")
+      .select("month, note, created_at")
+      .eq("program_id", program.id);
+    for (const r of (recRows as
+      { month: string; note: string | null; created_at: string }[] | null) ??
+      []) {
+      const key = monthKeyForDate(r.month);
+      if (key) reconciledBy.set(key, { date: r.created_at, note: r.note });
     }
   }
   const confirmParam = one("confirm");
@@ -293,6 +360,7 @@ export default async function LedgerPage({
     const row = data as EntryRow | null;
     if (row) {
       prefill = {
+        redoOf: reenterId,
         entry_date: row.entry_date,
         direction: row.direction,
         amount_cents: row.amount_cents,
@@ -306,12 +374,43 @@ export default async function LedgerPage({
     }
   }
 
-  // A row's popover reopens on `?edit=<entryId>`, carrying its own error.
+  // A row's popover reopens on `?edit=<entryId>` and carries its own error —
+  // but only when that row is really on this page and still live. A voided row
+  // renders as inert text with no popover (and is filtered out entirely by the
+  // default "live rows only" filter), so a message aimed at it would render
+  // nowhere at all. Fail OPEN to the page banner in that case.
   const errorCode = one("error");
   const openId = canWrite ? one("edit") : null;
-  const rowError = openId ? message(ROW_ERR, errorCode) : null;
-  const pageError = rowError ? null : message(ERR, errorCode);
+  const rowWillRender =
+    !!openId && entries.some((e) => e.id === openId && !e.voided_at);
+  const rowError = rowWillRender ? message(ROW_ERR, errorCode) : null;
+  const pageError = rowError
+    ? null
+    : (message(ERR, errorCode) ?? message(ROW_ERR, errorCode));
   const unknownError = errorCode && !rowError && !pageError;
+
+  // Paging links keep every filter and drop the one-shot params (a flash, an
+  // error, a reopened popover) so page 2 is not still shouting about page 1.
+  const TRANSIENT = new Set([
+    "page",
+    "edit",
+    "error",
+    "saved",
+    "confirm",
+    "reenter",
+  ]);
+  const pageHref = (target: number): string => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      if (typeof value !== "string" || TRANSIENT.has(key)) continue;
+      qs.set(key, value);
+    }
+    if (target > 1) qs.set("page", String(target));
+    const query = qs.toString();
+    return `/${slug}/treasury${query ? `?${query}` : ""}`;
+  };
+
+  const metric = (value: string | null): string => value ?? "—";
 
   return (
     <section className="stack money">
@@ -365,32 +464,50 @@ export default async function LedgerPage({
         </p>
       )}
 
+      {totalsUnavailable && (
+        <p className="alert-error">
+          The season totals could not be read just now, so Balance, In, Out and
+          Uncategorized are blank rather than wrong. The entries below are
+          unaffected — reload to try again.
+        </p>
+      )}
+
       {/* Metric strip */}
       <div className="metric-strip">
         <div className="metric-cell">
           <div className="metric-label">Balance</div>
-          <div className="metric-value">{formatCents(metrics.netCents)}</div>
+          <div className="metric-value">
+            {metric(totals && formatCents(totals.netCents))}
+          </div>
           <div className="metric-sub">this season · voids excluded</div>
         </div>
         <div className="metric-cell">
           <div className="metric-label">In</div>
-          <div className="metric-value ok">{formatCents(metrics.inCents)}</div>
+          <div className="metric-value ok">
+            {metric(totals && formatCents(totals.inCents))}
+          </div>
           <div className="metric-sub">income received</div>
         </div>
         <div className="metric-cell">
           <div className="metric-label">Out</div>
           <div className="metric-value alert">
-            {formatCents(metrics.outCents)}
+            {metric(totals && formatCents(totals.outCents))}
           </div>
           <div className="metric-sub">expenses paid</div>
         </div>
-        <div className={`metric-cell${unCount > 0 ? " warn" : ""}`}>
+        <div
+          className={`metric-cell${totals && totals.uncategorizedCount > 0 ? " warn" : ""}`}
+        >
           <div className="metric-label">Uncategorized</div>
-          <div className="metric-value">{unCount}</div>
+          <div className="metric-value">
+            {metric(totals && String(totals.uncategorizedCount))}
+          </div>
           <div className="metric-sub">
-            {unCount > 0 ? (
+            {!totals ? (
+              "count unavailable"
+            ) : totals.uncategorizedCount > 0 ? (
               <>
-                {formatCents(unTotal)} ·{" "}
+                {formatCents(totals.uncategorizedCents)} ·{" "}
                 <Link
                   href={`/${slug}/treasury?uncategorized=1`}
                   className="metric-link"
@@ -413,6 +530,7 @@ export default async function LedgerPage({
           reconciledBy={reconciledBy}
           canWrite={canWrite}
           confirmMonth={unmarkConfirmMonth}
+          timeZone={program.timezone}
         />
       )}
 
@@ -439,13 +557,16 @@ export default async function LedgerPage({
         balanceById={balanceById}
         options={options}
         canWrite={canWrite}
-        openId={openId}
+        openId={rowWillRender ? openId : null}
         error={rowError}
+        range={range}
+        pageHref={pageHref}
       />
 
       <p className="page-foot">
         A mistake is voided and redone with a reason — the audit log keeps both.
-        Voided rows never count toward balances.
+        Voided rows never count toward balances. Balance is the season total as
+        of that entry, so it reads the same whichever filter or page you are on.
       </p>
     </section>
   );

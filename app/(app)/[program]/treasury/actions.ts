@@ -3,14 +3,14 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireRole, type Membership } from "@/lib/auth";
-import type { User } from "@supabase/supabase-js";
+import { requireRole } from "@/lib/auth";
+import { programPath } from "@/lib/return-path";
+import { zonedDateKey } from "@/lib/datetime";
 import {
   TREASURY_WRITE_ROLES,
   parseLedgerDirection,
   parseDollarsToCents,
   firstOfMonth,
-  type LedgerDirection,
 } from "@/lib/treasury";
 
 // Ledger writes (T019). Entries void, never delete — a correction is a void
@@ -23,20 +23,37 @@ import {
 // UPDATE (including budget_line_id) and forbids un-voiding, so "put an
 // uncategorized entry on a budget line" cannot be a plain UPDATE — it is
 // implemented as a guided void + re-entry (see categorizeEntry).
+//
+// EVERY MONEY WRITE IS ONE DATABASE CALL (migration 0019). Void-then-insert as
+// two PostgREST requests is not a transaction: when the second one failed, the
+// original was already voided — permanently, since the trigger forbids
+// un-voiding — and the amount silently left the balance with no way back. The
+// same was true of the audit row, which was fired and forgotten while the UI
+// said "Saved.", even though it is the only record of what a voided entry
+// contained. add_ledger_entry / void_ledger_entry / categorize_ledger_entry each
+// write the entry AND its audit row in one transaction: either the whole
+// financial act happened or none of it did. Those functions re-assert the
+// treasurer role, the program, the archived-season rule and the season of every
+// tag on their own, so they are guards, not a way around RLS.
 
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce "//evil.com/treasury", which every browser
+// follows off-site. programPath validates the slug and fails closed.
 function ledgerPath(slug: string): string {
-  return `/${slug}/treasury`;
+  return programPath(slug, "treasury") ?? "/";
 }
 
 // A failure that belongs to ONE entry goes back to that entry: `?edit=` reopens
 // its "Fix this entry" popover and the page renders the message inside it,
 // rather than at the top of a ledger the treasurer may have to scroll to find
-// the row again (the Wave-2 section-local error contract). Without an entry id
-// there is no row to return to, so it falls back to the page-level message.
+// the row again (the Wave-2 section-local error contract). The page falls the
+// message back to a page-level banner when that row will not actually render —
+// without an entry id there is no row to return to at all.
 function rowErrorPath(slug: string, entryId: string, code: string): string {
-  if (!entryId) return `${ledgerPath(slug)}?error=${code}`;
+  const base = ledgerPath(slug);
+  if (!entryId) return `${base}?error=${code}`;
   const id = encodeURIComponent(entryId);
-  return `${ledgerPath(slug)}?edit=${id}&error=${code}#fix-${id}`;
+  return `${base}?edit=${id}&error=${code}#fix-${id}`;
 }
 
 function textOrNull(raw: FormDataEntryValue | null): string | null {
@@ -51,16 +68,38 @@ function sanitizeName(name: string): string {
 // A ledger entry carries four references — its season plus up to three optional
 // tags (budget line, competition, trip). All four arrive as form fields, and
 // requireRole only proves the caller runs the program they CLAIMED. Resolve each
-// inside this program before the row is written (Constitution I): a tag pointing
-// at another program's row is invisible to them, un-deletable by them, and made
-// permanent by the void-only trigger, which freezes those columns after insert.
-// Returns the id when it is ours, null when the field was blank, false when it
-// belongs to someone else — a miss is an error, never a silently dropped tag,
-// because a dropped tag is a money-attribution bug (Constitution V).
-async function resolveOwnedId(
+// inside this program AND inside the entry's season before the row is written
+// (Constitution I): a tag pointing at another program's row is invisible to
+// them, un-deletable by them, and made permanent by the void-only trigger; a tag
+// pointing at a PREVIOUS season's row is a real row of theirs booked onto the
+// wrong year's books, and is frozen there just as permanently.
+//
+// Returns the id when it is ours and in-season, null when the field was blank,
+// false when it is neither — a miss is an error, never a silently dropped tag,
+// because a dropped tag is a money-attribution bug (Constitution V). The DB
+// functions re-check all of this; this layer exists to turn a rejection into a
+// sentence a treasurer can act on instead of a 500.
+async function programOwns(
   supabase: Awaited<ReturnType<typeof createClient>>,
   table: string,
   programId: string,
+  id: string,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return !!(data as { id: string } | null);
+}
+
+// A tag on a table that carries season_id directly (competitions, trips).
+async function resolveSeasonScopedId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: string,
+  programId: string,
+  seasonId: string,
   id: string | null,
 ): Promise<string | null | false> {
   if (!id) return null;
@@ -69,8 +108,47 @@ async function resolveOwnedId(
     .select("id")
     .eq("id", id)
     .eq("program_id", programId)
+    .eq("season_id", seasonId)
     .maybeSingle();
   return (data as { id: string } | null)?.id ?? false;
+}
+
+// A budget line reaches its season the long way — category → budget →
+// budgets.season_id — so scoping it walks the chain explicitly. Three small
+// keyed lookups, and only when a line was actually picked.
+async function resolveBudgetLineInSeason(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  programId: string,
+  seasonId: string,
+  id: string | null,
+): Promise<string | null | false> {
+  if (!id) return null;
+  const { data: lineRow } = await supabase
+    .from("budget_lines")
+    .select("id, category_id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  const line = lineRow as { id: string; category_id: string } | null;
+  if (!line) return false;
+
+  const { data: catRow } = await supabase
+    .from("budget_categories")
+    .select("budget_id")
+    .eq("id", line.category_id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  const cat = catRow as { budget_id: string } | null;
+  if (!cat) return false;
+
+  const { data: budgetRow } = await supabase
+    .from("budgets")
+    .select("id")
+    .eq("id", cat.budget_id)
+    .eq("program_id", programId)
+    .eq("season_id", seasonId)
+    .maybeSingle();
+  return budgetRow ? line.id : false;
 }
 
 const RECEIPT_TYPES = new Set([
@@ -105,89 +183,6 @@ async function uploadReceipt(
   return path;
 }
 
-// Insert an entry and its 'create' audit row. Shared by addEntry and the
-// re-enter half of categorizeEntry. Returns the new entry id.
-async function insertEntry(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  actor: { user: User; membership: Membership },
-  row: {
-    program_id: string;
-    season_id: string;
-    entry_date: string;
-    direction: LedgerDirection;
-    amount_cents: number;
-    budget_line_id: string | null;
-    competition_id: string | null;
-    trip_id: string | null;
-    memo: string | null;
-    counterparty: string | null;
-    receipt_path: string | null;
-  },
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from("ledger_entries")
-    .insert({ ...row, entered_by: actor.user.id })
-    .select("id")
-    .single();
-  if (error || !data) return null;
-
-  await supabase.from("ledger_audit").insert({
-    program_id: row.program_id,
-    entry_id: data.id,
-    action: "create",
-    actor: actor.user.id,
-    diff: {
-      direction: row.direction,
-      amount_cents: row.amount_cents,
-      entry_date: row.entry_date,
-      budget_line_id: row.budget_line_id,
-      competition_id: row.competition_id,
-      trip_id: row.trip_id,
-      memo: row.memo,
-      counterparty: row.counterparty,
-    },
-  });
-  return data.id;
-}
-
-// Void an entry (set voided_at/voided_by/void_reason — the only mutation the
-// trigger permits) and write its 'void' audit row.
-async function voidEntryRow(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  actor: { user: User },
-  programId: string,
-  entryId: string,
-  reason: string,
-): Promise<boolean> {
-  // .select("id") is what proves the void happened. A filter that matches
-  // nothing — an entry from another program, or one already voided — returns NO
-  // error, so checking only `error` audited voids that never occurred and told
-  // the treasurer "saved" either way. ledger_audit is the append-only
-  // embezzlement control (Constitution V); nothing may be written to it for a
-  // row this call did not actually void.
-  const { data, error } = await supabase
-    .from("ledger_entries")
-    .update({
-      voided_at: new Date().toISOString(),
-      voided_by: actor.user.id,
-      void_reason: reason,
-    })
-    .eq("id", entryId)
-    .eq("program_id", programId)
-    .is("voided_at", null) // never touch an already-voided row
-    .select("id");
-  if (error || ((data as { id: string }[] | null) ?? []).length === 0) return false;
-
-  await supabase.from("ledger_audit").insert({
-    program_id: programId,
-    entry_id: entryId,
-    action: "void",
-    actor: actor.user.id,
-    diff: { void_reason: reason },
-  });
-  return true;
-}
-
 // ---------------------------------------------------------------------------
 // Add entry
 // ---------------------------------------------------------------------------
@@ -196,52 +191,110 @@ export async function addEntry(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
   const seasonId = String(formData.get("seasonId") ?? "");
-  const actor = await requireRole(programId, TREASURY_WRITE_ROLES);
+  await requireRole(programId, TREASURY_WRITE_ROLES);
 
   const direction = parseLedgerDirection(String(formData.get("direction") ?? ""));
   const amount = parseDollarsToCents(String(formData.get("amount") ?? ""));
-  const entryDate = String(formData.get("entry_date") ?? "").trim();
+  const postedDate = String(formData.get("entry_date") ?? "").trim();
 
-  if (!seasonId || !direction || amount === null || amount <= 0 || !entryDate) {
+  if (!seasonId || !direction || amount === null || amount <= 0) {
     redirect(`${ledgerPath(slug)}?error=entry`);
   }
 
   const supabase = await createClient();
 
+  // The date lives behind the "Connect it" disclosure, so it must not be a
+  // required field: a required input inside a collapsed <details> cannot be
+  // focused, and the browser silently refuses to submit the whole form. Blank
+  // means today — on the PROGRAM's calendar, not the server's, or a 7pm entry
+  // in Chicago is dated tomorrow by a UTC host (Constitution VII).
+  let entryDate = /^\d{4}-\d{2}-\d{2}$/.test(postedDate) ? postedDate : "";
+  if (!entryDate) {
+    const { data: prog } = await supabase
+      .from("programs")
+      .select("timezone")
+      .eq("id", programId)
+      .maybeSingle();
+    const tz = (prog as { timezone: string } | null)?.timezone;
+    if (!tz) {
+      redirect(`${ledgerPath(slug)}?error=entry`);
+    }
+    entryDate = zonedDateKey(new Date(), tz);
+  }
+
   // Resolve the season and all three tags before uploading anything, so a bad
   // reference never leaves a stranded receipt object behind.
   const [season, budgetLineId, competitionId, tripId] = await Promise.all([
-    resolveOwnedId(supabase, "seasons", programId, seasonId),
-    resolveOwnedId(supabase, "budget_lines", programId, textOrNull(formData.get("budget_line_id"))),
-    resolveOwnedId(supabase, "competitions", programId, textOrNull(formData.get("competition_id"))),
-    resolveOwnedId(supabase, "trips", programId, textOrNull(formData.get("trip_id"))),
+    programOwns(supabase, "seasons", programId, seasonId),
+    resolveBudgetLineInSeason(
+      supabase,
+      programId,
+      seasonId,
+      textOrNull(formData.get("budget_line_id")),
+    ),
+    resolveSeasonScopedId(
+      supabase,
+      "competitions",
+      programId,
+      seasonId,
+      textOrNull(formData.get("competition_id")),
+    ),
+    resolveSeasonScopedId(
+      supabase,
+      "trips",
+      programId,
+      seasonId,
+      textOrNull(formData.get("trip_id")),
+    ),
   ]);
-  if (!season || budgetLineId === false || competitionId === false || tripId === false) {
+  if (!season) {
     redirect(`${ledgerPath(slug)}?error=entry`);
   }
+  if (budgetLineId === false || competitionId === false || tripId === false) {
+    redirect(`${ledgerPath(slug)}?error=entry_tag`);
+  }
 
-  const receiptPath = await uploadReceipt(
+  let receiptPath = await uploadReceipt(
     supabase,
     programId,
     slug,
     formData.get("receipt"),
   );
 
-  const id = await insertEntry(supabase, actor, {
-    program_id: programId,
-    season_id: seasonId,
-    entry_date: entryDate,
-    direction: direction as LedgerDirection,
-    amount_cents: amount as number,
-    budget_line_id: budgetLineId,
-    competition_id: competitionId,
-    trip_id: tripId,
-    memo: textOrNull(formData.get("memo")),
-    counterparty: textOrNull(formData.get("counterparty")),
-    receipt_path: receiptPath,
+  // "Void & redo" carries the original's receipt forward. A file input cannot be
+  // prefilled, so without this the redo silently dropped the only proof the
+  // money was spent the way the memo says. The PATH is never taken from the
+  // form — only the id of the entry being redone, re-read in this program.
+  if (!receiptPath) {
+    const redoOf = textOrNull(formData.get("redo_of"));
+    if (redoOf) {
+      const { data: prior } = await supabase
+        .from("ledger_entries")
+        .select("receipt_path")
+        .eq("id", redoOf)
+        .eq("program_id", programId)
+        .maybeSingle();
+      receiptPath = (prior as { receipt_path: string | null } | null)?.receipt_path ?? null;
+    }
+  }
+
+  // One call = one transaction: the entry and its 'create' audit row land
+  // together or not at all.
+  const { data: newId, error } = await supabase.rpc("add_ledger_entry", {
+    p_program_id: programId,
+    p_season_id: seasonId,
+    p_entry_date: entryDate,
+    p_direction: direction,
+    p_amount_cents: amount,
+    p_budget_line_id: budgetLineId,
+    p_competition_id: competitionId,
+    p_trip_id: tripId,
+    p_memo: textOrNull(formData.get("memo")),
+    p_counterparty: textOrNull(formData.get("counterparty")),
+    p_receipt_path: receiptPath,
   });
 
-  if (!id) {
+  if (error || !newId) {
     redirect(`${ledgerPath(slug)}?error=entry`);
   }
   revalidatePath(ledgerPath(slug));
@@ -258,7 +311,7 @@ export async function voidEntry(formData: FormData): Promise<void> {
   const slug = String(formData.get("slug") ?? "");
   const entryId = String(formData.get("entryId") ?? "");
   const reenter = String(formData.get("reenter") ?? "") === "1";
-  const actor = await requireRole(programId, TREASURY_WRITE_ROLES);
+  await requireRole(programId, TREASURY_WRITE_ROLES);
 
   const reason = String(formData.get("reason") ?? "").trim();
   if (!reason) {
@@ -266,8 +319,15 @@ export async function voidEntry(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
-  const ok = await voidEntryRow(supabase, actor, programId, entryId, reason);
-  if (!ok) {
+  // `false` means the filter matched nothing — another program's entry, or one
+  // already voided. The function writes nothing in that case, so no audit row
+  // is ever created for a void that did not happen.
+  const { data: voided, error } = await supabase.rpc("void_ledger_entry", {
+    p_entry_id: entryId,
+    p_program_id: programId,
+    p_reason: reason,
+  });
+  if (error || voided !== true) {
     redirect(rowErrorPath(slug, entryId, "void"));
   }
 
@@ -346,7 +406,10 @@ export async function unmarkReconciled(formData: FormData): Promise<void> {
 // ---------------------------------------------------------------------------
 // Putting an uncategorized entry on a budget line = a guided void + re-entry
 // with the line set. The void-only trigger blocks a plain budget_line_id UPDATE,
-// so this is the correct path (see module header). Both halves are audited.
+// so this is the correct path (see module header). Both halves — and both audit
+// rows — are one transaction inside categorize_ledger_entry, which is the whole
+// point: a half-completed filing would void real money out of the balance with
+// no replacement and no way to undo it.
 // ---------------------------------------------------------------------------
 
 export async function categorizeEntry(formData: FormData): Promise<void> {
@@ -354,60 +417,20 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
   const slug = String(formData.get("slug") ?? "");
   const entryId = String(formData.get("entryId") ?? "");
   const budgetLineId = textOrNull(formData.get("budget_line_id"));
-  const actor = await requireRole(programId, TREASURY_WRITE_ROLES);
+  await requireRole(programId, TREASURY_WRITE_ROLES);
 
-  if (!budgetLineId) {
+  if (!budgetLineId || !entryId) {
     redirect(rowErrorPath(slug, entryId, "categorize"));
   }
 
   const supabase = await createClient();
-
-  // The budget line is posted; the original entry is re-read program-scoped
-  // below, but the line it is being re-entered against never was.
-  if (!(await resolveOwnedId(supabase, "budget_lines", programId, budgetLineId))) {
-    redirect(rowErrorPath(slug, entryId, "categorize"));
-  }
-
-  // Read the original (must be live and uncategorized).
-  const { data: orig } = await supabase
-    .from("ledger_entries")
-    .select(
-      "season_id, entry_date, direction, amount_cents, competition_id, trip_id, memo, counterparty, receipt_path, budget_line_id, voided_at",
-    )
-    .eq("id", entryId)
-    .eq("program_id", programId)
-    .maybeSingle();
-
-  if (!orig || orig.voided_at || orig.budget_line_id) {
-    redirect(rowErrorPath(slug, entryId, "categorize"));
-  }
-
-  // Void the original, then re-enter it verbatim with the line attached.
-  const ok = await voidEntryRow(
-    supabase,
-    actor,
-    programId,
-    entryId,
-    "Put on a budget line (void + re-entry)",
-  );
-  if (!ok) {
-    redirect(rowErrorPath(slug, entryId, "categorize"));
-  }
-
-  const id = await insertEntry(supabase, actor, {
-    program_id: programId,
-    season_id: orig.season_id,
-    entry_date: orig.entry_date,
-    direction: orig.direction,
-    amount_cents: orig.amount_cents,
-    budget_line_id: budgetLineId,
-    competition_id: orig.competition_id,
-    trip_id: orig.trip_id,
-    memo: orig.memo,
-    counterparty: orig.counterparty,
-    receipt_path: orig.receipt_path,
+  const { data: newId, error } = await supabase.rpc("categorize_ledger_entry", {
+    p_entry_id: entryId,
+    p_program_id: programId,
+    p_budget_line_id: budgetLineId,
   });
-  if (!id) {
+
+  if (error || !newId) {
     redirect(rowErrorPath(slug, entryId, "categorize"));
   }
 

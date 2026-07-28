@@ -6,17 +6,25 @@ import { createClient } from "@/lib/supabase/server";
 import { TREASURY_ROLES } from "@/lib/nav";
 import {
   formatCents,
-  actualForLine,
+  actualForDirection,
+  lineActualsFromRows,
   lineVariance,
-  sumActuals,
+  seasonTotalsFromRow,
   type CategoryDirection,
-  type LedgerAmountRow,
+  type LineActual,
+  type LedgerSeasonTotals,
 } from "@/lib/treasury";
 import { TreasuryTabs } from "../TreasuryTabs";
 
 // Budget vs Actual (T020). Per line: planned / actual (non-voided ledger sum) /
 // variance, grouped income then expense, category subtotals, and a season header
 // with planned in/out, actual in/out, and net. Read-only — no writes here.
+//
+// Actuals come from the same 0019 SQL aggregates the ledger page reads
+// (ledger_season_totals for the header, ledger_line_actuals per line), not from
+// a fetched entry list. Summing fetched rows meant both pages silently stopped
+// at PostgREST's 1000-row cap — and could stop at DIFFERENT rows, so the two
+// money screens could disagree with each other and neither would say so.
 
 interface CatRow {
   id: string;
@@ -51,7 +59,8 @@ export default async function BudgetVsActualPage({
   let budgetName: string | null = null;
   let cats: CatRow[] = [];
   let lines: LineRow[] = [];
-  let ledger: LedgerAmountRow[] = [];
+  let actualByLine = new Map<string, LineActual>();
+  let totals: LedgerSeasonTotals | null = null;
 
   if (season) {
     const { data: budget } = await supabase
@@ -67,7 +76,7 @@ export default async function BudgetVsActualPage({
     budgetName = b?.name ?? null;
 
     if (b) {
-      const [{ data: catData }, { data: ledgerData }] = await Promise.all([
+      const [{ data: catData }, lineActualsRes, totalsRes] = await Promise.all([
         supabase
           .from("budget_categories")
           .select("id, name, direction, sort_order")
@@ -75,15 +84,23 @@ export default async function BudgetVsActualPage({
           .eq("budget_id", b.id)
           .order("direction", { ascending: true })
           .order("sort_order", { ascending: true }),
-        supabase
-          .from("ledger_entries")
-          .select("direction, amount_cents, voided_at, budget_line_id")
-          .eq("program_id", program.id)
-          .eq("season_id", season.id)
-          .is("voided_at", null),
+        supabase.rpc("ledger_line_actuals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
+        supabase.rpc("ledger_season_totals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
       ]);
       cats = (catData as CatRow[] | null) ?? [];
-      ledger = (ledgerData as LedgerAmountRow[] | null) ?? [];
+      actualByLine = lineActualsRes.error
+        ? new Map()
+        : lineActualsFromRows(lineActualsRes.data);
+      const totalsRow = Array.isArray(totalsRes.data)
+        ? totalsRes.data[0]
+        : totalsRes.data;
+      totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
 
       if (cats.length > 0) {
         const { data: lineData } = await supabase
@@ -115,7 +132,10 @@ export default async function BudgetVsActualPage({
       plannedByDir[c.direction] += l.planned_cents;
     }
   }
-  const actual = sumActuals(ledger);
+  // A failed totals read prints "—", never "$0.00" — a zero here would read as
+  // "the season took in nothing", which is a claim, not a blank.
+  const money = (cents: number | null): string =>
+    cents === null ? "—" : formatCents(cents);
 
   const section = (dir: CategoryDirection) => {
     const secCats = cats.filter((c) => c.direction === dir);
@@ -136,7 +156,7 @@ export default async function BudgetVsActualPage({
               let cPlanned = 0;
               let cActual = 0;
               const rows = catLines.map((l) => {
-                const a = actualForLine(l.id, dir, ledger);
+                const a = actualForDirection(actualByLine.get(l.id), dir);
                 cPlanned += l.planned_cents;
                 cActual += a;
                 return { l, a, v: lineVariance(l.planned_cents, a, dir) };
@@ -211,6 +231,13 @@ export default async function BudgetVsActualPage({
         </p>
       )}
 
+      {season && budgetName && !totals && (
+        <p className="alert-error">
+          The season actuals could not be read just now, so the totals below are
+          blank rather than wrong. Reload to try again.
+        </p>
+      )}
+
       {season && budgetName && (
         <>
           <div className="detail-list">
@@ -237,20 +264,28 @@ export default async function BudgetVsActualPage({
               <tr>
                 <td>Income</td>
                 <td className="num">{formatCents(plannedByDir.income)}</td>
-                <td className="num">{formatCents(actual.inCents)}</td>
+                <td className="num">{money(totals?.inCents ?? null)}</td>
                 <td className="num">
-                  {formatCents(
-                    lineVariance(plannedByDir.income, actual.inCents, "income"),
+                  {money(
+                    totals
+                      ? lineVariance(plannedByDir.income, totals.inCents, "income")
+                      : null,
                   )}
                 </td>
               </tr>
               <tr>
                 <td>Expense</td>
                 <td className="num">{formatCents(plannedByDir.expense)}</td>
-                <td className="num">{formatCents(actual.outCents)}</td>
+                <td className="num">{money(totals?.outCents ?? null)}</td>
                 <td className="num">
-                  {formatCents(
-                    lineVariance(plannedByDir.expense, actual.outCents, "expense"),
+                  {money(
+                    totals
+                      ? lineVariance(
+                          plannedByDir.expense,
+                          totals.outCents,
+                          "expense",
+                        )
+                      : null,
                   )}
                 </td>
               </tr>
@@ -264,7 +299,7 @@ export default async function BudgetVsActualPage({
                   </strong>
                 </td>
                 <td className="num">
-                  <strong>{formatCents(actual.netCents)}</strong>
+                  <strong>{money(totals?.netCents ?? null)}</strong>
                 </td>
                 <td className="num">—</td>
               </tr>
