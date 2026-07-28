@@ -93,6 +93,11 @@ interface StepDef {
   label: string;
   hint?: string;
   hrefSuffix: string; // appended to `/${slug}`
+  // Flags this step's DESTINATION requires, ALL of them. A flag-gated route
+  // 404s server-side (Constitution VIII), so a step whose link 404s is a guide
+  // that ends in a dead end — the journey drops the step instead. Omitted means
+  // the step is always available.
+  flags?: readonly FlagKey[];
   verify: (ctx: VerifyCtx) => Promise<boolean>;
 }
 
@@ -197,6 +202,12 @@ const DIRECTOR_JOURNEY: JourneyDef = {
     {
       label: "Send your first announcement",
       hrefSuffix: "/comms/announcements",
+      // Two flags gate that route (spec 005 US9-4): `comms` for the surface and
+      // `announcements` for the channel. Before `announcements` was wired to
+      // anything, this step could not 404; now it can, and it was the journey's
+      // TERMINAL step — so a program with the channel off met a dead end at the
+      // one place the guide sends everyone last.
+      flags: ["comms", "announcements"],
       verify: async (ctx) => {
         const [ann, dig] = await Promise.all([
           ctx.supabase
@@ -295,8 +306,12 @@ const COSTUME_JOURNEY: JourneyDef = {
       },
     },
     {
+      // Sets stopped being a tab of their own in spec 005 US13 — making,
+      // renaming and deleting one lives on Assignments now. /costumes/sets only
+      // still resolves because next.config redirects it; pointing the guide at
+      // a redirect is pointing it at a URL that is on its way out.
       label: "Group them into a set",
-      hrefSuffix: "/costumes/sets",
+      hrefSuffix: "/costumes/assignments",
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
         const { count } = await ctx.supabase
@@ -478,18 +493,26 @@ export async function loadJourneyPanel(
   // Task journeys. Gone when dismissed and not re-opened.
   if (dismissed && !forceOpen) return null;
 
+  // Steps whose destination is flagged off are dropped BEFORE anything else
+  // runs, so the terminal short-circuit reads the terminal step this member can
+  // actually reach — not one whose link would 404 on them.
+  const stepDefs = def.steps.filter((s) =>
+    (s.flags ?? []).every((key) => flags[key]),
+  );
+  if (stepDefs.length === 0) return null;
+
   const ctx: VerifyCtx = { supabase, programId, seasonId };
 
   // Terminal short-circuit: an established program that reached the last
   // milestone is past setup — hide the panel without running any earlier query.
   if (!forceOpen) {
-    const terminalDone = await def.steps[def.steps.length - 1].verify(ctx);
+    const terminalDone = await stepDefs[stepDefs.length - 1].verify(ctx);
     if (terminalDone) return null;
   }
 
   // Panel will render: resolve every step's done state (independent queries).
-  const doneArr = await Promise.all(def.steps.map((s) => s.verify(ctx)));
-  const steps: JourneyStepView[] = def.steps.map((s, i) => ({
+  const doneArr = await Promise.all(stepDefs.map((s) => s.verify(ctx)));
+  const steps: JourneyStepView[] = stepDefs.map((s, i) => ({
     label: s.label,
     hint: s.hint,
     href: base + s.hrefSuffix,

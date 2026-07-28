@@ -249,3 +249,68 @@ describe("loadJourneyPanel — lean short-circuits", () => {
     expect(model).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// A GUIDE MAY NOT SEND ANYONE TO A 404
+// ---------------------------------------------------------------------------
+// A flag-gated route 404s server-side (Constitution VIII). The director
+// journey's LAST step links /comms/announcements, which had nothing evaluating
+// the `announcements` flag until spec 005 US9-4 wired it — so the day the
+// channel became a real switch, turning it off made the guide's terminal step a
+// dead end, and the terminal short-circuit read a verifier for a step the member
+// could never reach. Steps declare the flags their destination needs and are
+// dropped before anything runs.
+describe("loadJourneyPanel — steps whose destination is flagged off", () => {
+  test("all flags on: the announcement step is the terminal step", async () => {
+    const model = await loadJourneyPanel(makeSupabase({}), panelArgs());
+    expect(model!.total).toBe(7);
+    const last = model!.steps[model!.steps.length - 1];
+    expect(last.label).toBe("Send your first announcement");
+    expect(last.href).toBe("/demo/comms/announcements");
+  });
+
+  test("announcements off: the step is gone and no link points at it", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ flags: allFlags({ announcements: false }) }),
+    );
+    expect(model!.total).toBe(6);
+    expect(model!.steps.map((s) => s.href)).not.toContain("/demo/comms/announcements");
+  });
+
+  test("comms off does it too — the route needs BOTH flags", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ flags: allFlags({ comms: false }) }),
+    );
+    expect(model!.total).toBe(6);
+    expect(model!.steps.some((s) => s.label === "Send your first announcement")).toBe(
+      false,
+    );
+  });
+
+  // The short-circuit has to move with the list. With announcements off, the
+  // terminal milestone is emailing families their links — so a program that has
+  // done that is past setup and the panel goes away, without the announcements
+  // tables being queried at all.
+  test("the terminal short-circuit follows the FILTERED list", async () => {
+    const calls: string[] = [];
+    const supabase = makeSupabase({ guardian_tokens: 1 }, calls);
+    const model = await loadJourneyPanel(
+      supabase,
+      panelArgs({ flags: allFlags({ announcements: false }) }),
+    );
+    expect(model).toBeNull();
+    expect(new Set(calls)).toEqual(new Set(["guardian_tokens"]));
+  });
+
+  test("the costume journey links the live sets URL, not the retired one", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ role: "costume_manager" }),
+    );
+    expect(model!.steps.map((s) => s.href)).not.toContain("/demo/costumes/sets");
+    expect(model!.steps[1].label).toBe("Group them into a set");
+    expect(model!.steps[1].href).toBe("/demo/costumes/assignments");
+  });
+});
