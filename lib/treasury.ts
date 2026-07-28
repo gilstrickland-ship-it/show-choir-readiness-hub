@@ -387,11 +387,18 @@ export interface LedgerEntryRow {
   budget_line_id: string | null;
   entry_date: string;
   voided_at?: string | null;
+  // The drawdown link (spec 006 R3). Absent on the older reads that never
+  // select it, which is why it is optional rather than `string | null`.
+  commitment_id?: string | null;
 }
 
 export interface SeasonLedgerSummary {
   totals: LedgerSeasonTotals;
   byLine: Map<string, LineActual>;
+  // Cents booked against each commitment, in both directions, so the commitment
+  // reducer can pick the one its kind means. Empty unless the caller selected
+  // `commitment_id`.
+  byCommitment: Map<string, LineActual>;
 }
 
 // A money reducer does not get to guess. An amount that will not read as a
@@ -411,6 +418,7 @@ export function summarizeSeasonLedger(
   rows: readonly LedgerEntryRow[],
 ): SeasonLedgerSummary {
   const byLine = new Map<string, LineActual>();
+  const byCommitment = new Map<string, LineActual>();
   const months = new Set<string>();
   let inCents = 0;
   let outCents = 0;
@@ -443,6 +451,13 @@ export function summarizeSeasonLedger(
       uncategorizedCents += amount;
     }
 
+    if (row.commitment_id) {
+      const drawn = byCommitment.get(row.commitment_id) ?? { inCents: 0, outCents: 0 };
+      if (row.direction === "in") drawn.inCents += amount;
+      else drawn.outCents += amount;
+      byCommitment.set(row.commitment_id, drawn);
+    }
+
     const month = monthKeyForDate(row.entry_date);
     if (month) months.add(month);
   }
@@ -458,6 +473,7 @@ export function summarizeSeasonLedger(
       months: [...months].sort((a, b) => b.localeCompare(a)),
     },
     byLine,
+    byCommitment,
   };
 }
 
@@ -509,6 +525,257 @@ export function lineVariance(
   direction: CategoryDirection,
 ): number {
   return direction === "income" ? actual - planned : planned - actual;
+}
+
+// ---------------------------------------------------------------------------
+// Commitments (spec 006) — Planned → Committed → Spent → Still available
+// ---------------------------------------------------------------------------
+// The ledger records money that HAS MOVED and a budget records what was
+// PLANNED. Nothing recorded what has been PROMISED, so "how much of the costume
+// budget is still free?" was unanswerable: $4,000 planned minus $800 spent read
+// as $3,200 available when $3,200 was already committed to a vendor.
+//
+// VOCABULARY IS A REQUIREMENT HERE (R9), not a style choice. The word
+// "encumbrance" never reaches a screen: the state is "Committed", a district
+// commitment is a "Purchase order" (the word the bookkeeper will ask for), a
+// booster one is "Approved spending", and the headline is "Still available".
+
+export const COMMITMENT_KINDS = ["spending", "expected"] as const;
+export type CommitmentKind = (typeof COMMITMENT_KINDS)[number];
+
+export const COMMITMENT_FUNDING_SOURCES = ["district", "booster"] as const;
+export type CommitmentFundingSource = (typeof COMMITMENT_FUNDING_SOURCES)[number];
+
+// The two purses (D12). Identity, numbering and tax treatment never mix across
+// them — a booster must never issue, or appear to issue, the district's purchase
+// order. Only the reporting blends.
+export const FUNDING_SOURCE_LABELS: Record<CommitmentFundingSource, string> = {
+  district: "Purchase order",
+  booster: "Approved spending",
+};
+
+export function parseCommitmentKind(raw: string): CommitmentKind | null {
+  return (COMMITMENT_KINDS as readonly string[]).includes(raw)
+    ? (raw as CommitmentKind)
+    : null;
+}
+
+export function parseFundingSource(raw: string): CommitmentFundingSource | null {
+  return (COMMITMENT_FUNDING_SOURCES as readonly string[]).includes(raw)
+    ? (raw as CommitmentFundingSource)
+    : null;
+}
+
+// How a commitment is named out loud. A revision keeps the original's number —
+// it is the same document restated, which is what makes "PO 1042 · rev 2"
+// readable to a bookkeeper who has 1042 in the district's own system.
+export function commitmentRefLabel(
+  source: CommitmentFundingSource,
+  numberValue: number,
+  revision = 0,
+): string {
+  const base =
+    source === "district"
+      ? `PO ${numberValue}`
+      : `Approved spending #${numberValue}`;
+  return revision > 0 ? `${base} · rev ${revision}` : base;
+}
+
+// One row of public.commitment_totals.
+export interface CommitmentTotals {
+  openCommittedCents: number; // open SPENDING, remaining after drawdown
+  openExpectedCents: number; // open EXPECTED, remaining after receipts
+  committedGrossCents: number; // open spending, before drawdown
+  drawnCents: number; // paid against open spending commitments
+  openCount: number;
+  expectedCount: number;
+  staleCount: number; // open, need-by already past on the program's calendar
+  overspentCount: number;
+  afterTheFactCount: number;
+}
+
+export interface LineCommitment {
+  openCommittedCents: number;
+  openExpectedCents: number;
+}
+
+// A failed read returns null, never zeros — the same rule the ledger totals
+// follow, for the same reason: "$0.00 committed" is a number a director would
+// act on, and a blank is not.
+export function commitmentTotalsFromRow(row: unknown): CommitmentTotals | null {
+  if (!row || typeof row !== "object") return null;
+  const r = row as Record<string, unknown>;
+  const num = (key: string): number | null => {
+    const v = r[key];
+    const n = typeof v === "string" ? Number(v) : v;
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  };
+  const fields = {
+    openCommittedCents: num("open_committed_cents"),
+    openExpectedCents: num("open_expected_cents"),
+    committedGrossCents: num("committed_gross_cents"),
+    drawnCents: num("drawn_cents"),
+    openCount: num("open_count"),
+    expectedCount: num("expected_count"),
+    staleCount: num("stale_count"),
+    overspentCount: num("overspent_count"),
+    afterTheFactCount: num("after_the_fact_count"),
+  };
+  for (const value of Object.values(fields)) {
+    if (value === null) return null;
+  }
+  return fields as CommitmentTotals;
+}
+
+// public.commitment_line_totals rows → lookup by budget line id. Unlike the
+// ledger's line actuals there is no uncategorized bucket: a commitment without a
+// budget line cannot exist (no line, no encumbrance, no math), so the column is
+// NOT NULL in the schema.
+export function commitmentLineTotalsFromRows(rows: unknown): Map<string, LineCommitment> {
+  const out = new Map<string, LineCommitment>();
+  if (!Array.isArray(rows)) return out;
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.budget_line_id !== "string") continue;
+    const toNum = (v: unknown): number => {
+      const n = typeof v === "string" ? Number(v) : v;
+      return typeof n === "number" && Number.isFinite(n) ? n : 0;
+    };
+    out.set(r.budget_line_id, {
+      openCommittedCents: toNum(r.open_committed_cents),
+      openExpectedCents: toNum(r.open_expected_cents),
+    });
+  }
+  return out;
+}
+
+// THE HEADLINE NUMBER. Planned, minus what has actually been spent, minus what
+// is still promised to a vendor. Expected money is NOT added: you may not spend
+// money you have merely been promised (spec §2 — the asymmetry is the accounting
+// reality, not an oversight).
+export function stillAvailable(
+  planned: number,
+  spent: number,
+  committed: number,
+): number {
+  return planned - spent - committed;
+}
+
+// ---------------------------------------------------------------------------
+// The same aggregates in TypeScript — for the ONE read that cannot call them
+// ---------------------------------------------------------------------------
+// Identical situation to summarizeSeasonLedger above: the board-snapshot PDF
+// runs on a service-role client with no auth.uid(), so private.ledger_may_read
+// refuses and it must page the rows and reduce them here. The SQL definitions
+// are restated field for field, and tests/rls/commitments.spec.ts runs BOTH over
+// the same rows in real Postgres, past the 1000-row cap, to prove they agree.
+//
+//   .totals ≡ public.commitment_totals(program, season)
+//   .byLine ≡ public.commitment_line_totals(program, season)
+
+export interface CommitmentRow {
+  id: string;
+  kind: string;
+  budget_line_id: string;
+  amount_cents: number | string;
+  shipping_cents: number | string;
+  tax_cents: number | string;
+  need_by: string | null;
+  after_the_fact: boolean;
+  closed_at: string | null;
+  cancelled_at: string | null;
+  superseded_at: string | null;
+}
+
+export interface CommitmentSummary {
+  totals: CommitmentTotals;
+  byLine: Map<string, LineCommitment>;
+}
+
+// Same posture as the ledger reducer: an amount that will not read as a finite
+// number means the READ is broken, and a broken read that returns a plausible
+// number is how a wrong balance reaches a board.
+function centsOf(raw: number | string, what: string): number {
+  const n = typeof raw === "string" ? Number(raw) : raw;
+  if (typeof n !== "number" || !Number.isFinite(n)) {
+    throw new Error(`commitment with an unreadable ${what}`);
+  }
+  return n;
+}
+
+export function summarizeCommitments(
+  rows: readonly CommitmentRow[],
+  // Cents booked against each commitment, both directions — summarizeSeasonLedger's
+  // `byCommitment`, which is the live-entries-only set by construction.
+  drawnByCommitment: ReadonlyMap<string, LineActual>,
+  // Today on the PROGRAM's calendar ("YYYY-MM-DD"). A need-by is a calendar day,
+  // so a plain string compare is the whole comparison — and a UTC host must not
+  // decide that a Chicago program's purchase order is late (Constitution VII).
+  today: string,
+): CommitmentSummary {
+  const byLine = new Map<string, LineCommitment>();
+  const totals: CommitmentTotals = {
+    openCommittedCents: 0,
+    openExpectedCents: 0,
+    committedGrossCents: 0,
+    drawnCents: 0,
+    openCount: 0,
+    expectedCount: 0,
+    staleCount: 0,
+    overspentCount: 0,
+    afterTheFactCount: 0,
+  };
+
+  for (const row of rows) {
+    if (row.kind !== "spending" && row.kind !== "expected") {
+      throw new Error(`commitment with an unknown kind: ${row.kind}`);
+    }
+    const total =
+      centsOf(row.amount_cents, "amount") +
+      centsOf(row.shipping_cents, "shipping") +
+      centsOf(row.tax_cents, "tax");
+
+    // A misdirected entry never draws down a commitment it does not belong to:
+    // a spending commitment is paid down by money OUT, an expected one by money
+    // IN (the same rule actualForDirection applies to a budget line).
+    const drawnBoth = drawnByCommitment.get(row.id);
+    const drawn =
+      (row.kind === "spending" ? drawnBoth?.outCents : drawnBoth?.inCents) ?? 0;
+    const remaining = Math.max(total - drawn, 0);
+
+    // Superseded and cancelled documents no longer stand; a CLOSED one is still
+    // a fact about the season but is no longer committing anything.
+    const standing = row.cancelled_at === null && row.superseded_at === null;
+    const open = standing && row.closed_at === null;
+
+    if (standing) {
+      if (drawn > total) totals.overspentCount += 1;
+      if (row.after_the_fact) totals.afterTheFactCount += 1;
+    }
+    if (!open) continue;
+
+    if (row.need_by !== null && row.need_by < today) totals.staleCount += 1;
+
+    const bucket = byLine.get(row.budget_line_id) ?? {
+      openCommittedCents: 0,
+      openExpectedCents: 0,
+    };
+    if (row.kind === "spending") {
+      totals.openCommittedCents += remaining;
+      totals.committedGrossCents += total;
+      totals.drawnCents += drawn;
+      totals.openCount += 1;
+      bucket.openCommittedCents += remaining;
+    } else {
+      totals.openExpectedCents += remaining;
+      totals.expectedCount += 1;
+      bucket.openExpectedCents += remaining;
+    }
+    byLine.set(row.budget_line_id, bucket);
+  }
+
+  return { totals, byLine };
 }
 
 // ---------------------------------------------------------------------------

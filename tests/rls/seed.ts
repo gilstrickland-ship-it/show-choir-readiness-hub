@@ -162,6 +162,22 @@ insert into ledger_audit (id, program_id, entry_id, action, actor) values
 insert into ledger_reconciliations (id, program_id, month, reconciled_by) values
   ('${p.ledgerReconciliation}', '${p.program}', '2026-06-01', '${p.treasurer}');
 
+-- Commitments (0021): the layer between planned and spent. Both rows are still
+-- 'requested', which is the only state a commitment may be BORN in — the trigger
+-- refuses an insert carrying an approval, an issue, a receipt or a closure, so
+-- the approved fixture below is seeded as a request and then approved.
+-- \`number\` is deliberately NOT supplied: it is assigned per program per funding
+-- source by the database, never by a writer.
+insert into commitments
+  (id, program_id, season_id, kind, funding_source, vendor, purpose,
+   amount_cents, shipping_cents, tax_cents, budget_line_id, need_by, requested_by) values
+  ('${p.commitment}', '${p.program}', '${p.seasonActive}', 'spending', 'district',
+   '${prefix} Costume Co', 'Premiere costumes — spring set',
+   300000, 15000, 5000, '${p.budgetLine}', current_date + 30, '${p.director}'),
+  ('${p.commitmentExpected}', '${p.program}', '${p.seasonActive}', 'expected', 'booster',
+   '${prefix} Rival District', 'Entry fees they owe us',
+   50000, 0, 0, '${p.budgetLine}', current_date + 60, '${p.director}');
+
 insert into shifts (id, program_id, season_id, competition_id, title) values
   ('${p.shift}', '${p.program}', '${p.seasonActive}', '${p.competition}', 'Concessions');
 
@@ -229,6 +245,29 @@ insert into ledger_audit (id, program_id, entry_id, action, actor) values
 -- school/slot under it) are frozen (archive.spec exercises the rejection).
 insert into hosted_events (id, program_id, season_id, name, event_date, status) values
   ('${p.hostedEventArchived}', '${p.program}', '${p.seasonArchived}', 'Archived Invitational', null, 'done');
+
+-- An APPROVED commitment: requested by the director, approved by the treasurer.
+-- Seeded in two statements because a commitment is born a request — the insert
+-- trigger refuses one that arrives already approved, which is the guard that
+-- stops a seat allowed to REQUEST from forging the approval in the same write.
+insert into commitments
+  (id, program_id, season_id, kind, funding_source, vendor, purpose,
+   amount_cents, budget_line_id, need_by, requested_by) values
+  ('${p.commitmentApproved}', '${p.program}', '${p.seasonActive}', 'spending', 'booster',
+   'Approved Choreo LLC', 'Choreography — spring set', 120000, '${p.budgetLine}',
+   current_date + 14, '${p.director}');
+
+update commitments
+   set status = 'approved', approved_by = '${p.treasurer}', approved_at = now()
+ where id = '${p.commitmentApproved}';
+
+-- A commitment on the ARCHIVED season: readable, but every write to it is
+-- refused (the season's books are closed).
+insert into commitments
+  (id, program_id, season_id, kind, funding_source, vendor, purpose,
+   amount_cents, budget_line_id, requested_by) values
+  ('${p.commitmentArchived}', '${p.program}', '${p.seasonArchived}', 'spending', 'district',
+   'Old Costume Co', 'Last year''s set', 90000, '${p.budgetLineArchived}', '${p.director}');
 `;
 }
 
