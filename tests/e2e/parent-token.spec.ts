@@ -47,6 +47,18 @@ test.describe("parent token journeys (F13/F15/F16)", () => {
     const packet = await page.request.get(packetHref!);
     expect(packet.status()).toBe(200);
     expect(packet.headers()["content-type"]).toContain("application/pdf");
+    // The packet names students against hotel rooms, and a PDF is a first-class
+    // indexable document with no <head> for the layout's robots <meta> to ride
+    // in. The directive has to be a HEADER on this response (lib/no-index).
+    expect(packet.headers()["x-robots-tag"]).toBe("noindex, nofollow, noarchive");
+
+    // And on the route's refusals too — a 400 from the text() helper is served
+    // from the same URL space, so it must not be indexable either.
+    const packetNoComp = await page.request.get(`${base}/packet`);
+    expect(packetNoComp.status()).toBe(400);
+    expect(packetNoComp.headers()["x-robots-tag"]).toBe(
+      "noindex, nofollow, noarchive",
+    );
 
     // --- Volunteer signup: claim the Lunch shift, then cancel --------------
     await page.goto(`${base}/signup`);
