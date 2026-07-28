@@ -647,40 +647,6 @@
     background: var(--line);
   }
 
-  /* ---------------- Tabs ---------------- */
-
-  .settings-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0 1.25rem;
-    border-bottom: 1px solid var(--line);
-    width: 100%;
-  }
-
-  .settings-tabs a,
-  .settings-tabs strong {
-    display: inline-block;
-    padding: 0.45rem 0.05rem calc(0.45rem - 3px);
-    border-bottom: 3px solid transparent;
-    margin-bottom: -1px;
-    font-size: 0.86rem;
-    font-weight: 550;
-    color: var(--muted-ink);
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .settings-tabs a:hover {
-    color: var(--ink);
-  }
-
-  .settings-tabs strong,
-  .settings-tabs [aria-current="page"] {
-    color: var(--ink);
-    font-weight: 650;
-    border-bottom-color: var(--accent);
-  }
-
   /* ---------------- Tables ---------------- */
 
   /* `display: block; overflow-x: auto` is what lets a wide table scroll on a
@@ -2897,8 +2863,11 @@
     color: var(--muted-ink);
   }
 
-  /* Display-type underline sub-tabs (replaces .settings-tabs on redesigned
-     surfaces — Directory/Ledger/Alterations strips). */
+  /* The app's ONE sub-tab strip — display-type, underlined, uppercase. It began
+     as the redesigned surfaces' replacement for `.settings-tabs` (the smaller,
+     lighter, sentence-case strip this file used to carry as well); T142 moved
+     every surface onto SubTabs, the absence queue was the last holdout, and
+     with T157 the old class had no users left and is gone. */
   .subtabs {
     display: flex;
     flex-wrap: nowrap;
