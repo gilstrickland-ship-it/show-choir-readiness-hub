@@ -8,7 +8,8 @@ import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import {
   groupItemsByDay,
-  changedItemsSincePublish,
+  changedSincePublish,
+  editedItemsSincePublish,
 } from "@/lib/itinerary-days";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { SubTabs } from "../../../SubTabs";
@@ -52,8 +53,13 @@ interface ItinRow {
   id: string;
   status: "draft" | "published";
   published_at: string | null;
+  // When this schedule's ITEMS last changed, deletions included (migration
+  // 0024). Stamped by a trigger, never by this app.
+  items_changed_at: string | null;
   source: "manual" | "parsed";
 }
+
+const ITIN_COLUMNS = "id, status, published_at, items_changed_at, source";
 
 export default async function ItineraryPage({
   params,
@@ -91,7 +97,7 @@ export default async function ItineraryPage({
   // One itinerary per competition; create a draft on first open (writers only).
   let { data: itinData } = await supabase
     .from("itineraries")
-    .select("id, status, published_at, source")
+    .select(ITIN_COLUMNS)
     .eq("program_id", program.id)
     .eq("competition_id", competitionId)
     .maybeSingle();
@@ -104,7 +110,7 @@ export default async function ItineraryPage({
         status: "draft",
         source: "manual",
       })
-      .select("id, status, published_at, source")
+      .select(ITIN_COLUMNS)
       .single();
     itinData = created;
   }
@@ -123,14 +129,25 @@ export default async function ItineraryPage({
     : { data: null };
   const items = (itemData as ItineraryItem[] | null) ?? [];
 
-  // C2-2: when times have changed since publishing, families already see the
-  // update (the parent page is live) — but nobody is notified automatically.
+  // C2-2: when the schedule has changed since publishing, families already see
+  // the update (the parent page is live) — but nobody is notified automatically.
   // Calm nudge, not an alarm. Reachable now that published itineraries stay
   // editable in place (T055) — no unpublish/republish round-trip resets it.
+  //
+  // T169: whether there IS a change comes from the itinerary row's
+  // `items_changed_at`, which a trigger stamps on delete as well as on save. The
+  // per-item count below is a detail on top of it, and it is exactly the number
+  // that used to be the whole test — which is why removing a line from a
+  // published schedule used to produce no notice at all. Zero edited items while
+  // something changed can only mean a line was taken off, so the nudge says so.
   const isPublished = itinerary?.status === "published";
-  const changedSincePublish = isPublished
-    ? changedItemsSincePublish(items, itinerary!.published_at).count
+  const change = isPublished
+    ? changedSincePublish(itinerary!.items_changed_at, itinerary!.published_at)
+    : { changed: false, changedAt: null };
+  const editedSincePublish = change.changed
+    ? editedItemsSincePublish(items, itinerary!.published_at)
     : 0;
+  const removedSincePublish = change.changed && editedSincePublish === 0;
 
   // Uploaded host packet alongside the editor (§5 step 6 / T014).
   const { data: docData } = await supabase
@@ -274,12 +291,12 @@ export default async function ItineraryPage({
 
       <Flash flash={pageFlash} section="page" />
 
-      {changedSincePublish > 0 &&
+      {change.changed &&
         (canWrite ? (
           <p className="alert-info">
-            You&apos;ve changed times since publishing. Families who open their
-            link see the update immediately — but nobody is notified
-            automatically.
+            {removedSincePublish
+              ? "You've taken a line off this schedule since publishing. Families who open their link no longer see it — but nobody is notified automatically."
+              : "You've changed this schedule since publishing. Families who open their link see the update immediately — but nobody is notified automatically."}
             {/* Only offer the announcement route when this program actually has
                 it: both flags gate that page (spec 005 US9-4), and a nudge that
                 sends a director to a 404 is worse than no nudge. */}
@@ -295,8 +312,9 @@ export default async function ItineraryPage({
           </p>
         ) : (
           <p className="alert-info">
-            Times have changed since this itinerary was published. Families who
-            open their link see the update immediately.
+            {removedSincePublish
+              ? "A line has been taken off this schedule since it was published. Families who open their link no longer see it."
+              : "This schedule has changed since it was published. Families who open their link see the update immediately."}
           </p>
         ))}
 

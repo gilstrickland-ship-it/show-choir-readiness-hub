@@ -9,7 +9,7 @@ import {
 } from "@/lib/datetime";
 import {
   groupItemsByDay,
-  changedItemsSincePublish,
+  changedSincePublish,
   type ChangedSincePublish,
 } from "@/lib/itinerary-days";
 import { parentSurfaceAvailable, documentAllowsToken } from "@/lib/tokens";
@@ -33,7 +33,6 @@ interface ItemRow {
   location: string | null;
   details: string | null;
   sort_order: number;
-  updated_at: string | null;
 }
 
 export default async function PublicItineraryPage({
@@ -129,7 +128,9 @@ export default async function PublicItineraryPage({
   if (competitionIds.length > 0) {
     const { data: itins } = await supabase
       .from("itineraries")
-      .select("id, competition_id, status, published_at, competition:competitions(name, date)")
+      .select(
+        "id, competition_id, status, published_at, items_changed_at, competition:competitions(name, date)",
+      )
       .eq("program_id", program.id)
       .eq("status", "published")
       .in("competition_id", competitionIds);
@@ -138,22 +139,26 @@ export default async function PublicItineraryPage({
       id: string;
       competition_id: string;
       published_at: string | null;
+      items_changed_at: string | null;
       competition: { name: string; date: string | null } | null;
     }> | null) ?? []) {
       const { data: items } = await supabase
         .from("itinerary_items")
-        .select("starts_at, ends_at, kind, title, location, details, sort_order, updated_at")
+        .select("starts_at, ends_at, kind, title, location, details, sort_order")
         .eq("program_id", program.id)
         .eq("itinerary_id", it.id)
         .order("sort_order", { ascending: true })
         .order("starts_at", { ascending: true });
-      const itemRows = (items as ItemRow[] | null) ?? [];
       blocks.push({
         competitionId: it.competition_id,
         competitionName: it.competition?.name ?? "Competition",
         date: it.competition?.date ?? null,
-        items: itemRows,
-        changed: changedItemsSincePublish(itemRows, it.published_at),
+        items: (items as ItemRow[] | null) ?? [],
+        // T169: read off the ITINERARY, not off the items. A line deleted from a
+        // published schedule leaves no row behind, so the rows can never report
+        // it — and this banner is the only thing that tells a family the page
+        // they are looking at is not the one they screenshotted.
+        changed: changedSincePublish(it.items_changed_at, it.published_at),
       });
     }
   }
@@ -174,12 +179,15 @@ export default async function PublicItineraryPage({
               <span className="muted"> · {formatDateInTz(`${block.date}T12:00:00Z`, tz)}</span>
             )}
           </h2>
-          {block.changed.count > 0 && block.changed.lastChangedAt && (
+          {block.changed.changed && block.changed.changedAt && (
             /* Living itinerary (C2-2): hosts compress schedules day-of, so a
                parent must be able to trust that what they see is current. This
-               page always reads live data; the banner just points at the change. */
+               page always reads live data; the banner just points at the change.
+               It says "Updated" for every kind of change — a time that moved, a
+               stop that was added, a stop that was taken off — because a family
+               needs to know the page changed, not which row did. */
             <p className="token-notice" role="status">
-              Updated {formatDateTimeInTz(block.changed.lastChangedAt, tz)} — times
+              Updated {formatDateTimeInTz(block.changed.changedAt, tz)} — times
               can shift on competition day; this page always shows the latest.
             </p>
           )}
