@@ -21,9 +21,21 @@ test.describe("board member role gating", () => {
     await expect(nav.getByRole("link", { name: "Money" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Comms" })).toHaveCount(0);
 
-    // Money is readable but read-only — no add-entry affordance.
+    // Money is READABLE — and this has to be proved, not assumed. A `name`
+    // passed to getByRole matches a SUBSTRING by default, so "Money" also
+    // matched the Restricted notice's "Money is outside your seat": the
+    // assertion passed whether the board member got the ledger or the door.
+    // Rule out the notice, then assert something only the real page ships.
     await page.goto("/demo/treasury");
-    await expect(page.getByRole("heading", { name: "Money" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /outside your seat/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Money", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".metric-strip")).toBeVisible();
+
+    // ...but read-only: no add-entry affordance.
     await expect(
       page.getByRole("heading", { name: "Add an entry" }),
     ).toHaveCount(0);

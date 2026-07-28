@@ -121,15 +121,33 @@ export default async function AssignmentsPage({
   const activeSet =
     sets.find((s) => s.id === selectedSetId) ?? (sets.length === 1 ? sets[0] : null);
 
+  // A ROW-SCOPED MESSAGE THAT HAS NO ROW MUST STILL BE SAID. `?edit=<pieceId>`
+  // used to silence the page banner outright, so when the addressed row was not
+  // on screen — no active season, no set chosen, a different set open, the piece
+  // taken out of the set — the message rendered nowhere at all and the writer
+  // was left with a form that appeared to have done nothing. The grid only
+  // renders when a season AND a set are in play; outside that, every code falls
+  // OPEN to the page banner, which is the pattern the treasury pages already
+  // use. The "is that piece in THIS set" half is the grid's own (it is the only
+  // thing that has read the pieces) — see AssignmentGrid.
   const errorCode = one("error");
   const editParam = canWrite ? one("edit") : null;
-  const setOpen = editParam === "set";
-  const openRowId = setOpen ? null : editParam;
+  const gridRenders = !!season && !!activeSet;
+  const setOpen = editParam === "set" && gridRenders;
+  const openRowId = editParam === "set" || !gridRenders ? null : editParam;
   const setError = setOpen ? message(SET_ERR, errorCode) : null;
   const rowError = openRowId ? message(ROW_ERR, errorCode) : null;
-  const pageError = editParam ? null : message(ERR, errorCode);
+  const pageError =
+    setError || rowError
+      ? null
+      : (message(ERR, errorCode) ??
+        message(SET_ERR, errorCode) ??
+        message(ROW_ERR, errorCode));
   const unknownError = !!errorCode && !setError && !rowError && !pageError;
-  const drawerOpen = canWrite && (one("add") === "set" || !!pageError);
+  // The add drawer reopens only for messages it owns; a set or row code that
+  // fell open to the banner belongs to a control that is not in the drawer.
+  const drawerError = message(ERR, errorCode);
+  const drawerOpen = canWrite && (one("add") === "set" || !!drawerError);
 
   const eyebrow = season
     ? `${sets.length} set${sets.length === 1 ? "" : "s"} · ${season.label}`
@@ -150,7 +168,7 @@ export default async function AssignmentsPage({
               seasonId={season.id}
               ensembles={ensembles}
               open={drawerOpen}
-              error={pageError}
+              error={drawerError}
             />
           </div>
         )}
@@ -167,7 +185,7 @@ export default async function AssignmentsPage({
 
       {one("saved") && <p className="alert-ok">Saved.</p>}
       {one("deleted") && <p className="alert-ok">Set deleted.</p>}
-      {((pageError && !drawerOpen) || unknownError) && (
+      {((pageError && !(drawerOpen && drawerError)) || unknownError) && (
         <p className="alert-error">{pageError ?? "Something went wrong."}</p>
       )}
 
@@ -290,8 +308,21 @@ async function AssignmentGrid({
     }
   }
 
+  // The last half of the fail-open (see the page's error block): the page knows
+  // a grid is rendering, only this component knows WHICH pieces are in it. A
+  // message addressed at a piece that is not one of them would render nowhere,
+  // so it goes up top instead of disappearing.
+  const rowOnScreen = !!openRowId && assignable.some((p) => p.id === openRowId);
+  const orphanRowError = rowError && !rowOnScreen ? rowError : null;
+
+  const ensembleName = set.ensemble_id
+    ? (ensembles.find((e) => e.id === set.ensemble_id)?.name ?? "—")
+    : null;
+
   return (
     <>
+      {orphanRowError && <p className="alert-error">{orphanRowError}</p>}
+
       {canWrite && (
         <SetSettings
           programId={programId}
@@ -304,12 +335,27 @@ async function AssignmentGrid({
         />
       )}
 
-      <p className="muted">
-        <strong>{set.name}</strong>
-        {set.ensemble_id
-          ? ""
-          : " — no ensemble on this set yet, so there are no students to assign. Pick one in Set settings."}
-      </p>
+      {/* A READER GETS THE SET'S FACTS TOO. Ensemble, show order and piece count
+          live in the Set settings summary — which only writers see — so when
+          sets moved onto this page a board member was left with a name and
+          nothing else about the set they were reading. The board's seat is
+          read-only BY DESIGN, not blind (§2): it sees everything and changes
+          nothing, which is the transparency that protects the program. */}
+      {canWrite ? (
+        <p className="muted">
+          <strong>{set.name}</strong>
+          {set.ensemble_id
+            ? ""
+            : " — no ensemble on this set yet, so there are no students to assign. Pick one in Set settings."}
+        </p>
+      ) : (
+        <p className="muted">
+          <strong>{set.name}</strong> · {ensembleName ?? "no ensemble yet"} ·{" "}
+          {allPieces.length} piece{allPieces.length === 1 ? "" : "s"} · #
+          {set.sort_order} in the show
+          {set.notes ? ` · ${set.notes}` : ""}
+        </p>
+      )}
 
       <table className="members">
         <thead>

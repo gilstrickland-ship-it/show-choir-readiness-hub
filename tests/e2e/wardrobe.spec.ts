@@ -103,8 +103,25 @@ test.describe("costume manager seat", () => {
     await expect(nav.getByRole("link", { name: "Money" })).toHaveCount(0);
     await expect(nav.getByRole("link", { name: "People" })).toHaveCount(0);
 
+    // ACCESS, PROVEN. `getByRole("heading", { name: "Wardrobe" })` matched a
+    // SUBSTRING, so the Restricted notice — whose heading is "Wardrobe is
+    // outside your seat" — satisfied it too: this assertion passed whether the
+    // costume manager could reach the wardrobe or was refused at the door, which
+    // is the one thing it was here to tell apart. Assert what only the real page
+    // has (the four-tab strip and the alterations queue), and assert the denial
+    // notice is absent.
     await page.goto("/demo/costumes");
-    await expect(page.getByRole("heading", { name: "Wardrobe" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /outside your seat/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Wardrobe", exact: true }),
+    ).toBeVisible();
+    const costumeTabs = page.locator(".subtabs").first();
+    await expect(costumeTabs.locator("a, strong")).toHaveCount(4);
+    await expect(
+      costumeTabs.getByText("Assignments", { exact: true }),
+    ).toBeVisible();
 
     // The direct roster URL renders the data-free Restricted notice, not rows.
     await page.goto("/demo/roster");
