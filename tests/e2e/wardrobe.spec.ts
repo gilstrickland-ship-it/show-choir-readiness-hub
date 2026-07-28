@@ -55,7 +55,12 @@ test.describe("wardrobe (spec 005 Wave W)", () => {
     await expect(
       page.locator("summary", { hasText: "Set settings" }),
     ).toContainText("Opener");
-    await expect(page.getByRole("link", { name: "Dress #1" })).toBeVisible();
+    // `exact` matters: T143b made the row's edit trigger a link whose accessible
+    // name is "Assign Dress #1", and getByRole matches a substring by default —
+    // without it this resolves to two elements and strict mode fails.
+    await expect(
+      page.getByRole("link", { name: "Dress #1", exact: true }),
+    ).toBeVisible();
     // Props and set pieces ride the same inventory, listed apart because they
     // skip student assignment (arch §4).
     await expect(
