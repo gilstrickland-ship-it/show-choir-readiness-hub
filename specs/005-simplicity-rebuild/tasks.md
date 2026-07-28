@@ -82,6 +82,7 @@
 
 ## Phase 12 — Wave 12: Money reporting
 
+- [ ] T143g "Start a season" dead-ends non-settings seats (Wave-9 finding): `/treasury`, `/treasury/commitments` and `/costumes/assignments` render "No active season — Start a season" linking to `/settings/rollover`, which is SETTINGS_ROLES-only, so a treasurer or costume manager following it hits `<Restricted>`. `StartSeasonCard` already solved this class for Today and Season — reuse it.
 - [ ] T143c Row Edit triggers measure 38px, not 44px (Wave-10 residual): the shared `.comp-disclosure` min-height cannot apply to an inline `<a>`, so eight call sites across five surfaces (itinerary, ledger, budget, ensembles, inventory/assignments) sit under the touch target the rest of the app holds. One-selector fix + re-measure all five.
 - [X] T162 `budget-vs-actual` + `reports` adopt Wave-4 vocabulary and the collapsed-filter idiom; board-snapshot PDF and "reconciled through" line unchanged (fiduciary controls stay as designed).
 - [X] T163 Wave-12 verification: full gate + e2e + visual pass.
@@ -103,6 +104,6 @@
 - [ ] T143e Destructive one-click share-link revoke has no confirm (Wave-13 finding): revoking kills the URL irrecoverably — the family must be re-issued and re-told — and it is the only irreversible action in the app without a confirm step. Decide: add the app-wide confirm idiom, or document why this one stays one click.
 - [ ] T169 ESCALATION (needs schema, RQ-3): the "Updated {when}" living-itinerary banner is blind to DELETIONS — `changedItemsSincePublish` reads `itinerary_items.updated_at`, and a deleted row leaves no row to read. A director who removes an item after publishing gets no banner, so families keep a schedule line that no longer exists. Closing it needs a deleted-at or audit column; decide before it ships.
 - [ ] T143f Parent-surface tap targets (Wave-14 measured, globals.css): `.itinerary-links a` 24.8px, `.token-footer a` 36.3px (four links, every page), absence `select` 36.4px, link-help email input 41.2px. Wave 14 verified three rules take all four to 44px with no overflow regression — see its report.
-- [ ] T145 Journey re-derivation (US12): all role journeys in `lib/guide.ts` re-pointed at rebuilt flows (steps, links, labels, verifiers); non-director journeys reflect rebuilt surfaces + Wave-8 mobile nav; e2e guide contracts updated coherently.
-- [ ] T146 Strip re-justification (US12-2): each of the eight IntroStrips rewritten for the new UI, shortened, or removed where the rebuilt surface self-explains; `?help=1` + Got-it semantics preserved for survivors; parent welcome card reviewed.
-- [ ] T147 Wave-9 verification: full gate + e2e + visual QA (fresh-program walkthrough per role, journey panel states, surviving strips).
+- [X] T145 Journey re-derivation (US12): all role journeys in `lib/guide.ts` re-pointed at rebuilt flows (steps, links, labels, verifiers); non-director journeys reflect rebuilt surfaces + Wave-8 mobile nav; e2e guide contracts updated coherently.
+- [X] T146 Strip re-justification (US12-2): each of the eight IntroStrips rewritten for the new UI, shortened, or removed where the rebuilt surface self-explains; `?help=1` + Got-it semantics preserved for survivors; parent welcome card reviewed.
+- [X] T147 Wave-9 verification: full gate + e2e + visual QA (fresh-program walkthrough per role, journey panel states, surviving strips).
