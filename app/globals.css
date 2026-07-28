@@ -2135,25 +2135,13 @@
     color: var(--accent-strong);
   }
 
-  /* ---------------- Host-mode (Wave I2) ---------------- */
-  .hosting-event .comp-back {
-    margin-bottom: 0.5rem;
-  }
-
-  .hosting-header-edit,
-  .hosting-add {
-    margin-top: 0.75rem;
-  }
-
-  .hosting-header-edit > summary,
-  .hosting-add > summary {
-    cursor: pointer;
-    font-weight: 600;
-    color: var(--accent-strong);
-    padding: 0.35rem 0;
-  }
-
+  /* ---------------- Host-mode (Wave I2, rebuilt spec 005 Wave 7) ----------------
+     Every disclosure on this surface now uses the app's shared `.comp-disclosure`
+     trigger (44px thumb target, further down this layer) instead of four
+     near-identical local `> summary` rules of ~26px each — which is both the
+     de-duplication RQ-6 asks for and the tap-target fix that came with it. */
   .hosting-school-card {
+    width: 100%;
     border: 1px solid var(--line);
     border-radius: var(--radius, 8px);
     padding: 0.75rem 0.9rem;
@@ -2168,14 +2156,8 @@
     margin-bottom: 0.25rem;
   }
 
-  .hosting-school-card details > summary {
-    cursor: pointer;
-    color: var(--accent-strong);
-    font-weight: 600;
-    padding: 0.25rem 0;
-  }
-
   .hosting-slot-row {
+    width: 100%;
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
@@ -2195,19 +2177,14 @@
     min-width: 8rem;
   }
 
+  /* A whole line of the slot row, not its last column — which is what keeps the
+     Edit panel opening at the row's LEFT edge on a phone (the Wave-4/6 lesson
+     about panels that open inside a narrow trailing cell). */
   .hosting-slot-actions {
     flex-basis: 100%;
   }
 
-  .hosting-slot-actions details > summary {
-    cursor: pointer;
-    color: var(--accent-strong);
-    font-weight: 600;
-    padding: 0.2rem 0;
-  }
-
   .hosting-shift {
-    margin-top: 0.5rem;
     align-items: flex-end;
   }
 
@@ -2393,7 +2370,13 @@
     padding: 1.75rem 1.5rem 4.5rem;
   }
 
-  .comp {
+  /* Host-mode borrows every piece of the comp hub's furniture (the head, the
+     titled sections, the summaries), so it borrows the page shell too rather
+     than approximating it with `.stack` — whose `align-items: flex-start` sized
+     each section to its widest child and left the school cards and slot rows
+     ragged against the sections above them. */
+  .comp,
+  .hosting-event {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
@@ -2880,16 +2863,26 @@
     position: relative;
   }
 
-  .drawer > summary {
+  /* A summary styled as a solid button carries no disclosure triangle, wherever
+     it sits — inside a drawer (Season, Money, Shifts, Wardrobe "+ Add") or in
+     flow as a section's primary action (host-mode's "Generate the schedule").
+     `.button-link` alone drops the ::marker by leaving `display: list-item`, but
+     Safari's own -webkit-details-marker survives that and lands a triangle
+     inside the fill; both are named here. Compound (element + class), so nothing
+     in this layer outranks the base-layer summary styles it sits beside. */
+  .drawer > summary,
+  summary.button-link {
     list-style: none;
     cursor: pointer;
   }
 
-  .drawer > summary::-webkit-details-marker {
+  .drawer > summary::-webkit-details-marker,
+  summary.button-link::-webkit-details-marker {
     display: none;
   }
 
-  .drawer > summary::marker {
+  .drawer > summary::marker,
+  summary.button-link::marker {
     content: "";
   }
 
@@ -3583,18 +3576,22 @@
     width: 100%;
   }
 
-  /* Wardrobe's panels (an inventory row's Edit, an assignment row's Edit, a
-     set's settings) EXPAND their row or their section instead of floating over
-     it, which is the one thing the Season spine's popover idiom can't do here:
-     `table.members` is `display:block; overflow-x:auto` so it can scroll on a
-     phone, and a scroll container clips any absolutely-positioned descendant —
-     a floating panel came out sliced off at the cell edge (the Wave-4 lesson).
-     Same paper-over-rule treatment as .drawer-panel so it still reads as a
-     panel. Prefixed class names, never a bare state word, so nothing here can
-     outrank the base-layer element styles it sits beside (the T061/T066
+  /* The app's expand-in-flow panel — wardrobe's (an inventory row's Edit, an
+     assignment row's Edit, a set's settings) and host-mode's (a school card's
+     Edit, a slot row's Edit, the generator, the two add forms). They EXPAND
+     their row or their section instead of floating over it, which is the one
+     thing the Season spine's popover idiom can't do here: `table.members` is
+     `display:block; overflow-x:auto` so it can scroll on a phone, and a scroll
+     container clips any absolutely-positioned descendant — a floating panel came
+     out sliced off at the cell edge (the Wave-4 lesson). One rule rather than a
+     copy per surface: three copies of the same six declarations is how they
+     drift apart. Same paper-over-rule treatment as .drawer-panel so it still
+     reads as a panel. Prefixed class names, never a bare state word, so nothing
+     here can outrank the base-layer element styles it sits beside (the T061/T066
      cascade trap). */
   .wardrobe-row-panel,
-  .wardrobe-section-panel {
+  .wardrobe-section-panel,
+  .hosting-panel {
     margin-top: 0.5rem;
     padding: 0.75rem 0.9rem 0.9rem;
     background: var(--paper);
@@ -3604,7 +3601,9 @@
   }
 
   /* A row panel lives inside a table cell, so it states a width the cell can
-     grow to; a section panel spans the page it interrupts. */
+     grow to; a section panel spans the page it interrupts. Host-mode has no
+     table on this surface — its rows are cards and full-width slot lines — so
+     every one of its panels is the page's measure. */
   .wardrobe-row-panel {
     width: min(24rem, 76vw);
   }
@@ -3614,7 +3613,8 @@
      a flex child to its content and the panel comes out narrower than the grid
      it belongs to. */
   .wardrobe-settings,
-  .wardrobe-section-panel {
+  .wardrobe-section-panel,
+  .hosting-panel {
     width: 100%;
   }
 

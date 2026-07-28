@@ -19,12 +19,25 @@ import { createHostedEvent } from "./actions";
 
 export const dynamic = "force-dynamic";
 
+// The list page's own messages. The code rides in the URL, so the lookup must be
+// a lookup and not a walk up Object.prototype — `?error=constructor` would
+// otherwise hand React a function to render.
+const ERR: Record<string, string> = {
+  name: "Give the invitational a name.",
+  season: "Start an active season before setting up an invitational.",
+  enddate:
+    "The last day can't be before the first day. Set the first day, then a last day on or after it.",
+  save: "Couldn't save. Try again.",
+};
+
 export default async function HostingPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ error?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?error=a&error=b), so the
+  // read goes through a string guard — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -33,7 +46,10 @@ export default async function HostingPage({
     return <Restricted slug={slug} surface="Hosting" role={role} allowed={HOSTING_ROLES} />;
   }
   const canWrite = HOSTING_WRITE_ROLES.includes(role);
-  const { error } = await searchParams;
+  const sp = await searchParams;
+  const errorCode = typeof sp.error === "string" ? sp.error : null;
+  const error =
+    errorCode && Object.hasOwn(ERR, errorCode) ? ERR[errorCode] : null;
 
   const tz = program.timezone;
   const supabase = await createClient();
@@ -67,23 +83,7 @@ export default async function HostingPage({
     <section className="stack">
       <h1>Hosting</h1>
 
-      {error === "name" && (
-        <p className="alert-error">Give the invitational a name.</p>
-      )}
-      {error === "season" && (
-        <p className="alert-error">
-          Start an active season before setting up an invitational.
-        </p>
-      )}
-      {error === "enddate" && (
-        <p className="alert-error">
-          The last day can&apos;t be before the first day. Set the first day, then
-          a last day on or after it.
-        </p>
-      )}
-      {error === "save" && (
-        <p className="alert-error">Couldn&apos;t save. Try again.</p>
-      )}
+      {error && <p className="alert-error">{error}</p>}
 
       {/* Two-sentence explainer (I1.2). Shown always — it also heads the list. */}
       <p className="muted">
