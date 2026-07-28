@@ -1,15 +1,21 @@
 import Link from "next/link";
 
-// Sub-navigation for the Wardrobe surface (Alterations / Inventory / Sets /
-// Assignments / Quick change / Checkout). Alterations is the landing tab (lives
-// at /costumes); Inventory moved to /costumes/inventory. Active tab renders as
-// <strong> (no link), mirroring the RosterTabs idiom. All tabs are read-visible
-// to every costume role (board_member reads); write controls gate on canWrite.
+// Wardrobe sub-navigation — the costume manager's four real jobs, in the order
+// the job happens: keep the inventory, decide who wears what, get it altered,
+// hand it out on comp day (spec 005 US13).
+//
+// It was six. "Sets" and "Assignments" were two halves of one job — a set is
+// just the grouping assignments hang off — so sets CRUD moved onto Assignments,
+// and "Quick change" was never a place you go to DO something: it is a sheet you
+// print, so it hangs off Checkout, where comp day actually starts.
+//
+// Alterations is the landing (it lives at /costumes) because it is the queue
+// this seat works every week. Active tab renders as <strong> (no link),
+// mirroring the RosterTabs idiom. All four are read-visible to every costume
+// role (board_member reads); write controls gate on canWrite.
 export type CostumeTab =
   | "inventory"
-  | "sets"
   | "assignments"
-  | "quick-change"
   | "alterations"
   | "checkout";
 
@@ -31,11 +37,9 @@ export function CostumeTabs({
 
   return (
     <div className="subtabs">
-      {tab("alterations", `/${slug}/costumes`, "Alterations")}
       {tab("inventory", `/${slug}/costumes/inventory`, "Inventory")}
-      {tab("sets", `/${slug}/costumes/sets`, "Sets")}
       {tab("assignments", `/${slug}/costumes/assignments`, "Assignments")}
-      {tab("quick-change", `/${slug}/costumes/quick-change`, "Quick change")}
+      {tab("alterations", `/${slug}/costumes`, "Alterations")}
       {tab("checkout", `/${slug}/costumes/checkout`, "Checkout")}
     </div>
   );

@@ -3238,16 +3238,23 @@
     padding: 0.35rem 0.85rem;
   }
 
-  .alt-notes {
-    display: flex;
-    gap: 0.4rem;
+  /* A queue row's fitting note (spec 005 US14). It used to be a permanently
+     expanded text input on EVERY row — the queue read as a wall of half-filled
+     forms. Now the summary IS the note, so the queue reads as a queue, and the
+     disclosure owns a whole line of the wrapping flex row so its panel opens
+     under the row rather than beside the Done button. */
+  .alt-note {
     flex-basis: 100%;
-    align-items: center;
   }
 
-  .alt-notes input {
-    flex: 1;
-    min-width: 0;
+  .alt-note-panel {
+    width: min(30rem, 100%);
+    margin-top: 0.35rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
   }
 
   .wardrobe-cards {
@@ -3295,6 +3302,191 @@
     font-size: 0.82rem;
     color: var(--muted-ink);
     margin-top: 0.15rem;
+  }
+
+  /* ---- Wardrobe filter row + row panels (spec 005 US14) ---- */
+
+  /* Inventory's filter row, the set picker and the competition pickers — one
+     shape, because they are the same control doing the same job on four tabs. */
+  .wardrobe-filters {
+    width: 100%;
+    font-size: 0.85rem;
+  }
+
+  /* "More filters" is a flex child of the filter row and owns a whole line of
+     it, so the folded controls open under search + what-it-is rather than
+     beside them. */
+  .wardrobe-more {
+    flex-basis: 100%;
+  }
+
+  .wardrobe-more-panel {
+    width: 100%;
+  }
+
+  /* Wardrobe's panels (an inventory row's Edit, an assignment row's Edit, a
+     set's settings) EXPAND their row or their section instead of floating over
+     it, which is the one thing the Season spine's popover idiom can't do here:
+     `table.members` is `display:block; overflow-x:auto` so it can scroll on a
+     phone, and a scroll container clips any absolutely-positioned descendant —
+     a floating panel came out sliced off at the cell edge (the Wave-4 lesson).
+     Same paper-over-rule treatment as .drawer-panel so it still reads as a
+     panel. Prefixed class names, never a bare state word, so nothing here can
+     outrank the base-layer element styles it sits beside (the T061/T066
+     cascade trap). */
+  .wardrobe-row-panel,
+  .wardrobe-section-panel {
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* A row panel lives inside a table cell, so it states a width the cell can
+     grow to; a section panel spans the page it interrupts. */
+  .wardrobe-row-panel {
+    width: min(24rem, 76vw);
+  }
+
+  /* The set-settings disclosure is a section of the page, not a control in a
+     row, so it and its panel take the page's width — a `.stack` otherwise sizes
+     a flex child to its content and the panel comes out narrower than the grid
+     it belongs to. */
+  .wardrobe-settings,
+  .wardrobe-section-panel {
+    width: 100%;
+  }
+
+  /* A panel stacks independent forms (save it, move its alteration on, take the
+     piece back) — a hairline says those are separate decisions, not one long
+     form, and the destructive one gets a thumb-sized hit area. */
+  .wardrobe-row-form + .wardrobe-row-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  .wardrobe-row-form button.linklike {
+    min-height: 44px;
+  }
+
+  /* ---- Checkout (the hallway screen) ---- */
+
+  .checkout-list {
+    width: 100%;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .checkout-row {
+    display: flex;
+    width: 100%;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.25rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* Absent students are skipped, not hidden — the row stays so the counts still
+     add up. It used to say so with opacity, which took the row's ink from 19:1
+     down to 4.2:1 and its secondary line to 2.2:1 — under AA, on the one screen
+     that gets read in a dim hallway. It says so with a rule through the name and
+     the "absent — skipped" badge instead: same message, full-strength ink, and
+     the same treatment the printed sheet uses. Compound selector: a bare
+     `.is-absent` in this layer would outrank base-layer element styles
+     (T061/T066). */
+  .checkout-row.is-absent > div > .checkout-who {
+    text-decoration: line-through;
+  }
+
+  .checkout-row.is-absent > div > .muted {
+    font-style: italic;
+  }
+
+  .checkout-who {
+    font-weight: 600;
+  }
+
+  /* A phone held in a hallway with a garment bag over the other arm: the tap
+     target is deliberately far bigger than the app's default button. */
+  .checkout-toggle {
+    min-height: 3rem;
+    min-width: 8rem;
+    font-size: 1rem;
+  }
+
+  .checkout-toggle-state {
+    font-size: 0.75rem;
+    opacity: 0.85;
+  }
+
+  /* ---- Quick change (the printable sheet, spec 005 US15) ---- */
+
+  /* The sentence that teaches the model. Bigger than body copy and above
+     everything else, because the sheet is unreadable without it. */
+  .qc-explainer {
+    width: 100%;
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .qc-standfirst {
+    width: 100%;
+  }
+
+  .qc-ensemble {
+    width: 100%;
+  }
+
+  /* Each ensemble's grid scrolls on its own, so a wide one never makes the page
+     body scroll sideways (US15-2). */
+  .qc-scroll {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .qc-grid {
+    min-width: 40rem;
+  }
+
+  /* "Change 2" over "Opener → Ballad": the position and the two numbers it sits
+     between, never a bare sort order. */
+  .qc-change-num {
+    display: block;
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    color: var(--muted-ink);
+  }
+
+  .qc-change-label {
+    display: block;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.85rem;
+    color: var(--ink);
+  }
+
+  /* Cue words, not column jargon — "Takes off" / "Puts on" read as stage
+     directions because that is what they are. */
+  .qc-cue {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-ink);
+  }
+
+  /* Same reasoning as the checkout row, and the same answer: an absent student
+     stays on the sheet (their slot in the running order still exists) marked in
+     italic with an "absent" chip, rather than dimmed into ink a school printer
+     drops and a screen reader's user can't read. */
+  .qc-row.is-absent > td {
+    font-style: italic;
   }
 
   /* ===================== Comms (digest-first landing, Wave D) ===================== */
@@ -4104,7 +4296,8 @@
   .travel-disclosure,
   .comp-disclosure,
   .money-disclosure,
-  .shift-disclosure {
+  .shift-disclosure,
+  .wardrobe-disclosure {
     cursor: pointer;
     font-weight: 600;
     color: var(--accent-strong);
@@ -4615,6 +4808,18 @@
       flex-basis: 100%;
     }
 
+    .wardrobe-filters {
+      width: 100%;
+    }
+
+    /* A wardrobe row panel is inside a table cell that is itself inside a
+       horizontal scroller; on a phone it takes what the cell can give rather
+       than the 24rem it gets on a desktop grid. */
+    .wardrobe-row-panel {
+      width: min(24rem, 84vw);
+    }
+
+
     /* Comms digest-first landing collapses to a single column; the aside drops
        below the digest card + recently-sent log. */
     .comms-body {
@@ -4644,6 +4849,53 @@
     .restricted-actions .button-link {
       display: block;
       text-align: center;
+    }
+  }
+
+  /* ==================== Print ====================
+     One surface is designed to leave the screen: the quick-change sheet, which
+     goes into the wings on paper (spec 005 US15). Print drops the app chrome
+     everywhere — nobody wants a nav bar on a printout — and the sheet drops its
+     own picker and instructions, stops scrolling horizontally, and gives each
+     ensemble its own page with the column headers repeated on every sheet. */
+  @media print {
+    .shell-header,
+    .mobile-nav,
+    .support-banner,
+    .subtabs,
+    .qc-chrome {
+      display: none;
+    }
+
+    main {
+      padding: 0;
+    }
+
+    /* A scroll container prints only what was scrolled into view, so the grid
+       lays out at its natural width instead. */
+    .qc-scroll {
+      overflow-x: visible;
+    }
+
+    .qc-grid {
+      min-width: 0;
+      display: table;
+      font-size: 0.8rem;
+    }
+
+    /* Repeat the "Change 2 / Opener → Ballad" headers when a long ensemble runs
+       over a page. */
+    .qc-grid thead {
+      display: table-header-group;
+    }
+
+    .qc-row {
+      break-inside: avoid;
+    }
+
+    /* One ensemble per sheet — that is how it gets handed out. */
+    .qc-ensemble + .qc-ensemble {
+      break-before: page;
     }
   }
 }

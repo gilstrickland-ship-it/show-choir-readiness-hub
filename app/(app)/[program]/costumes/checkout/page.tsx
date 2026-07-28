@@ -1,22 +1,21 @@
+import Link from "next/link";
 import { getTenantContext } from "@/lib/tenant";
 import { Restricted } from "../../Restricted";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COSTUMES_ROLES } from "@/lib/nav";
-import {
-  COSTUME_WRITE_ROLES,
-  PIECE_KIND_LABELS,
-  NO_HEALTH_LABEL,
-  type PieceKind,
-} from "@/lib/costumes";
-import { CostumeTabs } from "../CostumeTabs";
+import { COSTUME_WRITE_ROLES, PIECE_KIND_LABELS, type PieceKind } from "@/lib/costumes";
 import { formatDateInTz } from "@/lib/datetime";
-import { seedCheckout, toggleCheckout } from "./actions";
+import { CostumeTabs } from "../CostumeTabs";
+import { CheckoutList, type CheckoutRow, type CheckoutState } from "./CheckoutList";
+import { seedCheckout } from "./actions";
 
-// Per-competition checkout (T011). A phone-first tap-to-toggle grid for the
-// hallway: each row flips checked_out ↔ checked_in with actor + timestamp.
-// Students marked absent for the competition render greyed and are skipped
-// (§4). Rows are seeded idempotently on open (writers) via seedCheckout.
+// Per-competition checkout — comp day. Rows are seeded idempotently when a
+// writer opens a competition, then flipped one tap at a time.
+//
+// The quick-change sheet hangs off this tab (spec 005 US13): it is the sheet you
+// print on the way out the door, not a place you go to do something, so it lives
+// where comp day starts rather than as a sixth tab nobody opened in September.
 
 interface CompetitionRow {
   id: string;
@@ -47,16 +46,15 @@ interface CheckoutRaw {
   piece: PieceEmbed | null;
 }
 
-type CheckoutState = "pending" | "out" | "in";
+const ERR: Record<string, string> = {
+  toggle: "Couldn't update that row. Try again.",
+};
 
-interface GridRow {
-  id: string;
-  state: CheckoutState;
-  studentId: string | null;
-  primary: string; // student name (assignment) or piece label (direct)
-  secondary: string; // piece label + kind
-  sortKey: string;
-  isDirect: boolean;
+// The code rides in the URL, so the lookup must be a lookup and not a walk up
+// Object.prototype — `?error=constructor` would otherwise hand React a function.
+function message(code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(ERR, code) ? ERR[code] : null;
 }
 
 function stateOf(out: string | null, inn: string | null): CheckoutState {
@@ -65,22 +63,15 @@ function stateOf(out: string | null, inn: string | null): CheckoutState {
   return "pending";
 }
 
-const STATE_LABEL: Record<CheckoutState, string> = {
-  pending: "Not out",
-  out: "Checked out",
-  in: "Checked in",
-};
-
 export default async function CheckoutPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    competition?: string;
-    seeded?: string;
-    error?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param, so every read goes through
+  // `one()` — a hand-typed URL must not 500 the page or smuggle an array into a
+  // query filter.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -91,7 +82,14 @@ export default async function CheckoutPage({
     );
   }
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
-  const { competition: competitionId, seeded, error } = await searchParams;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const competitionId = one("competition");
+  const error = message(one("error"));
 
   const supabase = await createClient();
 
@@ -108,18 +106,29 @@ export default async function CheckoutPage({
   }
   const activeComp = competitions.find((c) => c.id === competitionId) ?? null;
 
+  const quickChangeHref = activeComp
+    ? `/${slug}/costumes/quick-change?competition=${activeComp.id}`
+    : `/${slug}/costumes/quick-change`;
+
   return (
     <section className="stack">
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">
+            {season ? season.label : "No active season"} · comp day
+          </p>
+          <h1 className="page-h1">Checkout</h1>
+        </div>
+      </div>
+
       <CostumeTabs slug={slug} active="checkout" />
-      <h1>Checkout</h1>
+
       {!season && (
         <p className="muted">No active season — no competitions to check out for.</p>
       )}
 
-      {seeded && <p className="alert-ok">Checkout list synced with the roster.</p>}
-      {error === "toggle" && (
-        <p className="alert-error">Couldn&apos;t update that row. Try again.</p>
-      )}
+      {one("seeded") && <p className="alert-ok">Checkout list synced with the roster.</p>}
+      {error && <p className="alert-error">{error}</p>}
 
       {season && competitions.length === 0 && (
         <p className="muted">
@@ -131,7 +140,7 @@ export default async function CheckoutPage({
         <form
           method={canWrite ? undefined : "get"}
           action={canWrite ? seedCheckout : undefined}
-          className="row-inline"
+          className="row-inline wardrobe-filters"
         >
           {canWrite && <input type="hidden" name="programId" value={program.id} />}
           {canWrite && <input type="hidden" name="slug" value={slug} />}
@@ -155,6 +164,11 @@ export default async function CheckoutPage({
           </button>
         </form>
       )}
+
+      <p className="muted">
+        <Link href={quickChangeHref}>Quick change sheet →</Link> — what each
+        student takes off and puts on between numbers. Print it for the wings.
+      </p>
 
       {season && activeComp && (
         <CheckoutGrid
@@ -204,7 +218,7 @@ async function CheckoutGrid({
     absent.add(a.student_id);
   }
 
-  const rows: GridRow[] = raw.map((r) => {
+  const rows: CheckoutRow[] = raw.map((r) => {
     const isDirect = r.assignment_id == null;
     const piece = isDirect ? r.piece : r.assignment?.piece ?? null;
     const student = isDirect ? null : r.assignment?.student ?? null;
@@ -241,9 +255,8 @@ async function CheckoutGrid({
   return (
     <>
       <p className="muted">
-        {competition.name}
-        {competition.date ? ` · ${competition.date}` : ""} — {rows.length} items ·{" "}
-        {counts.out} out · {counts.in} in · {counts.pending} not out
+        {competition.name} — {rows.length} item{rows.length === 1 ? "" : "s"} ·{" "}
+        {counts.out} out · {counts.in} back · {counts.pending} not out yet
       </p>
 
       {canWrite && (
@@ -257,66 +270,23 @@ async function CheckoutGrid({
         </form>
       )}
 
-      {rows.length === 0 && (
+      {rows.length === 0 ? (
         <p className="muted">
-          No checkout rows yet.
+          Nothing to hand out yet.
           {canWrite
-            ? " Click “Re-sync roster” to seed from this competition's assignments."
+            ? " Press “Re-sync roster” to build the list from this competition's assignments."
             : ""}
         </p>
+      ) : (
+        <CheckoutList
+          programId={programId}
+          slug={slug}
+          competitionId={competition.id}
+          rows={rows}
+          absent={absent}
+          canWrite={canWrite}
+        />
       )}
-
-      <ul className="stack" style={{ width: "100%", listStyle: "none", padding: 0 }}>
-        {rows.map((r) => {
-          const isAbsent = r.studentId != null && absent.has(r.studentId);
-          return (
-            <li
-              key={r.id}
-              style={{
-                width: "100%",
-                display: "flex",
-                gap: "0.75rem",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "0.5rem 0.25rem",
-                borderBottom: "1px solid var(--border)",
-                opacity: isAbsent ? 0.45 : 1,
-              }}
-            >
-              <div>
-                <div style={{ fontWeight: 600 }}>{r.primary}</div>
-                <div className="muted">{r.secondary}</div>
-              </div>
-              {isAbsent ? (
-                <span className="badge">absent — skipped</span>
-              ) : canWrite ? (
-                <form action={toggleCheckout}>
-                  <input type="hidden" name="programId" value={programId} />
-                  <input type="hidden" name="slug" value={slug} />
-                  <input type="hidden" name="competitionId" value={competition.id} />
-                  <input type="hidden" name="checkoutId" value={r.id} />
-                  <button
-                    type="submit"
-                    className={r.state === "out" ? "secondary" : undefined}
-                    style={{ minHeight: "3rem", minWidth: "8rem", fontSize: "1rem" }}
-                    aria-label={`${r.state === "out" ? "Check in" : "Check out"}: ${r.primary} — ${r.secondary} (now: ${STATE_LABEL[r.state]})`}
-                  >
-                    {r.state === "out" ? "Check in" : "Check out"}
-                    <br />
-                    <span className="muted" style={{ fontSize: "0.75rem" }}>
-                      now: {STATE_LABEL[r.state]}
-                    </span>
-                  </button>
-                </form>
-              ) : (
-                <span className="badge">{STATE_LABEL[r.state]}</span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-
-      <p className="muted">{NO_HEALTH_LABEL}</p>
     </>
   );
 }

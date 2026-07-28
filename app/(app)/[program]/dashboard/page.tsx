@@ -264,7 +264,9 @@ export default async function DashboardPage({
           ? `Alterations open before ${nextComp.name}`
           : "Alterations open",
         desc: `${names.join(", ")}${extra > 0 ? ` + ${extra} more` : ""}`,
-        href: `${base}/costumes/alterations`,
+        // The queue IS the Wardrobe landing; /costumes/alterations was a route
+        // that only redirected here, and it went with Wave W.
+        href: `${base}/costumes`,
         action: "Open queue",
       });
     }

@@ -7,49 +7,64 @@ import { COSTUMES_ROLES } from "@/lib/nav";
 import {
   COSTUME_WRITE_ROLES,
   PIECE_KIND_LABELS,
-  ALTERATION_STATUSES,
-  ALTERATION_STATUS_LABELS,
   isDirectKind,
-  relevantSizeValue,
-  sizeMismatch,
   type PieceKind,
-  type AlterationStatus,
 } from "@/lib/costumes";
 import { CostumeTabs } from "../CostumeTabs";
-import { assignPiece, unassignPiece } from "./actions";
-import { setAlterationStatus } from "../alterations/actions";
+import { AddSet } from "./AddSet";
+import { SetSettings } from "./SetSettings";
+import {
+  AssignmentRow,
+  type AssignablePiece,
+  type EligibleStudent,
+  type PieceAssignment,
+} from "./AssignmentRow";
 
-// Assignment grid (T010) — per set, the set's ensemble members × the set's
-// pieces. One piece → one student per season (UNIQUE(season_id, piece_id)).
-// Student sizes are surfaced inline; a piece/size mismatch renders a warning
-// chip and never blocks. Props/set pieces skip assignment (checkout-direct).
+// Assignments — who wears what, one set at a time. Sets used to be a tab of
+// their own; a set is just the grouping assignments hang off, so making,
+// renaming and deleting one lives here now, next to the grid it opens (spec 005
+// US13). One piece → one student per season (UNIQUE(season_id, piece_id)).
+// Props and set pieces skip student assignment and go straight to checkout (§4).
 
 interface SetRow {
   id: string;
   name: string;
   ensemble_id: string | null;
+  sort_order: number;
+  notes: string | null;
 }
 
-interface PieceRow {
-  id: string;
-  kind: PieceKind;
-  label: string;
-  size_label: string | null;
-}
+// Messages the page owns — the add drawer, which belongs to no set.
+const ERR: Record<string, string> = {
+  name: "A set needs a name.",
+  season: "Activate a season before adding sets.",
+  ensemble:
+    "That ensemble isn't part of this program. Reload the page and pick one from the list.",
+  save: "Couldn't save. Try again.",
+};
 
-interface StudentRow {
-  id: string;
-  first_name: string;
-  last_name: string;
-  sizes: Record<string, unknown> | null;
-  status: string;
-}
+// Messages that belong to the set-settings disclosure (`?edit=set`).
+const SET_ERR: Record<string, string> = {
+  name: "A set needs a name.",
+  ensemble:
+    "That ensemble isn't part of this program. Reload the page and pick one from the list.",
+  set: "That set isn't part of this program. Reload the page and try again.",
+  in_use:
+    "Can't delete a set that still holds pieces. Take its pieces out first.",
+  save: "Couldn't save. Try again.",
+};
 
-interface AssignmentRow {
-  id: string;
-  piece_id: string;
-  student_id: string;
-  alteration_status: AlterationStatus;
+// Messages that belong to ONE grid row (`?edit=<pieceId>`).
+const ROW_ERR: Record<string, string> = {
+  assign: "Couldn't change that assignment. Reload the page and try again.",
+  alteration: "Couldn't save that. Try again.",
+};
+
+// The code rides in the URL, so the lookup must be a lookup and not a walk up
+// Object.prototype — `?error=constructor` would otherwise hand React a function.
+function message(map: Record<string, string>, code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(map, code) ? map[code] : null;
 }
 
 export default async function AssignmentsPage({
@@ -57,7 +72,10 @@ export default async function AssignmentsPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ set?: string; saved?: string; error?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?set=a&set=b), so every
+  // read goes through `one()` — a hand-typed URL must not 500 the page or
+  // smuggle an array into a query filter.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -68,55 +86,104 @@ export default async function AssignmentsPage({
     );
   }
   const canWrite = COSTUME_WRITE_ROLES.includes(role);
-  const { set: selectedSetId, saved, error } = await searchParams;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
 
   const supabase = await createClient();
 
-  // Set picker — active season's sets.
+  const { data: ensembleData } = await supabase
+    .from("ensembles")
+    .select("id, name")
+    .eq("program_id", program.id)
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+  const ensembles = (ensembleData as { id: string; name: string }[] | null) ?? [];
+
+  // Sets are season-scoped — this season's, in show order.
   let sets: SetRow[] = [];
   if (season) {
     const { data } = await supabase
       .from("costume_sets")
-      .select("id, name, ensemble_id")
+      .select("id, name, ensemble_id, sort_order, notes")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
     sets = (data as SetRow[] | null) ?? [];
   }
-  const activeSet = sets.find((s) => s.id === selectedSetId) ?? null;
+  // With exactly one set there is nothing to choose, so the grid opens on it —
+  // a program's first season has one set for a long time.
+  const selectedSetId = one("set");
+  const activeSet =
+    sets.find((s) => s.id === selectedSetId) ?? (sets.length === 1 ? sets[0] : null);
+
+  const errorCode = one("error");
+  const editParam = canWrite ? one("edit") : null;
+  const setOpen = editParam === "set";
+  const openRowId = setOpen ? null : editParam;
+  const setError = setOpen ? message(SET_ERR, errorCode) : null;
+  const rowError = openRowId ? message(ROW_ERR, errorCode) : null;
+  const pageError = editParam ? null : message(ERR, errorCode);
+  const unknownError = !!errorCode && !setError && !rowError && !pageError;
+  const drawerOpen = canWrite && (one("add") === "set" || !!pageError);
+
+  const eyebrow = season
+    ? `${sets.length} set${sets.length === 1 ? "" : "s"} · ${season.label}`
+    : "No active season";
 
   return (
     <section className="stack">
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">{eyebrow}</p>
+          <h1 className="page-h1">Assignments</h1>
+        </div>
+        {canWrite && season && (
+          <div className="page-head-actions">
+            <AddSet
+              programId={program.id}
+              slug={slug}
+              seasonId={season.id}
+              ensembles={ensembles}
+              open={drawerOpen}
+              error={pageError}
+            />
+          </div>
+        )}
+      </div>
+
       <CostumeTabs slug={slug} active="assignments" />
-      <h1>Assignments</h1>
+
       {!season && (
         <p className="muted">
-          No active season — assignments are season-scoped.{" "}
+          No active season — assignments and sets both belong to a season.{" "}
           <Link href={`/${slug}/settings/rollover`}>Start a season</Link>.
         </p>
       )}
 
-      {saved && <p className="alert-ok">Saved.</p>}
-      {error === "assign" && (
-        <p className="alert-error">Couldn&apos;t update the assignment. Try again.</p>
-      )}
-      {error === "alteration" && (
-        <p className="alert-error">Couldn&apos;t update the alteration. Try again.</p>
+      {one("saved") && <p className="alert-ok">Saved.</p>}
+      {one("deleted") && <p className="alert-ok">Set deleted.</p>}
+      {((pageError && !drawerOpen) || unknownError) && (
+        <p className="alert-error">{pageError ?? "Something went wrong."}</p>
       )}
 
       {season && sets.length === 0 && (
         <p className="muted">
-          No costume sets yet. Create one on the{" "}
-          <Link href={`/${slug}/costumes/sets`}>Sets page</Link>.
+          No sets yet this season. A set is one look — the costume everyone wears
+          for one part of the show.
+          {canWrite ? " Add one to start assigning." : ""}
         </p>
       )}
 
-      {season && sets.length > 0 && (
-        <form method="get" className="row-inline">
+      {season && sets.length > 1 && (
+        <form method="get" className="row-inline wardrobe-filters">
           <label>
             Set
-            <select name="set" defaultValue={selectedSetId ?? ""}>
+            <select name="set" defaultValue={activeSet?.id ?? ""}>
               <option value="">Choose a set…</option>
               {sets.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -131,13 +198,22 @@ export default async function AssignmentsPage({
         </form>
       )}
 
+      {season && sets.length > 1 && !activeSet && (
+        <p className="muted">Pick a set to see who wears what.</p>
+      )}
+
       {season && activeSet && (
         <AssignmentGrid
           slug={slug}
           programId={program.id}
           seasonId={season.id}
           set={activeSet}
+          ensembles={ensembles}
           canWrite={canWrite}
+          setOpen={setOpen}
+          setError={setError}
+          openRowId={openRowId}
+          rowError={rowError}
         />
       )}
     </section>
@@ -149,13 +225,23 @@ async function AssignmentGrid({
   programId,
   seasonId,
   set,
+  ensembles,
   canWrite,
+  setOpen,
+  setError,
+  openRowId,
+  rowError,
 }: {
   slug: string;
   programId: string;
   seasonId: string;
   set: SetRow;
+  ensembles: { id: string; name: string }[];
   canWrite: boolean;
+  setOpen: boolean;
+  setError: string | null;
+  openRowId: string | null;
+  rowError: string | null;
 }) {
   const supabase = await createClient();
 
@@ -166,12 +252,13 @@ async function AssignmentGrid({
     .eq("program_id", programId)
     .eq("set_id", set.id)
     .order("label", { ascending: true });
-  const allPieces = (pieceData as PieceRow[] | null) ?? [];
+  const allPieces =
+    (pieceData as (AssignablePiece & { kind: PieceKind })[] | null) ?? [];
   const assignable = allPieces.filter((p) => !isDirectKind(p.kind));
   const direct = allPieces.filter((p) => isDirectKind(p.kind));
 
   // Eligible students: the set's ensemble members for this season.
-  let students: StudentRow[] = [];
+  let students: EligibleStudent[] = [];
   if (set.ensemble_id) {
     const { data: memberData } = await supabase
       .from("ensemble_members")
@@ -179,9 +266,9 @@ async function AssignmentGrid({
       .eq("program_id", programId)
       .eq("season_id", seasonId)
       .eq("ensemble_id", set.ensemble_id);
-    students = ((memberData as { students: StudentRow | null }[] | null) ?? [])
+    students = ((memberData as { students: EligibleStudent | null }[] | null) ?? [])
       .map((m) => m.students)
-      .filter((s): s is StudentRow => s != null);
+      .filter((s): s is EligibleStudent => s != null);
     students.sort((a, b) =>
       `${a.last_name} ${a.first_name}`.localeCompare(`${b.last_name} ${b.first_name}`),
     );
@@ -189,7 +276,7 @@ async function AssignmentGrid({
   const studentById = new Map(students.map((s) => [s.id, s]));
 
   // Current assignments for these pieces this season.
-  const assignmentByPiece = new Map<string, AssignmentRow>();
+  const assignmentByPiece = new Map<string, PieceAssignment>();
   if (assignable.length > 0) {
     const { data: aData } = await supabase
       .from("costume_assignments")
@@ -197,23 +284,31 @@ async function AssignmentGrid({
       .eq("program_id", programId)
       .eq("season_id", seasonId)
       .in("piece_id", assignable.map((p) => p.id));
-    for (const a of (aData as AssignmentRow[] | null) ?? []) {
+    for (const a of (aData as (PieceAssignment & { piece_id: string })[] | null) ??
+      []) {
       assignmentByPiece.set(a.piece_id, a);
     }
   }
 
-  const back = `/${slug}/costumes/assignments?set=${set.id}`;
-
-  const studentLabel = (kind: PieceKind, s: StudentRow) => {
-    const size = relevantSizeValue(kind, s.sizes);
-    return `${s.last_name}, ${s.first_name}${size ? ` — ${size}` : ""}`;
-  };
-
   return (
     <>
+      {canWrite && (
+        <SetSettings
+          programId={programId}
+          slug={slug}
+          set={set}
+          ensembles={ensembles}
+          pieceCount={allPieces.length}
+          open={setOpen}
+          error={setError}
+        />
+      )}
+
       <p className="muted">
-        Set: <strong>{set.name}</strong>
-        {!set.ensemble_id && " — no ensemble linked; assign one on the set to list students."}
+        <strong>{set.name}</strong>
+        {set.ensemble_id
+          ? ""
+          : " — no ensemble on this set yet, so there are no students to assign. Pick one in Set settings."}
       </p>
 
       <table className="members">
@@ -221,128 +316,36 @@ async function AssignmentGrid({
           <tr>
             <th>Piece</th>
             <th>Size</th>
-            <th>Assigned student</th>
-            {canWrite && <th>Assign</th>}
+            <th>Who wears it</th>
             <th>Alteration</th>
+            {canWrite && <th></th>}
           </tr>
         </thead>
         <tbody>
           {assignable.map((p) => {
-            const a = assignmentByPiece.get(p.id);
-            const student = a ? studentById.get(a.student_id) ?? null : null;
-            const studentSize = student ? relevantSizeValue(p.kind, student.sizes) : null;
-            const mismatch = student
-              ? sizeMismatch(p.size_label, p.kind, student.sizes)
-              : false;
+            const a = assignmentByPiece.get(p.id) ?? null;
             return (
-              <tr key={p.id}>
-                <td>
-                  <Link href={`/${slug}/costumes/pieces/${p.id}`}>{p.label}</Link>{" "}
-                  <span className="muted">{PIECE_KIND_LABELS[p.kind]}</span>
-                </td>
-                <td>{p.size_label ?? "—"}</td>
-                <td>
-                  {student ? (
-                    <>
-                      {student.last_name}, {student.first_name}
-                      {studentSize && <span className="muted"> ({studentSize})</span>}
-                      {mismatch && (
-                        <span className="chip danger" title="Piece size differs from student size">
-                          size mismatch
-                        </span>
-                      )}
-                      {a && student.status === "inactive" && (
-                        <span className="muted"> (inactive)</span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-                {canWrite && (
-                  <td>
-                    {students.length === 0 ? (
-                      <span className="muted">no students</span>
-                    ) : (
-                      <div className="row-inline">
-                        <form action={assignPiece} className="row-inline">
-                          <input type="hidden" name="programId" value={programId} />
-                          <input type="hidden" name="slug" value={slug} />
-                          <input type="hidden" name="setId" value={set.id} />
-                          <input type="hidden" name="seasonId" value={seasonId} />
-                          <input type="hidden" name="pieceId" value={p.id} />
-                          <select
-                            name="studentId"
-                            defaultValue={a?.student_id ?? ""}
-                            aria-label={`Assign ${p.label}`}
-                            required
-                          >
-                            <option value="" disabled>
-                              Choose…
-                            </option>
-                            {students.map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {studentLabel(p.kind, s)}
-                              </option>
-                            ))}
-                          </select>
-                          <button type="submit" className="secondary">
-                            {a ? "Reassign" : "Assign"}
-                          </button>
-                        </form>
-                        {a && (
-                          <form action={unassignPiece}>
-                            <input type="hidden" name="programId" value={programId} />
-                            <input type="hidden" name="slug" value={slug} />
-                            <input type="hidden" name="setId" value={set.id} />
-                            <input type="hidden" name="assignmentId" value={a.id} />
-                            <button type="submit" className="linklike danger">
-                              Unassign
-                            </button>
-                          </form>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                )}
-                <td>
-                  {a ? (
-                    canWrite ? (
-                      <form action={setAlterationStatus} className="row-inline">
-                        <input type="hidden" name="programId" value={programId} />
-                        <input type="hidden" name="slug" value={slug} />
-                        <input type="hidden" name="assignmentId" value={a.id} />
-                        <input type="hidden" name="back" value={back} />
-                        <select
-                          name="status"
-                          defaultValue={a.alteration_status}
-                          aria-label="Alteration status"
-                        >
-                          {ALTERATION_STATUSES.map((st) => (
-                            <option key={st} value={st}>
-                              {ALTERATION_STATUS_LABELS[st]}
-                            </option>
-                          ))}
-                        </select>
-                        <button type="submit" className="secondary">
-                          Set
-                        </button>
-                      </form>
-                    ) : (
-                      ALTERATION_STATUS_LABELS[a.alteration_status]
-                    )
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-              </tr>
+              <AssignmentRow
+                key={p.id}
+                programId={programId}
+                slug={slug}
+                seasonId={seasonId}
+                setId={set.id}
+                piece={p}
+                assignment={a}
+                student={a ? studentById.get(a.student_id) ?? null : null}
+                students={students}
+                canWrite={canWrite}
+                open={openRowId === p.id}
+                error={openRowId === p.id ? rowError : null}
+              />
             );
           })}
           {assignable.length === 0 && (
             <tr>
               <td colSpan={canWrite ? 5 : 4} className="muted">
-                No assignable pieces in this set. Attach costume pieces on the{" "}
-                <Link href={`/${slug}/costumes/sets/${set.id}`}>set page</Link>.
+                No costume pieces in this set yet. Put some in on the{" "}
+                <Link href={`/${slug}/costumes/sets/${set.id}`}>set&apos;s page</Link>.
               </td>
             </tr>
           )}
