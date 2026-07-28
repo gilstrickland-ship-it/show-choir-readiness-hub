@@ -9,6 +9,7 @@ import {
   CATEGORY_DIRECTION_LABELS,
   formatCents,
   NO_HEALTH_LABEL,
+  pickSeasonBudget,
   type CategoryDirection,
 } from "@/lib/treasury";
 import { SubTabs } from "../../SubTabs";
@@ -105,7 +106,12 @@ export default async function BudgetPage({
       : {};
 
   // The budget for the active season (draft or active). One per season is the
-  // norm; if multiple drafts exist we take the newest.
+  // norm; if multiple exist, the ACTIVE one, else the newest — the same choice
+  // every other treasury surface makes. It was `.order("status")` under a
+  // comment claiming that ordering preferred 'active' alphabetically; Postgres
+  // orders an enum by DECLARATION order, so it preferred the draft, and this
+  // editor edited a different budget from the one the reports read
+  // (lib/treasury pickSeasonBudget).
   let budget: BudgetRow | null = null;
   if (season) {
     const { data } = await supabase
@@ -113,11 +119,8 @@ export default async function BudgetPage({
       .select("id, name, status")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
-      .order("status", { ascending: true }) // 'active' < 'closed' < 'draft' alphabetically; prefer active
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    budget = (data as BudgetRow | null) ?? null;
+      .order("created_at", { ascending: false });
+    budget = pickSeasonBudget((data as BudgetRow[] | null) ?? []);
   }
 
   let categories: CategoryRow[] = [];

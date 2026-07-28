@@ -14,6 +14,7 @@ import {
   ledgerPageRangeUnknownTotal,
   parsePageParam,
   monthKeyForDate,
+  pickSeasonBudget,
   LEDGER_PAGE_SIZE,
   type LedgerDirection,
   type LedgerSeasonTotals,
@@ -149,17 +150,21 @@ export default async function LedgerPage({
   let trips: NamedOpt[] = [];
 
   if (season) {
-    const { data: budget } = await supabase
+    // Which budget's lines the entry form offers. The ACTIVE one, else the
+    // newest — `.order("status")` sorts the enum by declaration order and so
+    // offered the DRAFT's lines to code an entry against, while the reports
+    // read the active budget (lib/treasury pickSeasonBudget).
+    const { data: budgetRows } = await supabase
       .from("budgets")
-      .select("id")
+      .select("id, status")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
-      .order("status", { ascending: true })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order("created_at", { ascending: false });
 
-    const budgetId = (budget as { id: string } | null)?.id ?? null;
+    const budgetId =
+      pickSeasonBudget(
+        (budgetRows as { id: string; status: string }[] | null) ?? [],
+      )?.id ?? null;
 
     const [catRes, compRes, tripRes] = await Promise.all([
       budgetId

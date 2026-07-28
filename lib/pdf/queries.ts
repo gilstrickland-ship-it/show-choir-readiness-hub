@@ -8,7 +8,7 @@ import {
   reconciledThroughMonth,
   formatMonthKey,
   summarizeSeasonLedger,
-  totalForLine,
+  actualForDirection,
   UNCATEGORIZED_KEY,
   type LedgerEntryRow,
 } from "@/lib/treasury";
@@ -909,13 +909,16 @@ export async function loadBoardSnapshot(
   );
   const { totals, byLine } = summarizeSeasonLedger(ledger);
 
-  // A line's actual is every cent booked to it, both directions — the same
-  // rollup the Reports page prints (lib/treasury totalForLine).
-  const actualByLine = new Map<string, number>();
-  for (const [lineId, actual] of byLine) {
-    if (lineId === UNCATEGORIZED_KEY) continue;
-    actualByLine.set(lineId, totalForLine(actual));
-  }
+  // A line's actual is read the way its CATEGORY means it — an income line
+  // counts money in, an expense line counts money out (lib/treasury
+  // actualForDirection), applied where the direction is known, below.
+  //
+  // It used to be every cent booked to the line REGARDLESS of direction, which
+  // is a different question from the one the header answers: money in and money
+  // out are split by the ENTRY's direction there. So a refund booked to an
+  // expense line added to "total expenses" instead of subtracting from it, and
+  // the PDF's Net and the Reports page's Net could be handed to the same board
+  // meeting disagreeing. One definition now, on both surfaces.
   const uncategorized = byLine.get(UNCATEGORIZED_KEY);
   const uncategorizedIn = uncategorized?.inCents ?? 0;
   const uncategorizedOut = uncategorized?.outCents ?? 0;
@@ -990,7 +993,7 @@ export async function loadBoardSnapshot(
         .map((l) => ({
           name: l.name,
           plannedCents: Number(l.planned_cents),
-          actualCents: actualByLine.get(l.id) ?? 0,
+          actualCents: actualForDirection(byLine.get(l.id), cat.direction),
         }));
       const catData: SnapshotCategory = {
         name: cat.name,

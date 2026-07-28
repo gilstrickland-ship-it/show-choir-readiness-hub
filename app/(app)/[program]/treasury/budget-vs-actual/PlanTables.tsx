@@ -39,7 +39,12 @@ export interface LineRow {
 
 // A figure we do not have is a BLANK, never a zero. "$0.00 spent" is a claim
 // about a season that a treasurer reads to a board; "—" is the absence of one.
-// Planned amounts never come through here: they are budget rows, always known.
+//
+// That includes PLANNED. The rule used to be stated as "planned amounts are
+// budget rows, always known" — and they are, right up until the read of those
+// rows fails, at which point the whole-season summary printed "$0.00 Planned"
+// beside real actuals and computed a full-budget Difference from it. A planned
+// total is known only when the budget's categories and lines were actually read.
 function figure(cents: number | null): string {
   return cents === null ? "—" : formatCents(cents);
 }
@@ -62,20 +67,22 @@ const WORDS: Record<
   },
 };
 
-// Whole-season figures. Planned comes off the budget lines (always known);
-// every actual is `ledger_season_totals`, the 0019 SQL aggregate — null when
-// that read failed, which is why this takes the totals row rather than three
-// numbers a caller might have already defaulted to zero.
+// Whole-season figures. Planned comes off the budget lines and every actual is
+// `ledger_season_totals`, the 0019 SQL aggregate — and EITHER side can be
+// missing, independently, which is why this takes the totals row and two
+// nullable planned figures rather than numbers a caller has already defaulted
+// to zero. A Difference is printed only when both of its operands are real.
 export function SeasonSummary({
   plannedIn,
   plannedOut,
   totals,
 }: {
-  plannedIn: number;
-  plannedOut: number;
+  plannedIn: number | null;
+  plannedOut: number | null;
   totals: LedgerSeasonTotals | null;
 }) {
-  const plannedNet = plannedIn - plannedOut;
+  const plannedNet =
+    plannedIn === null || plannedOut === null ? null : plannedIn - plannedOut;
   return (
     <table className="members money-ledger">
       <thead>
@@ -89,21 +96,23 @@ export function SeasonSummary({
       <tbody>
         <tr>
           <td>Money in</td>
-          <td className="right">{formatCents(plannedIn)}</td>
+          <td className="right">{figure(plannedIn)}</td>
           <td className="right">{figure(totals?.inCents ?? null)}</td>
           <td className="right">
             {figure(
-              totals ? lineVariance(plannedIn, totals.inCents, "income") : null,
+              totals && plannedIn !== null
+                ? lineVariance(plannedIn, totals.inCents, "income")
+                : null,
             )}
           </td>
         </tr>
         <tr>
           <td>Money out</td>
-          <td className="right">{formatCents(plannedOut)}</td>
+          <td className="right">{figure(plannedOut)}</td>
           <td className="right">{figure(totals?.outCents ?? null)}</td>
           <td className="right">
             {figure(
-              totals
+              totals && plannedOut !== null
                 ? lineVariance(plannedOut, totals.outCents, "expense")
                 : null,
             )}
@@ -114,7 +123,7 @@ export function SeasonSummary({
             <strong>Net (in − out)</strong>
           </td>
           <td className="right">
-            <strong>{formatCents(plannedNet)}</strong>
+            <strong>{figure(plannedNet)}</strong>
           </td>
           <td className="right">
             <strong>{figure(totals?.netCents ?? null)}</strong>
@@ -126,7 +135,11 @@ export function SeasonSummary({
               here too — more in, or less out, than planned. */}
           <td className="right">
             <strong>
-              {figure(totals ? totals.netCents - plannedNet : null)}
+              {figure(
+                totals && plannedNet !== null
+                  ? totals.netCents - plannedNet
+                  : null,
+              )}
             </strong>
           </td>
         </tr>

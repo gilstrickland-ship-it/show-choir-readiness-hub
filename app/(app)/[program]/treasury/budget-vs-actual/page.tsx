@@ -7,6 +7,7 @@ import { TREASURY_ROLES } from "@/lib/nav";
 import {
   lineActualsFromRows,
   seasonTotalsFromRow,
+  pickSeasonBudget,
   type CategoryDirection,
   type LineActual,
   type LedgerSeasonTotals,
@@ -67,16 +68,19 @@ export default async function BudgetVsActualPage({
   let structureUnavailable = false;
 
   if (season) {
-    const { data: budget } = await supabase
+    // The season's budget: the ACTIVE one, else the newest. Chosen here rather
+    // than by `.order("status")`, which sorts the enum by declaration order and
+    // so preferred the DRAFT — the opposite of what the board PDF prints
+    // (lib/treasury pickSeasonBudget).
+    const { data: budgetRows } = await supabase
       .from("budgets")
-      .select("id, name")
+      .select("id, name, status")
       .eq("program_id", program.id)
       .eq("season_id", season.id)
-      .order("status", { ascending: true })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const b = budget as { id: string; name: string } | null;
+      .order("created_at", { ascending: false });
+    const b = pickSeasonBudget(
+      (budgetRows as { id: string; name: string; status: string }[] | null) ?? [],
+    );
     budgetName = b?.name ?? null;
 
     if (b) {
@@ -191,9 +195,14 @@ export default async function BudgetVsActualPage({
             <dd>{season.label}</dd>
           </dl>
 
+          {/* Planned is the sum of budget-line amounts — real numbers, unless
+              the read that fetched those lines is the thing that failed, in
+              which case the sum is zero for a reason that has nothing to do
+              with the budget. Then it is a blank, like every other figure this
+              page could not read. */}
           <SeasonSummary
-            plannedIn={plannedByDir.income}
-            plannedOut={plannedByDir.expense}
+            plannedIn={structureUnavailable ? null : plannedByDir.income}
+            plannedOut={structureUnavailable ? null : plannedByDir.expense}
             totals={totals}
           />
 

@@ -26,6 +26,26 @@ export const NO_HEALTH_LABEL = "Do not enter health or medical information.";
 export const BUDGET_STATUSES = ["draft", "active", "closed"] as const;
 export type BudgetStatus = (typeof BUDGET_STATUSES)[number];
 
+// WHICH BUDGET A SEASON'S SURFACES MEAN when they say "the budget". Rows come in
+// newest-first; the ACTIVE one wins if there is one, otherwise the newest.
+//
+// Every treasury surface used to ask the database for this with
+// `.order("status", { ascending: true }).limit(1)`, under a comment claiming
+// "'active' < 'closed' < 'draft' alphabetically; prefer active". Postgres does
+// not order an ENUM alphabetically — it orders by DECLARATION order, and
+// budget_status is declared ('draft', 'active', 'closed') exactly as above. So
+// that query preferred the DRAFT. A program that started next year's budget
+// while this year's was still running read its whole ledger against the wrong
+// plan on screen, while the downloadable board PDF — which picks 'active'
+// explicitly — printed the other one. The two numbers went to the same meeting.
+//
+// One definition, in the language that is doing the comparing.
+export function pickSeasonBudget<T extends { status: string }>(
+  rows: readonly T[],
+): T | null {
+  return rows.find((b) => b.status === "active") ?? rows[0] ?? null;
+}
+
 export const CATEGORY_DIRECTIONS = ["income", "expense"] as const;
 export type CategoryDirection = (typeof CATEGORY_DIRECTIONS)[number];
 

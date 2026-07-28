@@ -8,7 +8,8 @@ import { oneParam } from "@/lib/flash";
 import {
   lineActualsFromRows,
   seasonTotalsFromRow,
-  totalForLine,
+  actualForDirection,
+  pickSeasonBudget,
   monthKeyForDate,
   reconciledThroughMonth,
   formatMonthKey,
@@ -79,17 +80,20 @@ export default async function ReportsPage({
   let structureUnavailable = false;
 
   if (season) {
-    const [{ data: budget }, { data: compData }, { data: tripData }, lineRes, totalsRes] =
+    const [budgetRes, { data: compData }, { data: tripData }, lineRes, totalsRes] =
       await Promise.all([
+        // The ACTIVE budget, else the newest — the same choice the board PDF
+        // makes (lib/pdf/queries loadBoardSnapshot), which matters here more
+        // than anywhere: this page and that PDF are the two things a treasurer
+        // hands the same meeting. `.order("status")` sorts the enum by
+        // declaration order and so preferred the DRAFT (lib/treasury
+        // pickSeasonBudget).
         supabase
           .from("budgets")
-          .select("id, name")
+          .select("id, name, status")
           .eq("program_id", program.id)
           .eq("season_id", season.id)
-          .order("status", { ascending: true })
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+          .order("created_at", { ascending: false }),
         supabase
           .from("competitions")
           .select("id, name")
@@ -112,7 +116,14 @@ export default async function ReportsPage({
         }),
       ]);
 
-    const b = budget as { id: string; name: string } | null;
+    // The budget's own row failing reads downstream as "this program has no
+    // budget", and the snapshot then prints "No budget categories yet." — a
+    // statement about the budget, made when it was the READ that failed.
+    const b = pickSeasonBudget(
+      (budgetRes.data as { id: string; name: string; status: string }[] | null) ??
+        [],
+    );
+    if (budgetRes.error) structureUnavailable = true;
     comps = (compData as NamedRow[] | null) ?? [];
     trips = (tripData as NamedRow[] | null) ?? [];
     actualsUnavailable = !!lineRes.error;
@@ -131,7 +142,7 @@ export default async function ReportsPage({
         .order("direction", { ascending: true })
         .order("sort_order", { ascending: true });
       cats = (catData as SnapshotCatRow[] | null) ?? [];
-      structureUnavailable = !!catError;
+      if (catError) structureUnavailable = true;
       if (cats.length > 0) {
         const { data: lineData, error: lineError } = await supabase
           .from("budget_lines")
@@ -151,15 +162,32 @@ export default async function ReportsPage({
   const lineCat = new Map(lines.map((l) => [l.id, l.category_id]));
 
   // ---- Board snapshot rollups ----------------------------------------------
-  // Category rollup = every cent booked to that category's lines, both
-  // directions, which is what the board reads as "what this category cost/
-  // brought in". Uncategorized comes back as its own bucket from the aggregate.
+  // A category's rollup is read the way the category MEANS it — an income
+  // category counts money in, an expense category counts money out
+  // (lib/treasury actualForDirection). That is the same split the header
+  // figures use, because ledger_season_totals divides by the ENTRY's direction
+  // too, so the two halves of this snapshot can be added up against each other.
+  //
+  // It used to be every cent booked to the line regardless of direction, filed
+  // under whichever direction its category happened to be. A refund booked
+  // against an expense line therefore INCREASED that category's total and, in
+  // the PDF, the season's total expenses — so the Net printed on the handout and
+  // the Net on this page could disagree at the same board meeting.
+  //
+  // Uncategorized comes back as its own bucket from the aggregate and is
+  // reported separately below (it belongs to no category, in either direction).
+  const catDirection = new Map(cats.map((c) => [c.id, c.direction]));
   const catActual = new Map<string, number>();
   for (const [lineId, actual] of seasonByLine) {
     if (lineId === UNCATEGORIZED_KEY) continue;
     const catId = lineCat.get(lineId);
     if (!catId) continue;
-    catActual.set(catId, (catActual.get(catId) ?? 0) + totalForLine(actual));
+    const direction = catDirection.get(catId);
+    if (!direction) continue;
+    catActual.set(
+      catId,
+      (catActual.get(catId) ?? 0) + actualForDirection(actual, direction),
+    );
   }
   const asOf = formatDateTimeInTz(new Date(), program.timezone);
 
@@ -168,16 +196,25 @@ export default async function ReportsPage({
   // construction (the aggregate excludes voided rows).
   const monthsWithEntries = totals?.months ?? [];
   let reconciledThroughLabel: string | null = null;
+  // A failed reconciliation read used to collapse into an empty key list, which
+  // reads as "No months reconciled yet." — the money control's own status line,
+  // stated wrongly, while the downloadable PDF printed the truth from the same
+  // table. Blank, and say why.
+  let reconciledUnavailable = false;
   if (season && monthsWithEntries.length > 0) {
-    const { data: recRows } = await supabase
+    const { data: recRows, error: recError } = await supabase
       .from("ledger_reconciliations")
       .select("month")
       .eq("program_id", program.id);
-    const reconciledKeys = ((recRows as { month: string }[] | null) ?? [])
-      .map((r) => monthKeyForDate(r.month))
-      .filter((k): k is string => k !== null);
-    const through = reconciledThroughMonth(monthsWithEntries, reconciledKeys);
-    reconciledThroughLabel = through ? formatMonthKey(through) : null;
+    if (recError) {
+      reconciledUnavailable = true;
+    } else {
+      const reconciledKeys = ((recRows as { month: string }[] | null) ?? [])
+        .map((r) => monthKeyForDate(r.month))
+        .filter((k): k is string => k !== null);
+      const through = reconciledThroughMonth(monthsWithEntries, reconciledKeys);
+      reconciledThroughLabel = through ? formatMonthKey(through) : null;
+    }
   }
 
   // ---- The chosen event -----------------------------------------------------
@@ -243,6 +280,7 @@ export default async function ReportsPage({
             seasonId={season.id}
             asOf={asOf}
             reconciledThroughLabel={reconciledThroughLabel}
+            reconciledUnavailable={reconciledUnavailable}
             cats={cats}
             catActual={catActual}
             totals={totals}

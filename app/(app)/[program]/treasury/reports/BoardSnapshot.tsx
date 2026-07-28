@@ -18,6 +18,12 @@ import {
 // figures and the uncategorized count from ledger_season_totals. A failure in
 // either renders "—" and says so. Not "$0.00" — that is a number a treasurer
 // reads to a board, and this is the page she reads it from.
+//
+// A category's figure is that category's OWN direction: an income category
+// reports money in, an expense category money out (lib/treasury
+// actualForDirection), which is the same split the header figures use and the
+// same one the downloadable PDF prints. The column says so, because "Total so
+// far" over a directional figure is how the two surfaces came to disagree.
 
 export interface SnapshotCatRow {
   id: string;
@@ -35,6 +41,7 @@ export function BoardSnapshot({
   seasonId,
   asOf,
   reconciledThroughLabel,
+  reconciledUnavailable,
   cats,
   catActual,
   totals,
@@ -45,6 +52,9 @@ export function BoardSnapshot({
   seasonId: string;
   asOf: string;
   reconciledThroughLabel: string | null;
+  // The reconciliation read having failed — a third state, because "No months
+  // reconciled yet" is a statement about the books, not about the read.
+  reconciledUnavailable: boolean;
   cats: SnapshotCatRow[];
   catActual: Map<string, number>;
   totals: LedgerSeasonTotals | null;
@@ -63,11 +73,18 @@ export function BoardSnapshot({
         The monthly-meeting summary. Full financial transparency to the board is
         a fiduciary norm — and the treasurer&apos;s protection. As of {asOf}.
       </p>
-      <p className="muted">
-        {reconciledThroughLabel
-          ? `Reconciled through ${reconciledThroughLabel}.`
-          : "No months reconciled yet."}
-      </p>
+      {reconciledUnavailable ? (
+        <p className="alert-error">
+          Which months are reconciled couldn&apos;t be read just now — this is
+          blank, not &ldquo;none&rdquo;. Reload to try again.
+        </p>
+      ) : (
+        <p className="muted">
+          {reconciledThroughLabel
+            ? `Reconciled through ${reconciledThroughLabel}.`
+            : "No months reconciled yet."}
+        </p>
+      )}
 
       {/* The banner used to key on the totals rpc only, so a failed per-line
           read printed $0.00 in every category rollup with nothing saying so. It
@@ -109,7 +126,7 @@ export function BoardSnapshot({
           <tr>
             <th>Category</th>
             <th>In or out</th>
-            <th className="right">Total so far</th>
+            <th className="right">So far this season</th>
           </tr>
         </thead>
         <tbody>
