@@ -10,8 +10,6 @@ import {
 import { SubTabs } from "../../../../../SubTabs";
 import { competitionTabs } from "@/lib/subnav";
 import { PacketPipeline } from "../../../PacketPipeline";
-import { IntroStrip, HelpDot } from "../../../../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
 import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { acceptParse } from "./actions";
 import { ACCEPT_LIVE_CONFIRM, REVIEW_FLASH_MAPS } from "./shared";
@@ -30,6 +28,15 @@ import { formatTimeZoneLabel } from "@/lib/datetime";
 // status now and says whichever of the two things is true, and the live case
 // asks for an explicit confirm before the button will do anything (the action
 // requires it too — Constitution IV, a human approves what they are seeing).
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It said "the AI
+// read the host's packet and drafted these times for you to check. Nothing
+// reaches a family until you accept them and publish the itinerary" and "compare
+// each row to the source on the left and fix anything flagged" — every clause of
+// which this screen now states permanently: the paragraph under the heading, the
+// "Flagged for your review" box, the five-step pipeline strip, and the Source /
+// Parsed items column headings. The page's version is also the more careful one,
+// because it changes when the itinerary is already live.
 
 interface ParseRow {
   id: string;
@@ -74,24 +81,16 @@ export default async function ReviewPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, competitionId, parseId } = await params;
-  const { program, role, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   requireFlag(program, "packet_parse");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const tz = program.timezone;
   const sp = await searchParams;
   const flash = readFlash(sp, REVIEW_FLASH_MAPS);
-  const showHelp = sp.help === "1";
 
   const supabase = await createClient();
 
-  // First-use intro strip (spec 003 §3) — the AI drafted these; a human accepts.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
   // Scoped to the program AND to the competition in the URL: a parse row only
   // ever reviews its own competition's packet, so a row pointing somewhere else
   // renders nowhere rather than under whichever competition was asked for.
@@ -160,21 +159,7 @@ export default async function ReviewPage({
       </p>
       <SubTabs strip={competitionTabs(slug, competitionId, "packet")} />
       <PacketPipeline steps={pipeline} />
-      <div className="page-title-row">
-        <h1>Review parsed packet</h1>
-        {showGuide && (
-          <HelpDot href={`${compBase}/packet/${parseId}/review?help=1`} />
-        )}
-      </div>
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="packet_review"
-          programId={program.id}
-          selfPath={`${compBase}/packet/${parseId}/review`}
-          guideState={guideState}
-          help={showHelp}
-        />
-      )}
+      <h1>Review parsed packet</h1>
       {flash.error && <p className="alert-error">{flash.error.message}</p>}
       {isLive ? (
         <p className="alert-error">

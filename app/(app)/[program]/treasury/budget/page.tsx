@@ -14,8 +14,6 @@ import {
 } from "@/lib/treasury";
 import { SubTabs } from "../../SubTabs";
 import { treasuryTabs } from "@/lib/subnav";
-import { IntroStrip, HelpDot } from "../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
 import {
   BudgetCategory,
   LINE_EDIT_PREFIX,
@@ -31,6 +29,13 @@ import { createBudget, activateBudget, seedTemplate, addCategory } from "./actio
 // writes gate on treasurer only (canWrite) — board/director/admin see the whole
 // budget but every control is hidden for them. The per-category table, its line
 // popovers, and the two category disclosures live in BudgetLines.
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). Its lead described
+// the structure — "your own income and expense categories, each with a planned
+// amount" — which is the paragraph under the title, and its "First: sketch your
+// big expenses first; costumes, travel, and choreography are the usual three"
+// was advice the template card then acted on for you, naming those exact
+// categories and seeding them in one press.
 
 interface BudgetRow {
   id: string;
@@ -74,8 +79,7 @@ export default async function BudgetPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role, season } = await getTenantContext(slug);
   requireFlag(program, "treasury");
   if (!TREASURY_ROLES.includes(role)) {
     return (
@@ -96,14 +100,6 @@ export default async function BudgetPage({
   };
 
   const supabase = await createClient();
-
-  // First-use intro strip (spec 003 §3) — orientation only; the empty-state below
-  // still carries the "start from a template" offer, so this doesn't repeat it.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
 
   // The budget for the active season (draft or active). One per season is the
   // norm; if multiple exist, the ACTIVE one, else the newest — the same choice
@@ -218,20 +214,7 @@ export default async function BudgetPage({
   return (
     <section className="stack">
       <SubTabs strip={treasuryTabs(slug, "budget")} />
-      <div className="page-title-row">
-        <h1>Budget</h1>
-        {showGuide && <HelpDot href={`/${slug}/treasury/budget?help=1`} />}
-      </div>
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="budget"
-          programId={program.id}
-          selfPath={`/${slug}/treasury/budget`}
-          guideState={guideState}
-          help={one("help") === "1"}
-          canWrite={canWrite}
-        />
-      )}
+      <h1>Budget</h1>
       <p className="muted">
         A fully custom, two-level structure — your categories and lines. Planned
         amounts are entered in dollars and stored to the cent. One active budget

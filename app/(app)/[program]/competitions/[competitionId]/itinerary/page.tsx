@@ -17,8 +17,6 @@ import { Flash } from "../../../Flash";
 import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
 import { competitionTabs } from "@/lib/subnav";
 import { PacketPipeline } from "../PacketPipeline";
-import { IntroStrip, HelpDot } from "../../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
 import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { regenerateItineraryShareLink } from "./actions";
 import { AddItem } from "./AddItem";
@@ -42,6 +40,13 @@ import { ITIN_FLASH_MAPS, itemAnchor, type ItinSection } from "./shared";
 // drawer off the page head (AddItem), the publish gate is its own component
 // (PublishGate, unchanged in behaviour), and one `?ok=`/`?error=` contract puts
 // each message inside the control that produced it (./shared).
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It said "this
+// schedule is the one families see. Publish it once, then keep it current — any
+// change reaches their phones the moment you save" — which is now the status
+// line under the heading ("Only staff can see this" / "Families can see this"),
+// the changed-since-publish notice, and every branch of the PublishGate, which
+// says it before you publish, after you publish, and inside the confirm box.
 
 interface ItinRow {
   id: string;
@@ -60,8 +65,7 @@ export default async function ItineraryPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, competitionId } = await params;
-  const { program, role, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role, flags } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   // Is /comms/announcements actually reachable for this program? Both flags gate
@@ -75,12 +79,6 @@ export default async function ItineraryPage({
 
   const supabase = await createClient();
 
-  // First-use intro strip (spec 003 §3) — this schedule is the one families see.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
   const { data: compData } = await supabase
     .from("competitions")
     .select("id, name")
@@ -254,12 +252,7 @@ export default async function ItineraryPage({
       <div className="page-head">
         <div className="page-head-titles">
           <p className="eyebrow">{comp.name}</p>
-          <div className="page-title-row">
-            <h1 className="page-h1">Itinerary</h1>
-            {showGuide && canWrite && (
-              <HelpDot href={`${selfHref}?help=1`} />
-            )}
-          </div>
+          <h1 className="page-h1">Itinerary</h1>
         </div>
         {canWrite && itinerary && (
           <div className="page-head-actions">
@@ -278,17 +271,6 @@ export default async function ItineraryPage({
       </div>
 
       {pipeline && <PacketPipeline steps={pipeline} />}
-
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="itinerary_editor"
-          programId={program.id}
-          selfPath={selfHref}
-          guideState={guideState}
-          help={one("help") === "1"}
-          canWrite={canWrite}
-        />
-      )}
 
       <Flash flash={pageFlash} section="page" />
 

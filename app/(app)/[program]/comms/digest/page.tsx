@@ -14,14 +14,18 @@ import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import Link from "next/link";
 import { SubTabs } from "../../SubTabs";
 import { commsTabs } from "@/lib/subnav";
-import { IntroStrip, HelpDot } from "../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
 import { draftNow, reviewDigest, discardDigest } from "./actions";
 
 // Comms — Digest workspace (§8, T025, Constitution IV). Weekly AI-drafted parent
 // digest: gather → Claude draft → director review/edit/approve → send with
 // per-family token links. NEVER auto-sends. Director/admin manage; other comms
 // roles read. The AI-drafting controls appear only when the `digest` flag is on.
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146): it said "the AI
+// drafts a weekly note… you read, edit, and approve it — nothing sends on its
+// own", which is the paragraph under the tabs, said permanently and to everyone.
+// Constitution IV's approval invariant is carried by that paragraph and by the
+// unapproved-draft banner, so removing the strip removes nothing but the echo.
 //
 // Spec 005 US9-1: this page is the digest's ONE home. Draft, edit, approve,
 // discard, send and history exist here and nowhere else — the Comms landing
@@ -71,12 +75,10 @@ export default async function DigestPage({
     skipped?: string;
     failed?: string;
     error?: string;
-    help?: string;
   }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
   if (!COMMS_ROLES.includes(role)) {
     return (
@@ -94,13 +96,6 @@ export default async function DigestPage({
   const sp = await searchParams;
 
   const supabase = await createClient();
-
-  // First-use intro strip (spec 003 §3) — the AI drafts; a director approves.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
 
   const { data: digestData } = await supabase
     .from("digests")
@@ -150,23 +145,9 @@ export default async function DigestPage({
           <p className="eyebrow">
             <Link href={`/${slug}/comms`}>← Comms</Link> · digest workspace
           </p>
-          <div className="page-title-row">
-            <h1 className="page-h1">Weekly digest</h1>
-            {showGuide && <HelpDot href={`/${slug}/comms/digest?help=1`} />}
-          </div>
+          <h1 className="page-h1">Weekly digest</h1>
         </div>
       </div>
-
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="digest"
-          programId={program.id}
-          selfPath={`/${slug}/comms/digest`}
-          guideState={guideState}
-          help={sp.help === "1"}
-          canWrite={canManage}
-        />
-      )}
 
       <SubTabs
         strip={commsTabs(slug, "digest", {

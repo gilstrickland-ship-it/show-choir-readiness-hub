@@ -14,8 +14,6 @@ import {
   type HostedSchoolRow,
   type HostedSlotRow,
 } from "@/lib/hosting";
-import { IntroStrip, HelpDot } from "../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
 import { EventEdit } from "./EventEdit";
 import { SchoolsSection } from "./SchoolsSection";
 import { ScheduleSection } from "./ScheduleSection";
@@ -34,6 +32,14 @@ import { readFlash, oneParam } from "@/lib/flash";
 // the page, far from the form that produced them. Now only MUTATIONS sit in
 // disclosures, every summary names what it holds and shows its current state,
 // and messages land in the section they concern (`shared.ts`).
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It was a table of
+// contents — "visiting schools, the running order, and the day-of documents" —
+// for a page whose section headings are now that same table of contents, and its
+// one instruction ("add each visiting school, then generate the schedule from
+// them") is said twice in place: "Add the first one below — the schedule
+// generates from this list" and "No schedule yet. Generate one from your
+// schools, then edit any slot by hand." 
 //
 // This file loads the data and composes the sections; each section renders in
 // its own sibling file. Writers (director/admin) get the edit affordances;
@@ -56,8 +62,7 @@ export default async function HostingEventPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, eventId } = await params;
-  const { program, role, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role } = await getTenantContext(slug);
   requireFlag(program, "hosting");
   if (!HOSTING_ROLES.includes(role)) {
     return (
@@ -77,13 +82,6 @@ export default async function HostingEventPage({
   const one = (key: string): string | null => oneParam(sp, key);
 
   const supabase = await createClient();
-
-  // First-use intro strip (spec 003 §3) — what host-mode does end to end.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
 
   const { data: eventData } = await supabase
     .from("hosted_events")
@@ -170,10 +168,7 @@ export default async function HostingEventPage({
           <div className="comp-status-row">
             <span className="chip">{statusLabel}</span>
           </div>
-          <div className="page-title-row">
-            <h1 className="comp-h1">{event.name}</h1>
-            {showGuide && <HelpDot href={`${eventBase}?help=1`} />}
-          </div>
+          <h1 className="comp-h1">{event.name}</h1>
           <p className="comp-meta">
             {dateStr} · {schools.length} school
             {schools.length === 1 ? "" : "s"} · {slots.length} slot
@@ -190,16 +185,6 @@ export default async function HostingEventPage({
           </a>
         </div>
       </div>
-
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="hosting_event"
-          programId={program.id}
-          selfPath={eventBase}
-          guideState={guideState}
-          help={one("help") === "1"}
-        />
-      )}
 
       {/* ================= OVERVIEW ================= */}
       <section className="comp-section" id="overview">

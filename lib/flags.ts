@@ -83,8 +83,12 @@ export const flagRegistry: Record<FlagKey, FlagDefinition> = {
     default: false,
   },
   guide: {
+    // "Screen intros" left this list in spec 005 Wave 9: the rebuilt surfaces
+    // state their own facts permanently, so the eight dismissible strips were
+    // deleted rather than reworded. What the flag still gates is the role
+    // journey panel on Today and the family welcome card on a guardian link.
     description:
-      "First-use guidance: role journeys, screen intros, parent welcome card.",
+      "First-use guidance: role journeys and the parent welcome card.",
     default: true,
   },
 };

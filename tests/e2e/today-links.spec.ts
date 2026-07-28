@@ -76,9 +76,13 @@ test.describe("Today's links all point at a real page", () => {
     const links = await todayLinks(page);
     expect(links.length).toBeGreaterThan(4);
     // The board orientation card is the panel `?guide=open` re-opens, and its
-    // rows are gated now (T160) — on this program every flag is on, so all four
-    // are here.
+    // rows are gated now (T160) — on this program every flag is on, so all five
+    // are here. Commitments joined them in Wave 9: spec 006 gave this seat the
+    // one thing it can move (the first of a large commitment's two approvals),
+    // and a card that says where everything lives may not be the screen that
+    // hides it.
     expect(links).toContain("/demo/treasury");
+    expect(links).toContain("/demo/treasury/commitments");
 
     await expectAllResolve(page, links);
   });

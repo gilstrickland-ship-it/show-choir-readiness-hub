@@ -37,8 +37,6 @@ import {
   type LedgerSection,
 } from "./flash";
 import { treasuryTabs } from "@/lib/subnav";
-import { IntroStrip, HelpDot } from "../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
 import { AddEntry, type EntryPrefill } from "./AddEntry";
 import { LedgerFilters } from "./LedgerFilters";
 import { LedgerTable, type EntryRow } from "./LedgerTable";
@@ -58,6 +56,14 @@ import type { CatOpt, CommitOpt, LineOpt, NamedOpt, TagOptions } from "./shared"
 // nothing on screen indicating truncation. Totals now come from the 0019 SQL
 // aggregates (one row each, no cap), and the LIST is explicitly paginated and
 // says which slice of how many it is showing.
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It said "every
+// dollar in or out is one line here — nothing is ever deleted; a mistake is
+// voided and redone, and the whole board can see the books", which is the
+// eyebrow over the title ("Tracked, never touched — entries void, never delete")
+// and the foot of the page ("A mistake is voided and redone with a reason — the
+// audit log keeps both"), permanently and to every seat. A fiduciary invariant
+// belongs in page furniture, not behind a Got-it button.
 
 const ENTRY_COLUMNS =
   "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, commitment_id, memo, counterparty, receipt_path, voided_at, void_reason";
@@ -127,8 +133,7 @@ export default async function LedgerPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role, season } = await getTenantContext(slug);
   requireFlag(program, "treasury");
   if (!TREASURY_ROLES.includes(role)) {
     return (
@@ -146,15 +151,6 @@ export default async function LedgerPage({
   const one = (key: string): string | null => oneParam(sp, key);
 
   const supabase = await createClient();
-
-  // First-use intro strip (spec 003 §3) — flag on, real member (not a support
-  // view). Read the member's collapsed state once; the strip decides its own
-  // visibility from that + ?help=1.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
 
   // Option sources: budget lines (grouped by category) for the current season's
   // budget, plus season competitions and trips for tagging + filtering.
@@ -636,10 +632,7 @@ export default async function LedgerPage({
           <p className="eyebrow">
             Tracked, never touched — entries void, never delete
           </p>
-          <div className="page-title-row">
-            <h1 className="page-h1">Money</h1>
-            {showGuide && <HelpDot href={`/${slug}/treasury?help=1`} />}
-          </div>
+          <h1 className="page-h1">Money</h1>
         </div>
         {canWrite && season && (
           <div className="page-head-actions">
@@ -654,17 +647,6 @@ export default async function LedgerPage({
           </div>
         )}
       </div>
-
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="treasury"
-          programId={program.id}
-          selfPath={`/${slug}/treasury`}
-          guideState={guideState}
-          help={one("help") === "1"}
-          canWrite={canWrite}
-        />
-      )}
 
       <SubTabs strip={treasuryTabs(slug, "ledger")} />
 

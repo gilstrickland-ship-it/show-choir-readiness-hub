@@ -2,18 +2,35 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/lib/auth";
 import type { FlagKey } from "@/lib/flags";
 
-// First-use guide (spec 003-first-use-tours). Role-shaped first-use guidance that
-// steps a new user through the tool, completes itself from LIVE data (never a
-// stored timestamp), never nags a returning user, and can be re-triggered on
-// demand. Constitution touchpoints: server components/actions only; flag-gated
-// exposure (`guide`); no third-party tour library; per-person state on the
-// program_members.guide_state jsonb (0014).
+// First-use guide (spec 003-first-use-tours, re-derived against the rebuilt app
+// in spec 005 Wave 9). Role-shaped first-use guidance that steps a new user
+// through the tool, completes itself from LIVE data (never a stored timestamp),
+// never nags a returning user, and can be re-triggered on demand. Constitution
+// touchpoints: server components/actions only; flag-gated exposure (`guide`); no
+// third-party tour library; per-person state on the program_members.guide_state
+// jsonb (0014).
+//
+// WHAT WAVE 9 REMOVED, AND WHY. Spec 003 also shipped eight "intro strips" — a
+// dismissible one-liner under the heading of the eight surfaces the pre-rebuild
+// app found hard to read. Waves 1-14 rebuilt every one of those surfaces, and
+// each rebuild put the strip's own sentences into the page as permanent copy:
+// the Money page's eyebrow now says entries void and never delete, the itinerary
+// says "Only staff can see this" beside a publish gate that spells out what
+// publishing costs, the import page says Charms exports work as-is and health
+// columns are refused, the packet review says nothing reaches a parent until you
+// accept and publish. Every strip had become a second copy of a fact the page
+// already stated — which is the layering RQ-6 forbids, and which the strips'
+// own contract ("never duplicates the page's own copy") already forbade. So the
+// registry, the strip component, the per-strip Got-it state and the `?help=1`
+// re-trigger are gone rather than reworded. Guidance was the symptom; the
+// rebuild treated the cause. The journey panel — which teaches a SEQUENCE no
+// single page can state — stays, re-pointed at the rebuilt flows.
 //
 // This module carries no top-level "use server": it exports pure helpers +
 // typed journey definitions (imported by the Today page AND the unit tests) and,
-// separately, two inline-"use server" guarded actions. The pure pieces are unit-
-// tested; the actions guard writes with an explicit own-membership check via the
-// service-role client (program_members has no self-update RLS policy, so the
+// separately, one inline-"use server" guarded action. The pure pieces are unit-
+// tested; the action guards its write with an explicit own-membership check via
+// the service-role client (program_members has no self-update RLS policy, so the
 // guarded action is the write path — defense in depth, same idiom as the token
 // routes).
 
@@ -24,54 +41,19 @@ import type { FlagKey } from "@/lib/flags";
 
 export interface GuideState {
   journey_dismissed?: boolean;
-  strips?: Record<string, boolean>;
 }
 
 // Tolerant parse of the raw jsonb column into a typed GuideState. Anything
 // unexpected collapses to an empty state (the guide simply shows) rather than
-// throwing — a malformed preference must never break the Today page.
+// throwing — a malformed preference must never break the Today page. Rows
+// written before Wave 9 may still carry a `strips` object; it is simply not
+// read, so an old preference is inert rather than an error.
 export function parseGuideState(raw: unknown): GuideState {
   if (raw == null || typeof raw !== "object") return {};
   const obj = raw as Record<string, unknown>;
   const out: GuideState = {};
   if (obj.journey_dismissed === true) out.journey_dismissed = true;
-  if (obj.strips != null && typeof obj.strips === "object") {
-    const strips: Record<string, boolean> = {};
-    for (const [k, v] of Object.entries(obj.strips as Record<string, unknown>)) {
-      if (v === true) strips[k] = true;
-    }
-    if (Object.keys(strips).length > 0) out.strips = strips;
-  }
   return out;
-}
-
-// True when a surface's intro strip has been collapsed for this member.
-export function isStripCollapsed(state: GuideState, key: StripSurfaceKey): boolean {
-  return state.strips?.[key] === true;
-}
-
-// ---------------------------------------------------------------------------
-// Strip-surface registry (spec §3) — KEYS ONLY for this wave. The eight complex
-// surfaces that carry an intro strip. The strips themselves (copy + placement +
-// "?" re-triggers) land in the next wave (T059); the registry + the guarded
-// strips[key] setter ship now so the plumbing is complete.
-// ---------------------------------------------------------------------------
-
-export const STRIP_SURFACE_KEYS = [
-  "treasury",
-  "budget",
-  "itinerary_editor",
-  "packet_review",
-  "trip",
-  "hosting_event",
-  "import",
-  "digest",
-] as const;
-
-export type StripSurfaceKey = (typeof STRIP_SURFACE_KEYS)[number];
-
-export function isStripSurfaceKey(key: string): key is StripSurfaceKey {
-  return (STRIP_SURFACE_KEYS as readonly string[]).includes(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -123,14 +105,20 @@ interface BoardLinkDef extends LinkGate {
   hrefSuffix: string;
 }
 
+// A closing line on the board card. Gated exactly like a link, because a note
+// can name a capability that only exists when a feature is on.
+interface BoardNoteDef extends LinkGate {
+  text: string;
+}
+
 interface JourneyDef {
   kind: JourneyKind;
   heading: string;
   lede?: string;
   steps: StepDef[]; // empty for the board orientation card
-  // Board orientation card (no tasks): link rows + a single sentence.
+  // Board orientation card (no tasks): link rows + closing sentences.
   boardLinks?: BoardLinkDef[];
-  boardNote?: string;
+  boardNotes?: BoardNoteDef[];
   // A non-step footer pointer (treasurer's board-snapshot nudge).
   footer?: { text: string; hrefSuffix: string };
 }
@@ -179,12 +167,18 @@ const DIRECTOR_JOURNEY: JourneyDef = {
       },
     },
     {
+      // The Season drawer is the create path now (spec 005 US1): `?add=comp`
+      // opens Season with the Competition section already unfolded. The
+      // /competitions list still exists, but its own "+ Add a competition"
+      // button links HERE — so sending a first-run director to the list taught
+      // a route that is no longer in the nav and cost her a second click to
+      // arrive at the same drawer.
       label: "Add your first competition",
-      hrefSuffix: "/competitions",
-      // /competitions requireFlag-gates on `competitions`. Nothing declared it
-      // because the flag defaults on and no tier turns it off — but a
-      // per-program override can, and then two of the director's seven steps
-      // pointed at a 404 (spec 005 T160).
+      hint: "+ Add on the Season page — a name and a date is enough.",
+      hrefSuffix: "/season?add=comp",
+      // Season is any-of gated, but the drawer only offers the Competition
+      // section when `competitions` is on, so this step needs that flag
+      // specifically (spec 005 T160 found the same class on the old link).
       flags: ["competitions"],
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
@@ -197,8 +191,13 @@ const DIRECTOR_JOURNEY: JourneyDef = {
       },
     },
     {
+      // Also Season: the spine's next-competition feature row carries an
+      // "Itinerary" button, so a program with one competition is one click from
+      // the editor — fewer than the /competitions list this used to point at,
+      // and it teaches the surface that is actually in the nav.
       label: "Publish the itinerary",
-      hrefSuffix: "/competitions",
+      hint: "Your next competition sits at the top of the season — open Itinerary, then publish.",
+      hrefSuffix: "/season",
       flags: ["competitions"],
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
@@ -256,13 +255,20 @@ const DIRECTOR_JOURNEY: JourneyDef = {
   ],
 };
 
+// The treasurer journey walks the money in the order the money moves — planned,
+// then promised, then spent, then checked. Wave 9 inserted the "promised" step:
+// spec 006 gave this seat a whole layer it did not have before (purchase orders
+// and expected money), and a checklist that went straight from the budget to the
+// ledger taught a treasurer that a balance is what she has — which is the exact
+// mistake commitments exists to stop.
 const TREASURER_JOURNEY: JourneyDef = {
   kind: "treasurer",
   heading: "Set up the books",
-  lede: "Four steps and the ledger is live, transparent, and audit-clean.",
+  lede: "Five steps and the books are live, transparent, and ready for a board meeting.",
   steps: [
     {
-      label: "Open a budget from a template",
+      label: "Build your budget from the template",
+      hint: "Create it, seed the usual categories, then activate it — one active budget per season.",
       hrefSuffix: "/treasury/budget",
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
@@ -276,7 +282,25 @@ const TREASURER_JOURNEY: JourneyDef = {
       },
     },
     {
+      // Spec 006. A treasurer may raise one herself (COMMITMENT_CREATE_ROLES);
+      // approving her own is refused in the database, so this step is reachable
+      // by her alone but never lets her sign both halves.
+      label: "Write down what's already promised",
+      hint: "Purchase orders and approved spending. Money promised but not yet paid never shows in the balance — it lives here.",
+      hrefSuffix: "/treasury/commitments",
+      verify: async (ctx) => {
+        if (!ctx.seasonId) return false;
+        const { count } = await ctx.supabase
+          .from("commitments")
+          .select("id", { count: "exact", head: true })
+          .eq("program_id", ctx.programId)
+          .eq("season_id", ctx.seasonId);
+        return (count ?? 0) > 0;
+      },
+    },
+    {
       label: "Record your first entry",
+      hint: "In or out, how much, who, and what for — everything else can wait.",
       hrefSuffix: "/treasury",
       verify: async (ctx) => {
         const { count } = await ctx.supabase
@@ -288,7 +312,12 @@ const TREASURER_JOURNEY: JourneyDef = {
       },
     },
     {
-      label: "Attach a receipt",
+      // Renamed in Wave 9: a receipt goes on at the moment the entry is
+      // recorded (or rides along through a void & redo). The old "Attach a
+      // receipt" read as something you could do to an entry already filed,
+      // which the 0002 freeze trigger has never allowed.
+      label: "Record one with its receipt",
+      hint: "The receipt attaches as you record it — a filed entry is never edited, only voided and redone.",
       hrefSuffix: "/treasury",
       verify: async (ctx) => {
         const { count } = await ctx.supabase
@@ -302,6 +331,7 @@ const TREASURER_JOURNEY: JourneyDef = {
     },
     {
       label: "Mark a month reconciled",
+      hint: "Compare a month to the bank statement, then say so — the board can see how current the books are.",
       hrefSuffix: "/treasury",
       verify: async (ctx) => {
         const { count } = await ctx.supabase
@@ -335,24 +365,13 @@ const COSTUME_JOURNEY: JourneyDef = {
       },
     },
     {
-      // Sets stopped being a tab of their own in spec 005 US13 — making,
-      // renaming and deleting one lives on Assignments now. /costumes/sets only
-      // still resolves because next.config redirects it; pointing the guide at
-      // a redirect is pointing it at a URL that is on its way out.
-      label: "Group them into a set",
-      hrefSuffix: "/costumes/assignments",
-      verify: async (ctx) => {
-        if (!ctx.seasonId) return false;
-        const { count } = await ctx.supabase
-          .from("costume_sets")
-          .select("id", { count: "exact", head: true })
-          .eq("program_id", ctx.programId)
-          .eq("season_id", ctx.seasonId);
-        return (count ?? 0) > 0;
-      },
-    },
-    {
-      label: "Assign pieces to students",
+      // Two steps became one in Wave 9. Sets stopped being a tab of their own in
+      // spec 005 US13 — making, renaming and deleting one lives on Assignments
+      // now — so "group them into a set" and "assign pieces to students" pointed
+      // at the same page, and the first was strictly implied by the second
+      // (assignments cannot exist without a set). One merged surface, one step.
+      label: "Make a set and assign it",
+      hint: "A set is one look — the costume everyone wears for one part of the show.",
       hrefSuffix: "/costumes/assignments",
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
@@ -366,6 +385,7 @@ const COSTUME_JOURNEY: JourneyDef = {
     },
     {
       label: "Work the alterations queue",
+      hint: "Alterations is where Wardrobe opens — it's the queue this seat works every week.",
       hrefSuffix: "/costumes",
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
@@ -380,6 +400,7 @@ const COSTUME_JOURNEY: JourneyDef = {
     },
     {
       label: "Run checkout on comp day",
+      hint: "The quick-change sheet prints from here too.",
       hrefSuffix: "/costumes/checkout",
       verify: async (ctx) => {
         const { count } = await ctx.supabase
@@ -393,14 +414,22 @@ const COSTUME_JOURNEY: JourneyDef = {
   ],
 };
 
-// Board member: an orientation card (not tasks). "Your seat sees everything and
-// changes nothing — that transparency protects the program."
+// Board member: an orientation card (not tasks).
 //
 // Its links carry gates for the same reason the steps do, and here it was not a
 // hypothetical: `treasury` is OFF for the whole prep tier, so a board member of
 // any prep program opened Today and was handed a card whose first three rows —
 // three quarters of the card — were 404s (spec 005 T160). The card is where
 // everything lives; it may only name what is there.
+//
+// Wave 9 added the Commitments row and made the closing line two GATED notes.
+// "Your seat sees everything and changes nothing" stopped being true when spec
+// 006 shipped: above a program's second-approver amount a commitment needs two
+// approvals, and a board member may record the first (COMMITMENT_APPROVE_ROLES).
+// That is the single thing this seat can move, and the card that claims to say
+// where everything lives cannot be the one screen that hides it — but it must
+// not promise it either to a program whose money surface is switched off, which
+// is why the second note carries the same `treasury` gate its links do.
 const BOARD_JOURNEY: JourneyDef = {
   kind: "board",
   heading: "Where everything lives",
@@ -409,6 +438,11 @@ const BOARD_JOURNEY: JourneyDef = {
     {
       label: "Money — the full ledger",
       hrefSuffix: "/treasury",
+      flags: ["treasury"],
+    },
+    {
+      label: "Commitments — promised, not yet paid",
+      hrefSuffix: "/treasury/commitments",
       flags: ["treasury"],
     },
     {
@@ -429,8 +463,15 @@ const BOARD_JOURNEY: JourneyDef = {
       flagsAny: ["competitions", "events", "travel", "archive"],
     },
   ],
-  boardNote:
-    "Your seat sees everything and changes nothing — that transparency protects the program.",
+  boardNotes: [
+    {
+      text: "Your seat sees everything and changes nothing — that transparency protects the program.",
+    },
+    {
+      text: "One exception: a big enough commitment needs two approvals, and yours can be the first. The treasurer's is the one that finishes it.",
+      flags: ["treasury"],
+    },
+  ],
 };
 
 // Resolve the journey definition for a member's current role, honoring the
@@ -477,7 +518,7 @@ export interface JourneyPanelModel {
   lede?: string;
   steps: JourneyStepView[]; // empty for the board card
   boardLinks?: { label: string; href: string }[];
-  boardNote?: string;
+  boardNotes?: string[];
   footer?: { text: string; href: string };
   doneCount: number;
   total: number;
@@ -536,7 +577,9 @@ export async function loadJourneyPanel(
           label: l.label,
           href: base + l.hrefSuffix,
         })),
-      boardNote: def.boardNote,
+      boardNotes: (def.boardNotes ?? [])
+        .filter((n) => gatePasses(n, flags))
+        .map((n) => n.text),
       doneCount: 0,
       total: 0,
       state: "full",
@@ -594,12 +637,12 @@ export async function loadJourneyPanel(
 }
 
 // ---------------------------------------------------------------------------
-// Guarded state writes (spec §1). program_members has no self-update RLS policy,
-// so these run through the service-role client with an explicit ownership check:
+// Guarded state write (spec §1). program_members has no self-update RLS policy,
+// so this runs through the service-role client with an explicit ownership check:
 // the session user must own the membership row being updated. That check is the
 // security boundary (same idiom as the token routes). Inline "use server" keeps
 // this module importable by the Today page and the unit tests while still
-// registering these two functions as server actions.
+// registering the function as a server action.
 // ---------------------------------------------------------------------------
 
 // Read-modify-write a member's guide_state through the service-role client after
@@ -655,36 +698,6 @@ export async function setJourneyDismissed(formData: FormData): Promise<void> {
 
   revalidatePath(`/${slug}/dashboard`);
   redirect(dismissed ? `/${slug}/dashboard` : `/${slug}/dashboard?guide=open`);
-}
-
-// Collapse an intro strip for a surface (strips[key] = true), then return to the
-// surface with no querystring residue. Wired now; the strips themselves render
-// in T059.
-export async function setStripCollapsed(formData: FormData): Promise<void> {
-  "use server";
-  const { redirect } = await import("next/navigation");
-  const { revalidatePath } = await import("next/cache");
-
-  const programId = String(formData.get("programId") ?? "");
-  const key = String(formData.get("key") ?? "");
-  const redirectTo = String(formData.get("redirectTo") ?? "");
-
-  if (!isStripSurfaceKey(key)) {
-    // An unknown surface key is a programming error, not a user path — no-op back.
-    if (redirectTo.startsWith("/")) redirect(redirectTo);
-    return;
-  }
-
-  await mutateOwnGuideState(programId, (state) => {
-    const strips = { ...(state.strips ?? {}) };
-    strips[key] = true;
-    return { ...state, strips };
-  });
-
-  if (redirectTo.startsWith("/")) {
-    revalidatePath(redirectTo);
-    redirect(redirectTo);
-  }
 }
 
 // Read the current member's guide_state (their own program_members row) via the

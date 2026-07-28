@@ -1,19 +1,21 @@
 // ============================================================================
 // Unit tests — first-use guide pure pieces + panel loader (T057, spec 003).
 // ----------------------------------------------------------------------------
-// The guide's state parsing, strip registry, role→journey resolution, panel
-// state math, and the lean-by-construction loader short-circuits are all pure or
-// stubbable without a DB. The guarded write actions (service-role) are not
-// exercised here — they have no pure surface.
+// The guide's state parsing, role→journey resolution, panel state math, and the
+// lean-by-construction loader short-circuits are all pure or stubbable without a
+// DB. The guarded write action (service-role) is not exercised here — it has no
+// pure surface.
+//
+// Spec 005 Wave 9 deleted the eight intro strips (each had become a second copy
+// of a fact its rebuilt page states permanently), so the strip registry tests
+// went with them. What replaced them is the test directly below: an old row's
+// leftover `strips` object must parse to an inert state rather than an error.
 // ============================================================================
 
 import { describe, test, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   parseGuideState,
-  isStripCollapsed,
-  isStripSurfaceKey,
-  STRIP_SURFACE_KEYS,
   journeyForRole,
   panelStateFor,
   loadJourneyPanel,
@@ -80,38 +82,14 @@ describe("parseGuideState", () => {
     expect(parseGuideState({ journey_dismissed: "true" })).toEqual({});
   });
 
-  test("keeps only strictly-true strip entries, drops empty strips", () => {
-    expect(parseGuideState({ strips: { treasury: true, budget: false } })).toEqual({
-      strips: { treasury: true },
-    });
-    expect(parseGuideState({ strips: {} })).toEqual({});
-    expect(parseGuideState({ strips: { budget: 1 } })).toEqual({});
-  });
-});
-
-describe("strip registry", () => {
-  test("exactly the eight spec surfaces", () => {
-    expect([...STRIP_SURFACE_KEYS]).toEqual([
-      "treasury",
-      "budget",
-      "itinerary_editor",
-      "packet_review",
-      "trip",
-      "hosting_event",
-      "import",
-      "digest",
-    ]);
-  });
-
-  test("isStripSurfaceKey guards membership", () => {
-    expect(isStripSurfaceKey("treasury")).toBe(true);
-    expect(isStripSurfaceKey("nope")).toBe(false);
-  });
-
-  test("isStripCollapsed reads the parsed state", () => {
-    const st = parseGuideState({ strips: { budget: true } });
-    expect(isStripCollapsed(st, "budget")).toBe(true);
-    expect(isStripCollapsed(st, "treasury")).toBe(false);
+  // Every member who ever pressed "Got it" before Wave 9 still has a strips
+  // object in their jsonb. It is not migrated (no schema change, RQ-3) — it is
+  // simply not read, so the row keeps working and the key is inert.
+  test("a pre-Wave-9 strips object is ignored, not an error", () => {
+    expect(parseGuideState({ strips: { treasury: true, budget: false } })).toEqual({});
+    expect(
+      parseGuideState({ journey_dismissed: true, strips: { digest: true } }),
+    ).toEqual({ journey_dismissed: true });
   });
 });
 
@@ -304,25 +282,39 @@ describe("loadJourneyPanel — steps whose destination is flagged off", () => {
     expect(new Set(calls)).toEqual(new Set(["guardian_tokens"]));
   });
 
-  test("the costume journey links the live sets URL, not the retired one", async () => {
+  // Wave 9 merged "group them into a set" and "assign pieces to students": sets
+  // stopped being a surface of their own in Wave W, so both steps pointed at
+  // /costumes/assignments and the first could not be undone by the second.
+  test("the costume journey walks the four rebuilt wardrobe tabs", async () => {
     const model = await loadJourneyPanel(
       makeSupabase({}),
       panelArgs({ role: "costume_manager" }),
     );
+    expect(model!.steps.map((s) => s.href)).toEqual([
+      "/demo/costumes/inventory",
+      "/demo/costumes/assignments",
+      "/demo/costumes",
+      "/demo/costumes/checkout",
+    ]);
+    // The retired sets route is gone from the guide and stays gone.
     expect(model!.steps.map((s) => s.href)).not.toContain("/demo/costumes/sets");
-    expect(model!.steps[1].label).toBe("Group them into a set");
-    expect(model!.steps[1].href).toBe("/demo/costumes/assignments");
+    expect(model!.steps[1].label).toBe("Make a set and assign it");
   });
 
-  // /competitions requireFlag-gates on `competitions`, and two of the seven
-  // director steps point at it. Nothing declared that, because the flag
-  // defaults on and no tier turns it off — but an override can (spec 005 T160).
-  test("competitions off: both steps that point at /competitions are gone", async () => {
+  // Both competition steps point at Season now (Wave 9): `?add=comp` opens the
+  // create drawer, and the spine's next-competition row carries an Itinerary
+  // button. Season is any-of gated and survives `competitions: false` — the
+  // steps must not, because a Season with competitions off offers neither
+  // affordance (the class spec 005 T160 found on the old /competitions links).
+  test("competitions off: both competition steps are gone, Season's own step stays", async () => {
     const model = await loadJourneyPanel(
       makeSupabase({}),
       panelArgs({ flags: allFlags({ competitions: false }) }),
     );
-    expect(model!.steps.map((s) => s.href)).not.toContain("/demo/competitions");
+    expect(model!.steps.map((s) => s.href)).not.toContain("/demo/season?add=comp");
+    expect(model!.steps.map((s) => s.label)).not.toContain("Publish the itinerary");
+    // Step one still points at Season: starting a season is not a competition.
+    expect(model!.steps[0].href).toBe("/demo/season");
     expect(model!.total).toBe(5);
   });
 
@@ -356,6 +348,53 @@ describe("loadJourneyPanel — steps whose destination is flagged off", () => {
 });
 
 // ---------------------------------------------------------------------------
+// THE TREASURER LEARNS THE LAYER SPEC 006 ADDED
+// ---------------------------------------------------------------------------
+// Planned → committed → spent → checked. The journey used to go straight from
+// the budget to the ledger, which taught a treasurer that the balance is what
+// she has — the exact mistake commitments exists to stop. The order of these
+// steps is the order the money moves, so it is asserted, not just their
+// presence.
+describe("treasurer journey — the commitments step", () => {
+  test("walks planned → promised → spent → receipt → reconciled", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ role: "treasurer" }),
+    );
+    expect(model!.steps.map((s) => s.href)).toEqual([
+      "/demo/treasury/budget",
+      "/demo/treasury/commitments",
+      "/demo/treasury",
+      "/demo/treasury",
+      "/demo/treasury",
+    ]);
+    expect(model!.steps[1].label).toBe("Write down what's already promised");
+  });
+
+  // The terminal step is the "established program" signal the loader
+  // short-circuits on, so the new step had to go BEFORE it, not after — a
+  // treasurer who has reconciled a month is past setup whether or not she has
+  // ever raised a purchase order.
+  test("reconciliation is still the terminal milestone", async () => {
+    const calls: string[] = [];
+    const model = await loadJourneyPanel(
+      makeSupabase({ ledger_reconciliations: 1 }, calls),
+      panelArgs({ role: "treasurer" }),
+    );
+    expect(model).toBeNull();
+    expect(new Set(calls)).toEqual(new Set(["ledger_reconciliations"]));
+  });
+
+  test("the board-snapshot footer still points at Reports", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ role: "treasurer" }),
+    );
+    expect(model!.footer!.href).toBe("/demo/treasury/reports");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // THE BOARD CARD IS "WHERE EVERYTHING LIVES" — SO IT MAY ONLY NAME WHAT IS
 // ---------------------------------------------------------------------------
 // The step list learned this in Wave 5; the board card never did, and its links
@@ -363,16 +402,39 @@ describe("loadJourneyPanel — steps whose destination is flagged off", () => {
 // entire PREP tier, so a board member of any prep program opened Today and got
 // a four-row card whose first three rows were 404s (spec 005 T160).
 describe("board orientation card — flagged-off links", () => {
-  test("all flags on: the four rows the card has always had", async () => {
+  test("all flags on: the money rows, Commitments among them, then Season", async () => {
     const model = await loadJourneyPanel(
       makeSupabase({}),
       panelArgs({ role: "board_member" }),
     );
     expect(model!.boardLinks!.map((l) => l.href)).toEqual([
       "/demo/treasury",
+      "/demo/treasury/commitments",
       "/demo/treasury/budget-vs-actual",
       "/demo/treasury/reports",
       "/demo/season",
+    ]);
+  });
+
+  // Spec 006 gave this seat the one thing it can move: above the program's
+  // second-approver amount, a board member may record the FIRST of a
+  // commitment's two approvals. The card that claims to say where everything
+  // lives may not hide that — and may not promise it to a program whose money
+  // surface is off, where the seat genuinely changes nothing.
+  test("the approval note rides the treasury gate, like the links do", async () => {
+    const on = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ role: "board_member" }),
+    );
+    expect(on!.boardNotes).toHaveLength(2);
+    expect(on!.boardNotes![1]).toContain("two approvals");
+
+    const off = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ role: "board_member", flags: allFlags({ treasury: false }) }),
+    );
+    expect(off!.boardNotes).toEqual([
+      "Your seat sees everything and changes nothing — that transparency protects the program.",
     ]);
   });
 

@@ -18,8 +18,6 @@ import {
   dateKeyRange,
 } from "@/lib/datetime";
 import { deleteTrip } from "../actions";
-import { IntroStrip, HelpDot } from "../../IntroStrip";
-import { loadGuideState } from "@/lib/guide";
 import { FillQueue, FillBar, type FillChip } from "./FillQueue";
 import { GroupSection } from "./TripGroups";
 import { ChaperoneSection } from "./TripChaperones";
@@ -48,6 +46,14 @@ import {
 // its own sibling file. Errors are section-local: `?error=` (+ `?errorKind=`)
 // resolves to the section that owns what failed (shared.ts), never a page-top
 // pile.
+//
+// The first-use intro strip is gone (spec 005 Wave 9 / T146). It explained the
+// fill flow — "load a bus or a room by picking it, then tapping names until it's
+// full" — from the top of the page, which is where that flow needed explaining
+// BEFORE Wave 2 rebuilt it. The page now says it at the moment of use instead:
+// "Pick a bus or a room below, then tap names to fill it" over the queue, "Fill
+// this bus" on each card, and "Tap a name to add to <group>" as the heading of
+// the queue itself.
 
 interface TripRow {
   id: string;
@@ -74,8 +80,7 @@ export default async function TripPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, tripId } = await params;
-  const { program, role, flags, membership, isSupport } =
-    await getTenantContext(slug);
+  const { program, role } = await getTenantContext(slug);
   requireFlag(program, "travel");
   const canWrite = TRAVEL_WRITE_ROLES.includes(role);
   const tz = program.timezone;
@@ -88,13 +93,6 @@ export default async function TripPage({
   };
 
   const supabase = await createClient();
-
-  // First-use intro strip (spec 003 §3) — how the fill flow works.
-  const showGuide = flags.guide && !isSupport && !!membership.user_id;
-  const guideState =
-    showGuide && membership.user_id
-      ? await loadGuideState(supabase, program.id, membership.user_id)
-      : {};
 
   const { data: tripData } = await supabase
     .from("trips")
@@ -445,19 +443,7 @@ export default async function TripPage({
       <p>
         <Link href={`/${slug}/travel`}>← Travel</Link>
       </p>
-      <div className="page-title-row">
-        <h1>{trip.name}</h1>
-        {showGuide && <HelpDot href={`${tripHref}?help=1`} />}
-      </div>
-      {showGuide && (
-        <IntroStrip
-          surfaceKey="trip"
-          programId={program.id}
-          selfPath={tripHref}
-          guideState={guideState}
-          help={one("help") === "1"}
-        />
-      )}
+      <h1>{trip.name}</h1>
 
       {/* The fill queue stays at the top of the page while a group is the active
           target: every tap reloads the page here, so the next name is already

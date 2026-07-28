@@ -9,7 +9,8 @@ import { setJourneyDismissed } from "@/lib/guide";
 //              guide; it reuses the .setup-guide/.setup-step classes so styling
 //              and the onboarding e2e contract both hold).
 //   • pill   — a slim one-row progress summary that expands to the full panel.
-//   • board  — the board_member orientation card (link rows + one sentence).
+//   • board  — the board_member orientation card (link rows + closing notes,
+//              both gated on the flags their subject needs).
 
 function DismissForm({
   programId,
@@ -55,7 +56,11 @@ export function JourneyPanel({
             </Link>
           ))}
         </div>
-        {model.boardNote && <p className="setup-lede">{model.boardNote}</p>}
+        {(model.boardNotes ?? []).map((note, i) => (
+          <p key={i} className="setup-lede">
+            {note}
+          </p>
+        ))}
         <DismissForm
           programId={programId}
           slug={slug}

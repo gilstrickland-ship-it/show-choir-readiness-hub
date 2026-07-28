@@ -69,5 +69,22 @@ test.describe("onboarding (F1)", () => {
     await expect(
       page.locator(".setup-step.done", { hasText: "Start your season" }),
     ).toBeVisible();
+
+    // Spec 005 Wave 9: the guide traces the REBUILT create path. Adding a
+    // competition is the Season "+ Add" drawer (US1), so the step's href is
+    // `/season?add=comp` and following it lands with that drawer already open —
+    // not on the /competitions module page, and not on an `#add` anchor.
+    const compStep = page.getByRole("link", {
+      name: "Add your first competition",
+    });
+    await expect(compStep).toHaveAttribute(
+      "href",
+      "/e2e-test-program/season?add=comp",
+    );
+    await compStep.click();
+    await page.waitForURL(/\/e2e-test-program\/season\?add=comp/);
+    await expect(
+      page.getByRole("heading", { name: "Add to the season" }),
+    ).toBeVisible();
   });
 });

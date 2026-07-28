@@ -10,7 +10,7 @@ import {
 } from "@/lib/datetime";
 import { itineraryAnchors } from "@/lib/itinerary-days";
 import { oneParam, type SearchParams } from "@/lib/flash";
-import { parentSurfaceAvailable } from "@/lib/tokens";
+import { parentSurfaceAvailable, GUARDIAN_LINK_SURFACES } from "@/lib/tokens";
 import { TokenFooter } from "./parts";
 
 // Guardian-token home — the family "poster" (§8a, §10). A dark hero counts down
@@ -84,6 +84,12 @@ export default async function TokenHomePage({
   const canCompetitions = parentSurfaceAvailable(program, "itinerary");
   const canSignup = parentSurfaceAvailable(program, "signup");
   const canWelcome = parentSurfaceAvailable(program, "welcome");
+  // Does the footer hold anything besides the link that reopens the welcome
+  // card? Read off the SAME list TokenFooter and the email footer build from,
+  // so the card's promise and the links under it cannot drift apart.
+  const hasMoreForFamilies = GUARDIAN_LINK_SURFACES.some((surface) =>
+    parentSurfaceAvailable(program, surface),
+  );
   const tz = program.timezone;
   const supabase = createAdminClient();
 
@@ -311,10 +317,17 @@ export default async function TokenHomePage({
           <p>
             This page is your family&apos;s — bookmark it, it works all season.
           </p>
-          <p>
-            The links at the bottom take you to everything else your program
-            shares with families.
-          </p>
+          {/* Only promise the footer when the footer has something in it. Every
+              other parent link is flag-gated (TokenFooter drops the ones this
+              program has off), so a program running just the poster showed a
+              family a sentence pointing at a footer whose only remaining link
+              was the one that reopens this card (spec 005 Wave 9 / T146). */}
+          {hasMoreForFamilies && (
+            <p>
+              The links at the bottom take you to everything else your program
+              shares with families.
+            </p>
+          )}
           <p>
             Everything also arrives by email. The links in your newest email
             always work.
