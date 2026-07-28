@@ -11,6 +11,7 @@ import {
   seedAttendance,
   competitionEnsembleIds,
   competitionRoster,
+  ensembleSetFingerprint,
   ensemblesInProgram,
   resolveCompetition,
   resolveCompetitionId,
@@ -28,6 +29,27 @@ import { runPacketParse } from "@/lib/ai/packet-parse";
 
 function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
+}
+
+// ---- Redirect targets are never interpolated from a form field --------------
+// Every redirect below is built from two CLIENT-posted values: the program
+// `slug` and a competition id. `slug` is the dangerous one — slug="/evil.com"
+// interpolated raw gives "//evil.com/competitions", which every browser reads as
+// a protocol-relative URL and follows OFF-SITE. programPath validates it against
+// the shape the app mints and returns null for anything else; these helpers turn
+// that null into "/" rather than into a fallback interpolation of their own
+// (lib/return-path). The id gets a shape check for the same reason a path
+// segment should never be allowed to carry "..".
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function competitionsHref(slug: string): string {
+  return programPath(slug, "competitions") ?? "/";
+}
+
+function competitionHref(slug: string, competitionId: string): string {
+  if (!UUID.test(competitionId)) return competitionsHref(slug);
+  return programPath(slug, `competitions/${competitionId}`) ?? "/";
 }
 
 // Where a create/edit launched from the Season page goes back to. `from` is an
@@ -76,8 +98,9 @@ export async function createCompetition(formData: FormData): Promise<void> {
   // Quick-add from the Season page comes back to Season with the drawer's
   // competition section reopened on the same error message it always used.
   const back = seasonReturn(formData, slug);
+  const listPath = competitionsHref(slug);
   const fail = (code: string): string =>
-    back ? `${back}?error=${code}&add=comp` : `/${slug}/competitions?error=${code}`;
+    back ? `${back}?error=${code}&add=comp` : `${listPath}?error=${code}`;
 
   const name = str(formData, "name");
   if (!name) redirect(fail("name"));
@@ -134,14 +157,14 @@ export async function createCompetition(formData: FormData): Promise<void> {
     seasonId,
   });
 
-  revalidatePath(`/${slug}/competitions`);
+  revalidatePath(listPath);
   if (back) {
     revalidatePath(back);
     // The fragment scrolls the new row into view; ?created= is what actually
     // highlights it, and still does the whole job on its own.
     redirect(`${back}?created=comp-${data.id}#item-comp-${data.id}`);
   }
-  redirect(`/${slug}/competitions/${data.id}?created=1`);
+  redirect(`${competitionHref(slug, data.id)}?created=1`);
 }
 
 // Update core fields + the participating-ensemble set (Feature 004, generalizing
@@ -160,10 +183,11 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   // Spine edit popover (Season page): failures reopen that row's popover, saves
   // land back on the spine. Allow-listed server-side; module-page edits unchanged.
   const back = seasonReturn(formData, slug);
+  const compPath = competitionHref(slug, competitionId);
   const fail = (code: string): string =>
     back
       ? `${back}?error=${code}&edit=comp-${competitionId}`
-      : `/${slug}/competitions/${competitionId}?error=${code}`;
+      : `${compPath}?error=${code}`;
 
   // The spine popover edits three fields and sends three fields; everything it
   // doesn't send is left exactly as it is. That is what keeps a name/date fix
@@ -212,6 +236,14 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   let added: string[] = [];
   let removed: string[] = [];
   let newEnsembleIds: string[] = [];
+  const confirmed = str(formData, "confirm_ensemble") === "1";
+
+  // A confirm that carries no ensembles at all used to fall through every branch
+  // below and redirect to "Saved." having written nothing — the button said it
+  // did something and it did not. It is the same defect as an empty set on the
+  // full form, so it gets the same answer.
+  if (confirmed && !sends("ensemble_ids")) redirect(fail("ensemble"));
+
   if (sends("ensemble_ids")) {
     newEnsembleIds = ensembleIdsFrom(formData);
     // ≥1 ensemble required (F6, D3), and every one of them has to be ours.
@@ -219,7 +251,6 @@ export async function updateCompetition(formData: FormData): Promise<void> {
     if (!(await ensemblesInProgram(supabase, programId, newEnsembleIds))) {
       redirect(fail("ensemble"));
     }
-    const confirmed = str(formData, "confirm_ensemble") === "1";
 
     const currentEnsembleIds = await competitionEnsembleIds(supabase, competitionId);
     const currentSet = new Set(currentEnsembleIds);
@@ -227,15 +258,36 @@ export async function updateCompetition(formData: FormData): Promise<void> {
     added = newEnsembleIds.filter((id) => !currentSet.has(id));
     removed = currentEnsembleIds.filter((id) => !newSet.has(id));
 
+    const pending = encodeURIComponent(newEnsembleIds.join(","));
+    const confirmHref = `${compPath}?confirm=ensemble&pending_ensembles=${pending}`;
+
     // Guard: removing an ensemble drops students from eligibility — confirm first.
     // The slug arrives as a form field, so the target is built through the
     // fail-closed helper rather than interpolated (lib/return-path).
-    if (removed.length > 0 && !confirmed) {
-      const pending = encodeURIComponent(newEnsembleIds.join(","));
-      redirect(
-        `${programPath(slug, `competitions/${competitionId}`) ?? "/"}?confirm=ensemble&pending_ensembles=${pending}`,
-      );
+    if (removed.length > 0 && !confirmed) redirect(confirmHref);
+
+    // THE CONFIRMATION HAS TO BE ABOUT THE SET BEING CHANGED. The confirm screen
+    // names the students who lose eligibility, computed from the set it read
+    // when it rendered — and it carries a fingerprint of that set. If somebody
+    // else has added or removed an ensemble since, the diff computed above is
+    // not the one that was approved: the newcomer is in `removed` and would be
+    // deleted (with its attendance rows and comp-scoped checkouts) without ever
+    // having appeared on screen. Refuse and send them back to a fresh, honest
+    // confirmation rather than acting on a set nobody saw.
+    if (confirmed) {
+      const seen = str(formData, "ensembles_seen");
+      if (seen !== ensembleSetFingerprint(currentEnsembleIds)) {
+        redirect(`${confirmHref}&error=ensembles_moved`);
+      }
     }
+  }
+
+  // A sparse form that named no writable field AND moved no ensemble changed
+  // nothing. "Saved." would be a report of work that never happened, and the
+  // director would go on believing the change landed (the budget builder was
+  // fixed for the same lie). Say what actually happened.
+  if (Object.keys(fields).length === 0 && added.length === 0 && removed.length === 0) {
+    redirect(fail("nothing"));
   }
 
   // A form that edits only the ensembles has no core fields to write; an UPDATE
@@ -292,12 +344,12 @@ export async function updateCompetition(formData: FormData): Promise<void> {
     });
   }
 
-  revalidatePath(`/${slug}/competitions/${competitionId}`);
+  revalidatePath(compPath);
   if (back) {
     revalidatePath(back);
     redirect(`${back}?saved=comp-${competitionId}#item-comp-${competitionId}`);
   }
-  redirect(`/${slug}/competitions/${competitionId}?saved=1`);
+  redirect(`${compPath}?saved=1`);
 }
 
 // Remove attendance + release comp-scoped costume checkouts for students who
@@ -369,11 +421,12 @@ export async function reseedAttendance(formData: FormData): Promise<void> {
   await requireRole(programId, COMPETITION_WRITE_ROLES);
 
   const supabase = await createClient();
+  const compPath = competitionHref(slug, competitionId);
   // Seeding writes attendance rows keyed on competition_id, so an unresolved
   // competition id here would plant them against another program's competition.
   // The season comes off the resolved row — the form doesn't carry one.
   const resolved = await resolveCompetition(supabase, programId, competitionId);
-  if (!resolved) redirect(`/${slug}/competitions/${competitionId}?error=save`);
+  if (!resolved) redirect(`${compPath}?error=save`);
 
   const ensembleIds = await competitionEnsembleIds(supabase, competitionId);
   await seedAttendance(supabase, {
@@ -383,8 +436,8 @@ export async function reseedAttendance(formData: FormData): Promise<void> {
     seasonId: resolved.season_id,
   });
 
-  revalidatePath(`/${slug}/competitions/${competitionId}`);
-  redirect(`/${slug}/competitions/${competitionId}?reseeded=1`);
+  revalidatePath(compPath);
+  redirect(`${compPath}?reseeded=1`);
 }
 
 // Save the results row (one per competition; upsert on competition_id). Captions
@@ -408,10 +461,11 @@ export async function saveResults(formData: FormData): Promise<void> {
   const score = scoreRaw ? Number(scoreRaw) : null;
 
   const supabase = await createClient();
+  const compPath = competitionHref(slug, competitionId);
   // competition_results is unique per competition, so an unresolved id here can
   // permanently squat another program's single results slot. Resolve first.
   if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
-    redirect(`/${slug}/competitions/${competitionId}?error=results`);
+    redirect(`${compPath}?error=results`);
   }
 
   const { error } = await supabase.from("competition_results").upsert(
@@ -427,10 +481,10 @@ export async function saveResults(formData: FormData): Promise<void> {
     { onConflict: "competition_id" },
   );
 
-  if (error) redirect(`/${slug}/competitions/${competitionId}?error=results`);
+  if (error) redirect(`${compPath}?error=results`);
 
-  revalidatePath(`/${slug}/competitions/${competitionId}`);
-  redirect(`/${slug}/competitions/${competitionId}?results=1`);
+  revalidatePath(compPath);
+  redirect(`${compPath}?results=1`);
 }
 
 // Attach an inbound (email-forwarded) packet document to a competition, then
@@ -444,7 +498,8 @@ export async function attachPacket(formData: FormData): Promise<void> {
   const documentId = str(formData, "documentId");
   const competitionId = str(formData, "competitionId");
   await requireRole(programId, COMPETITION_WRITE_ROLES);
-  if (!competitionId) redirect(`/${slug}/competitions?error=attach`);
+  const listPath = competitionsHref(slug);
+  if (!competitionId) redirect(`${listPath}?error=attach`);
 
   const supabase = await createClient();
 
@@ -458,9 +513,9 @@ export async function attachPacket(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .maybeSingle();
   const doc = docData as { id: string; competition_id: string | null } | null;
-  if (!doc) redirect(`/${slug}/competitions?error=attach`);
+  if (!doc) redirect(`${listPath}?error=attach`);
   if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
-    redirect(`/${slug}/competitions?error=attach`);
+    redirect(`${listPath}?error=attach`);
   }
 
   await supabase
@@ -505,6 +560,6 @@ export async function attachPacket(formData: FormData): Promise<void> {
     }
   }
 
-  revalidatePath(`/${slug}/competitions`);
-  redirect(`/${slug}/competitions/${competitionId}/packet?uploaded=1`);
+  revalidatePath(listPath);
+  redirect(`${competitionHref(slug, competitionId)}/packet?uploaded=1`);
 }

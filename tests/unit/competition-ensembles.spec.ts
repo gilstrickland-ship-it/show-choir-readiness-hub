@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   competitionRoster,
   competitionEnsembleMap,
+  ensembleSetFingerprint,
   eventEnsembleMap,
   seedAttendance,
 } from "@/lib/competitions";
@@ -149,5 +150,58 @@ describe("competitionEnsembleMap / eventEnsembleMap", () => {
     const supabase = fakeClient({});
     expect((await competitionEnsembleMap(supabase, "p1", [])).size).toBe(0);
     expect((await eventEnsembleMap(supabase, "p1", [])).size).toBe(0);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// The confirmation has to be about the set being changed (review F3)
+// ----------------------------------------------------------------------------
+// Removing an ensemble deletes attendance rows and comp-scoped costume
+// checkouts, so it is confirmed on a screen that names the students who lose
+// eligibility. That screen is a round trip, and the set can move under the
+// director while it is open: an ensemble somebody else added in between was in
+// the re-read "current" set but not in the pending one, so it was removed
+// without ever appearing in what was approved. The confirm form now carries a
+// fingerprint of the set it DISPLAYED, and the action refuses when the set it
+// re-reads no longer matches.
+describe("ensembleSetFingerprint", () => {
+  test("the same set fingerprints the same however it is ordered", () => {
+    expect(ensembleSetFingerprint(["e1", "e2", "e3"])).toBe(
+      ensembleSetFingerprint(["e3", "e1", "e2"]),
+    );
+  });
+
+  test("duplicates are the same set", () => {
+    expect(ensembleSetFingerprint(["e1", "e1", "e2"])).toBe(
+      ensembleSetFingerprint(["e1", "e2"]),
+    );
+  });
+
+  // The case the guard exists for: an ensemble ADDED behind the confirmation.
+  test("an added ensemble changes the fingerprint", () => {
+    expect(ensembleSetFingerprint(["e1", "e2"])).not.toBe(
+      ensembleSetFingerprint(["e1", "e2", "e3"]),
+    );
+  });
+
+  test("a removed or swapped ensemble changes the fingerprint", () => {
+    expect(ensembleSetFingerprint(["e1", "e2"])).not.toBe(
+      ensembleSetFingerprint(["e1"]),
+    );
+    expect(ensembleSetFingerprint(["e1", "e2"])).not.toBe(
+      ensembleSetFingerprint(["e1", "e9"]),
+    );
+  });
+
+  test("the empty set has its own fingerprint, and it is stable", () => {
+    expect(ensembleSetFingerprint([])).toBe(ensembleSetFingerprint([]));
+    expect(ensembleSetFingerprint([])).not.toBe(ensembleSetFingerprint(["e1"]));
+  });
+
+  // It rides in a hidden form field, so it has to stay short whatever the
+  // program's ensemble count is.
+  test("stays short enough to ride in a form field", () => {
+    const many = Array.from({ length: 40 }, (_, i) => `ensemble-${i}-uuid-like-value`);
+    expect(ensembleSetFingerprint(many).length).toBeLessThan(16);
   });
 });

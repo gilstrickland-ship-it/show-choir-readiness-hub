@@ -174,6 +174,32 @@ export async function competitionEnsembleIds(
   return ((data as { ensemble_id: string }[] | null) ?? []).map((r) => r.ensemble_id);
 }
 
+// A short, order-independent fingerprint of an ensemble SET.
+//
+// Removing an ensemble is destructive (it deletes attendance rows and
+// comp-scoped costume checkouts), so it is confirmed on a screen that names the
+// students who lose eligibility. That screen is a round trip: the set can move
+// under the director between the page rendering and the button being pressed,
+// and the old confirm applied the removal anyway — so an ensemble somebody else
+// added in between was dropped without ever appearing in what was approved.
+//
+// The confirm form carries this fingerprint of the set it DISPLAYED; the action
+// recomputes it from the set it re-reads and refuses when they differ. Cheap
+// enough to ride in a form field (FNV-1a, plus the count, so two sets of
+// different sizes cannot collide) — the guard is against concurrency, not
+// against an attacker: forging it only forces the confirmation you were already
+// entitled to see.
+export function ensembleSetFingerprint(ensembleIds: readonly string[]): string {
+  const joined = [...new Set(ensembleIds)].sort().join(",");
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < joined.length; i++) {
+    hash ^= joined.charCodeAt(i);
+    // FNV prime, via Math.imul so the multiply stays 32-bit.
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${new Set(ensembleIds).size}-${hash.toString(36)}`;
+}
+
 // competition_id → its participating ensemble ids, for a batch of competitions
 // (list/season pages that would otherwise N+1). Scoped by program_id.
 export async function competitionEnsembleMap(

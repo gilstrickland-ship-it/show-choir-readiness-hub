@@ -8,6 +8,7 @@ import {
   COMPETITION_STATUS_LABELS,
   competitionEnsembleIds,
   competitionRoster,
+  ensembleSetFingerprint,
   type CompetitionStatus,
 } from "@/lib/competitions";
 import { loadCompReadiness } from "@/lib/readiness";
@@ -52,7 +53,7 @@ const STATUS_PILL: Record<CompetitionStatus, string> = {
 // section that owns what failed, which is also the section that reopens. The
 // code rides in the URL, so the lookup is a lookup and not a walk up
 // Object.prototype (?error=constructor would otherwise hand React a function).
-type CompSlot = "details" | "results";
+type CompSlot = "details" | "results" | "confirm";
 
 const COMP_ERROR: Record<string, { slot: CompSlot; message: string }> = {
   name: { slot: "details", message: "A competition needs a name." },
@@ -61,6 +62,18 @@ const COMP_ERROR: Record<string, { slot: CompSlot; message: string }> = {
     message: "Pick at least one ensemble for the competition.",
   },
   save: { slot: "details", message: "Couldn't save. Try again." },
+  nothing: {
+    slot: "details",
+    message: "Nothing was sent to change, so nothing changed.",
+  },
+  // The confirm screen's own message: the ensembles moved under the director
+  // between rendering the confirmation and pressing the button, so the diff it
+  // described is not the diff that would have been applied.
+  ensembles_moved: {
+    slot: "confirm",
+    message:
+      "Someone changed who is going while this confirmation was open. Here it is again, against the ensembles as they are now.",
+  },
   results: { slot: "results", message: "Couldn't save those results." },
 };
 
@@ -328,12 +341,19 @@ export default async function CompetitionHub({
       </div>
 
       {/* ---- Ensemble-change confirmation (generalized invariant §9.2) ----
-          The form carries the competition, the ensembles being asked for, and
-          the confirm flag. Everything else — the name, the date, the season, the
-          set being replaced — is re-read server-side, so a confirmation typed
-          five minutes ago can't paste a stale record back over the record. */}
+          The form carries the competition, the ensembles being asked for, the
+          confirm flag, and a FINGERPRINT of the set this page just read — the
+          set the paragraph below describes. Everything else — the name, the
+          date, the season — is re-read server-side, so a confirmation typed five
+          minutes ago can't paste a stale record back over the record. The
+          fingerprint closes the other half of that: if someone else adds or
+          removes an ensemble while this is open, the action refuses rather than
+          applying a removal to an ensemble that was never on this screen. */}
       {confirmEnsemble && (
         <div className="stack confirm-box">
+          {err?.slot === "confirm" && (
+            <p className="alert-error">{err.message}</p>
+          )}
           <p>
             Set participating ensembles to <strong>{pendingNames || "none"}</strong>?
           </p>
@@ -358,6 +378,11 @@ export default async function CompetitionHub({
             <input type="hidden" name="competitionId" value={comp.id} />
             <input type="hidden" name="sparse" value="1" />
             <input type="hidden" name="confirm_ensemble" value="1" />
+            <input
+              type="hidden"
+              name="ensembles_seen"
+              value={ensembleSetFingerprint(participatingEnsembleIds)}
+            />
             {pendingEnsembleIds.map((id) => (
               <input type="hidden" name="ensemble_ids" value={id} key={id} />
             ))}
