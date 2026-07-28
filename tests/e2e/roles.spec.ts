@@ -55,6 +55,19 @@ test.describe("board member role gating", () => {
     await expect(
       page.getByRole("heading", { name: "Add an entry" }),
     ).toHaveCount(0);
+
+    // The absence queue used to be the one role-denied surface that answered
+    // with a bare 404 (spec 005 T157). It answers like every other one now —
+    // and, like every other one, ships none of the queue: no table, no student
+    // name, no guardian email.
+    await page.goto("/demo/competitions/absences");
+    await expect(
+      page.getByRole("heading", { name: /outside your seat/i }),
+    ).toBeVisible();
+    await expect(page.locator("table.members")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /^Confirm/ }),
+    ).toHaveCount(0);
   });
 });
 

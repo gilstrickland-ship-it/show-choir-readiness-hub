@@ -29,11 +29,24 @@ test.describe("staff journey (demo director)", () => {
       page.getByRole("link", { name: "Central Illinois Invitational" }),
     ).toBeVisible();
 
-    // --- Itinerary is published -------------------------------------------
+    // --- Itinerary is published, and reads as a schedule --------------------
+    // The status line says who can see it in words now, not a `published` enum
+    // badge (spec 005 T156). Scoped by its own sentence: "published" alone also
+    // appears in the publish-gate copy.
     await page.goto(`/demo/competitions/${DEMO.competitionId}/itinerary`);
+    await expect(page.getByText("Families can see this")).toBeVisible();
+
+    // Adding is a drawer off the page head, and each row's fields live behind
+    // that row's own Edit — no permanently-open form anywhere on the page.
     await expect(
-      page.locator(".badge", { hasText: "published" }),
+      page.locator("summary", { hasText: "Add an item" }),
     ).toBeVisible();
+    const itinRows = page.locator("table.members tbody tr td.table-action a");
+    await expect(itinRows.first()).toBeVisible();
+    // The row is facts until you open it: no schedule inputs are on screen.
+    await expect(
+      page.locator('table.members input[name="starts_at"]'),
+    ).toHaveCount(0);
 
     // --- Packet pipeline strip (spec 005 US7-4): the same five steps on the
     // packet surface, derived from existing status fields ---------------------
@@ -53,19 +66,27 @@ test.describe("staff journey (demo director)", () => {
 
     // --- Attendance: toggle a student absent, then back (net zero) ---------
     // Use Liam Carter — Ava is the parent-token spec's subject, keep them apart.
+    // The state each student is in is a WORD now, not the raw enum in lowercase
+    // parens (spec 005 T157). The parens keep these assertions off the three
+    // buttons on the same line, which carry the same three words.
     await page.goto(`/demo/competitions/${DEMO.competitionId}/attendance`);
     const liam = () => page.locator("li", { hasText: "Carter, Liam" });
-    await expect(liam()).toContainText("(expected)");
+    await expect(liam()).toContainText("(Expected)");
     await liam().getByRole("button", { name: "Absent" }).click();
-    await expect(liam()).toContainText("(absent)");
+    await expect(liam()).toContainText("(Absent)");
     await liam().getByRole("button", { name: "Expected" }).click();
-    await expect(liam()).toContainText("(expected)");
+    await expect(liam()).toContainText("(Expected)");
 
     // --- Meals: headcounts render -----------------------------------------
+    // `exact` on both headings on purpose: "Meal count" is also the start of the
+    // "Meal count (PDF)" download that now sits in the page head, and a role
+    // change on either one would otherwise let a substring match pass.
     await page.goto(`/demo/competitions/${DEMO.competitionId}/meals`);
-    await expect(page.getByRole("heading", { name: "Meal count" })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Headcount by ensemble" }),
+      page.getByRole("heading", { name: "Meal count", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "By ensemble", exact: true }),
     ).toBeVisible();
     await expect(page.getByText("Total meals needed")).toBeVisible();
 
