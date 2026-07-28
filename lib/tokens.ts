@@ -227,6 +227,61 @@ export interface ResolvedShareLink {
 
 export type ResolvedToken = ResolvedGuardianToken | ResolvedShareLink | null;
 
+// ---- Cross-program resource guard (Constitution I) -------------------------
+// share_links.resource_id is a POLYMORPHIC soft reference — it names a
+// competition for one resource kind and a season for another, so no foreign key
+// can express it and the database cannot stop a link minted in program A from
+// pointing at program B's competition. That matters more here than anywhere
+// else in the schema: the token surfaces are anonymous, so they run on the
+// service-role client where RLS does not apply, and a link is the whole
+// credential. Both ends are therefore closed in code — mintShareLink refuses to
+// WRITE a link at another program's resource, and resolveToken refuses to
+// RETURN one, so a row that predates this guard (or one written by any future
+// path) is inert.
+
+type ShareResourceTable = "competitions" | "seasons";
+
+// The parent table each share resource points at. Exhaustive over
+// ShareResource, so adding a resource kind is a type error here rather than a
+// resource that quietly skips the program check.
+const SHARE_RESOURCE_TABLES: Record<ShareResource, ShareResourceTable> = {
+  itinerary: "competitions",
+  packet: "competitions",
+  signup_page: "seasons",
+  season_calendar: "seasons",
+};
+
+// Undefined for anything not in the map — `resource` is read back from a
+// Postgres enum, so callers must treat "no table" as "cannot verify".
+export function shareResourceTable(
+  resource: ShareResource,
+): ShareResourceTable | undefined {
+  return SHARE_RESOURCE_TABLES[resource];
+}
+
+// True only when resource_id names a row of that resource's parent table which
+// lives in this program. Fails closed — a missing row, a blank id, or a query
+// error all read as "not this program's".
+async function shareResourceInProgram(
+  supabase: SupabaseClient,
+  args: { programId: string; resource: ShareResource; resourceId: string },
+): Promise<boolean> {
+  if (!args.programId || !args.resourceId) return false;
+  // `resource` is a Postgres enum, so a value can appear in the database before
+  // it appears in the map above (a migration adds it, the type lags). Unknown =
+  // uncheckable = refused, never "allowed by default".
+  const table = shareResourceTable(args.resource);
+  if (!table) return false;
+
+  const { data, error } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", args.resourceId)
+    .eq("program_id", args.programId)
+    .maybeSingle();
+  return !error && Boolean(data);
+}
+
 // Resolve an opaque raw token to a family (guardian) or resource (share). Checks
 // revoked_at / expires_at. Returns null for anything invalid, revoked, or
 // expired — callers 404 cleanly on null so a bad link never reveals structure.
@@ -295,6 +350,19 @@ export async function resolveToken(raw: string): Promise<ResolvedToken> {
       expires_at: string | null;
     };
     if (link.expires_at && link.expires_at <= nowIso) return null;
+
+    // The resource must live in the link's OWN program. Every downstream surface
+    // derives its scope from what we return here, and one of them (the parent
+    // packet) keys off resource_id alone — so this check is what keeps a link
+    // from reaching across tenants. 404 (null) on a mismatch, like any other
+    // unusable link.
+    const ownsResource = await shareResourceInProgram(supabase, {
+      programId: link.program_id,
+      resource: link.resource,
+      resourceId: link.resource_id,
+    });
+    if (!ownsResource) return null;
+
     const program = await loadProgram(supabase, link.program_id);
     if (!program) return null;
     return {
@@ -360,10 +428,25 @@ async function loadFamilyStudents(
 // Insert a fresh guardian token, returning the RAW token (shown/embedded once).
 // Caller supplies the client: staff mint uses the RLS client (director/admin
 // write policy); the email pipeline uses the service-role client.
+//
+// The guardian is resolved INSIDE the program first. guardian_id carries only a
+// single-column foreign key, and the write policy checks only the row's own
+// program_id, so without this a token row could name another program's guardian:
+// unreadable to that program, yet enough to block them from ever deleting the
+// family. Doing it here covers every mint path — staff rotate, the email
+// pipeline, and anything added later — instead of once per caller.
 export async function mintGuardianToken(
   supabase: SupabaseClient,
   args: { programId: string; guardianId: string },
 ): Promise<{ raw: string } | { error: string }> {
+  const { data: guardian } = await supabase
+    .from("guardians")
+    .select("id")
+    .eq("id", args.guardianId)
+    .eq("program_id", args.programId)
+    .maybeSingle();
+  if (!guardian) return { error: "That family is not in this program." };
+
   const { raw, hash } = generateToken();
   const { error } = await supabase.from("guardian_tokens").insert({
     program_id: args.programId,
@@ -451,6 +534,11 @@ export interface ActiveShareLink {
 // Staff mint uses the caller's RLS client (director/admin share_links write
 // policy). Append-only — it never revokes prior links; use revokeShareLink to
 // retire one. `expiresAt` is optional (null = no expiry).
+//
+// resourceId arrives from a form, so it is resolved inside the program before
+// anything is written (see the cross-program guard above). Every mint path —
+// itinerary publish/rotate, signup page, season calendar — goes through here, so
+// one check covers them all, and callers already handle the {error} return.
 export async function mintShareLink(
   supabase: SupabaseClient,
   args: {
@@ -460,6 +548,13 @@ export async function mintShareLink(
     expiresAt?: string | null;
   },
 ): Promise<{ raw: string } | { error: string }> {
+  const owned = await shareResourceInProgram(supabase, {
+    programId: args.programId,
+    resource: args.resource,
+    resourceId: args.resourceId,
+  });
+  if (!owned) return { error: "That resource is not part of this program." };
+
   const { raw, hash } = generateToken();
   const { error } = await supabase.from("share_links").insert({
     program_id: args.programId,

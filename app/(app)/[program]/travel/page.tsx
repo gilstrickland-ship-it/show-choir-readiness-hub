@@ -76,8 +76,14 @@ export default async function TravelPage({
       <h1>Travel</h1>
 
       {error === "name" && <p className="alert-error">A trip needs a name.</p>}
+      {error === "dates" && (
+        <p className="alert-error">A trip can&apos;t end before it starts.</p>
+      )}
       {error === "season" && (
         <p className="alert-error">Activate a season before adding trips.</p>
+      )}
+      {error === "competition" && (
+        <p className="alert-error">Pick a competition from this program&apos;s list.</p>
       )}
       {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
 

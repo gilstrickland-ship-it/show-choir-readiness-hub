@@ -48,7 +48,7 @@ export function studentName(s: {
 // map back to a form. The two codes that could belong to either group section
 // also carry `?errorKind=bus|room`, so the message lands in exactly one.
 
-export type TripErrorSlot = "overview" | "group" | "chaperones";
+export type TripErrorSlot = "overview" | "group" | "chaperones" | "danger";
 
 const TRIP_ERROR: Record<string, { slot: TripErrorSlot; message: string }> = {
   name: { slot: "overview", message: "A trip needs a name." },
@@ -57,12 +57,48 @@ const TRIP_ERROR: Record<string, { slot: TripErrorSlot; message: string }> = {
     slot: "overview",
     message: "Remove this trip's rooms before making it a day trip.",
   },
+  competition: {
+    slot: "overview",
+    message: "Pick a competition from this program's list.",
+  },
   save: { slot: "overview", message: "Couldn't save the trip. Try again." },
   group: { slot: "group", message: "A bus or a room needs a name." },
+  group_missing: {
+    slot: "group",
+    message: "That bus or room isn't on this trip anymore.",
+  },
+  group_delete: {
+    slot: "group",
+    message: "Couldn't delete that bus or room. Try again.",
+  },
+  room_daytrip: {
+    slot: "group",
+    message: "Rooms are for overnight trips — turn on Overnight in Overview first.",
+  },
   assign: { slot: "group", message: "Couldn't place that student. Try again." },
+  student: {
+    slot: "group",
+    message: "That student isn't on this trip's roster.",
+  },
   chaperone: {
     slot: "chaperones",
     message: "Pick a guardian or type a name for the chaperone.",
+  },
+  chaperone_group: {
+    slot: "chaperones",
+    message: "That bus or room isn't on this trip anymore.",
+  },
+  chaperone_guardian: {
+    slot: "chaperones",
+    message: "Pick a parent from this program's list.",
+  },
+  chaperone_name: {
+    slot: "chaperones",
+    message: "Keep a one-off helper's name under 120 characters.",
+  },
+  trip_delete: {
+    slot: "danger",
+    message: "Couldn't delete this trip. Try again.",
   },
 };
 
@@ -83,4 +119,13 @@ export function asGroupKind(value: string | null): TravelGroupKind | null {
   return value && (TRAVEL_GROUP_KINDS as readonly string[]).includes(value)
     ? (value as TravelGroupKind)
     : null;
+}
+
+// The writing half of the same contract: an action building a redirect says
+// which group section its message belongs in. Allow-listed through asGroupKind
+// so anything that isn't a kind adds no query at all — the page then falls back
+// to the Buses section rather than rendering an attacker-chosen fragment.
+export function kindQuery(kind: string): string {
+  const k = asGroupKind(kind);
+  return k ? `&errorKind=${k}` : "";
 }

@@ -4087,10 +4087,15 @@
     background: var(--accent-soft);
   }
 
+  /* `width: 100%` is load-bearing everywhere it appears in this section: these
+     blocks sit inside a `.stack` (`align-items: flex-start`), so anything that
+     doesn't claim its width shrink-wraps to its own content and stops filling
+     the card or section it belongs to. */
   .travel-chip-grid {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
+    width: 100%;
   }
 
   .travel-chip-form {
@@ -4139,6 +4144,9 @@
     position: sticky;
     bottom: 0;
     z-index: 30;
+    /* Full width or the bar shrink-wraps to its own text inside the page's
+       `.stack` and floats over the card beside it. */
+    width: 100%;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -4210,12 +4218,17 @@
     font-size: 0.9rem;
   }
 
-  /* Every disclosure on this page names what it holds and shows its count. */
+  /* Every disclosure on this page names what it holds and shows its count. The
+     summary IS the control — edit, delete, and add-a-chaperone live behind it
+     and nowhere else — so it carries a thumb-sized hit area instead of the
+     ~26px a bare line of text gives. Kept as the default `list-item` display so
+     the browser's own disclosure marker survives. */
   .travel-disclosure {
     cursor: pointer;
     font-weight: 600;
     color: var(--accent-strong);
-    padding: 0.3rem 0;
+    min-height: 44px;
+    padding: 0.65rem 0;
   }
 
   .travel-group-grid {
@@ -4248,12 +4261,14 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
+    width: 100%;
   }
 
   .travel-member-list {
     list-style: none;
     padding: 0;
     margin: 0;
+    width: 100%;
   }
 
   .travel-member-row {
@@ -4261,11 +4276,28 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
+    width: 100%;
+  }
+
+  .travel-member-who {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .travel-member-who > .chip {
+    margin: 0;
   }
 
   /* An absent rider reads quieter but still legible — the same 0.72 the season
-     spine dims past rows to (a lighter value failed the contrast check). */
-  .travel-member-row.is-absent {
+     spine dims past rows to (a lighter value failed the contrast check). The dim
+     lands on the NAME, never on the row: `opacity` composites the whole subtree,
+     so dimming the row took the "absent" danger chip down with it and the chip's
+     alert text stopped clearing AA. */
+  .travel-member-row.is-absent .travel-member-name,
+  .travel-unassigned > li.is-absent .travel-unassigned-name,
+  .travel-chip.is-absent .travel-chip-name {
     opacity: 0.72;
   }
 
@@ -4273,6 +4305,7 @@
     list-style: none;
     padding: 0;
     margin: 0;
+    width: 100%;
   }
 
   .travel-unassigned > li {
@@ -4284,10 +4317,6 @@
     border-bottom: 1px solid var(--line);
   }
 
-  .travel-unassigned > li.is-absent {
-    opacity: 0.72;
-  }
-
   .travel-unassigned-name {
     font-weight: 600;
     margin-right: 0.25rem;
@@ -4296,16 +4325,13 @@
   .travel-chaperone-row {
     padding: 0.6rem 0;
     border-bottom: 1px solid var(--line);
+    width: 100%;
   }
 
   .travel-day-list {
     list-style: none;
     padding: 0;
     margin: 0;
-  }
-
-  .travel-chip.is-absent {
-    opacity: 0.72;
   }
 
   @media (max-width: 760px) {

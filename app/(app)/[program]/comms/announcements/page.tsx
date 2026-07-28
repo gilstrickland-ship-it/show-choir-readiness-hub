@@ -192,6 +192,17 @@ export default async function AnnouncementsPage({
       {sp.error === "save" && (
         <p className="alert-error">Couldn&apos;t save the announcement. Try again.</p>
       )}
+      {sp.error === "season" && (
+        <p className="alert-error">
+          That season isn&apos;t part of this program. Reload the page and try again.
+        </p>
+      )}
+      {sp.error === "ensemble" && (
+        <p className="alert-error">
+          That ensemble isn&apos;t part of this program. Pick one from the list and
+          try again.
+        </p>
+      )}
 
       {canSend && (
         <>

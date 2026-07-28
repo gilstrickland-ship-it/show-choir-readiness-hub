@@ -212,6 +212,22 @@ export async function addGuardian(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+
+  // studentId arrives from the form, and the row's own program_id is all the
+  // write policy checks — so resolve the student inside THIS program before
+  // attaching contact details to them (Constitution I). A miss means the student
+  // isn't ours; send staff back to the roster rather than to a page that would
+  // not render for them either.
+  const { data: student } = await supabase
+    .from("students")
+    .select("id")
+    .eq("id", studentId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  if (!student) {
+    redirect(`/${slug}/roster?error=student`);
+  }
+
   const { error } = await supabase.from("guardians").insert({
     program_id: programId,
     student_id: studentId,
@@ -315,7 +331,10 @@ export async function removeGuardian(formData: FormData): Promise<void> {
 // three canonical links. Rotating BREAKS every previously-sent link for this
 // family — use "Email links" for the everyday case. The raw token is only
 // knowable at mint time (hash-only at rest), so it rides back in the redirect.
-// Director/admin only (guardian_tokens write gate).
+// Director/admin only (guardian_tokens write gate). guardianId comes off the
+// form; mintGuardianToken resolves it inside this program, so a tampered id
+// mints nothing and lands on "couldn't generate links" instead of stamping a
+// token row onto another program's family.
 export async function resendGuardianLinks(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");

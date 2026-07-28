@@ -27,6 +27,29 @@ function parseSortOrder(raw: string): number {
   return Number.isInteger(n) ? n : 0;
 }
 
+// The budget hierarchy is season → budget → category → line, and every level's
+// parent id reaches these actions as a form field. requireRole proves the caller
+// runs the program they CLAIMED, not that the parent belongs to it, so each
+// parent is resolved inside this program before a child is written
+// (Constitution I). The stakes are highest one level up: the single-active-
+// budget index is not program-scoped, so an unresolved season id lets one
+// program permanently occupy another's active-budget slot.
+async function resolveOwnedId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: string,
+  programId: string,
+  id: string,
+): Promise<string | null> {
+  if (!id) return null;
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Budget (per season) — create draft, activate (single-active guarded)
 // ---------------------------------------------------------------------------
@@ -43,6 +66,10 @@ export async function createBudget(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "seasons", programId, seasonId))) {
+    redirect(`${budgetPath(slug)}?error=budget`);
+  }
+
   const { error } = await supabase.from("budgets").insert({
     program_id: programId,
     season_id: seasonId,
@@ -94,6 +121,9 @@ export async function seedTemplate(formData: FormData): Promise<void> {
   await requireRole(programId, TREASURY_WRITE_ROLES);
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "budgets", programId, budgetId))) {
+    redirect(`${budgetPath(slug)}?error=budget`);
+  }
 
   // Guard: only seed when the budget has no categories yet.
   const { count } = await supabase
@@ -159,6 +189,10 @@ export async function addCategory(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "budgets", programId, budgetId))) {
+    redirect(`${budgetPath(slug)}?error=category`);
+  }
+
   const { error } = await supabase.from("budget_categories").insert({
     program_id: programId,
     budget_id: budgetId,
@@ -246,6 +280,10 @@ export async function addLine(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  if (!(await resolveOwnedId(supabase, "budget_categories", programId, categoryId))) {
+    redirect(`${budgetPath(slug)}?error=line`);
+  }
+
   const { error } = await supabase.from("budget_lines").insert({
     program_id: programId,
     category_id: categoryId,

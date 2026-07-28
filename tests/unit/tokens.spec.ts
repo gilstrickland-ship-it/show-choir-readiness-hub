@@ -15,6 +15,7 @@ import {
   guardianLinks,
   guardianCan,
   shareCan,
+  shareResourceTable,
   CAPABILITIES,
   GUARDIAN_CAPABILITIES,
   SHARE_CAPABILITIES,
@@ -103,6 +104,31 @@ describe("capability allow-list (exhaustive — §8a)", () => {
     expect(guardianCan("ledger:write")).toBe(false);
     expect(shareCan("resource:view")).toBe(true);
     expect(shareCan("shift:claim")).toBe(false);
+  });
+});
+
+describe("share resource → parent table (cross-program guard)", () => {
+  // share_links.resource_id is a POLYMORPHIC soft reference, so no foreign key
+  // can hold it — mintShareLink and resolveToken instead check the referenced
+  // row lives in the link's own program, and this mapping tells them which table
+  // to look in. A resource kind missing from it would skip the check entirely,
+  // which is exactly the hole that let a link reach another tenant's packet.
+  test("every share resource maps to the table it points at", () => {
+    expect(shareResourceTable("itinerary")).toBe("competitions");
+    expect(shareResourceTable("packet")).toBe("competitions");
+    expect(shareResourceTable("signup_page")).toBe("seasons");
+    expect(shareResourceTable("season_calendar")).toBe("seasons");
+  });
+
+  test("no share resource resolves to an unknown table", () => {
+    for (const resource of [
+      "itinerary",
+      "packet",
+      "signup_page",
+      "season_calendar",
+    ] as const) {
+      expect(["competitions", "seasons"]).toContain(shareResourceTable(resource));
+    }
   });
 });
 

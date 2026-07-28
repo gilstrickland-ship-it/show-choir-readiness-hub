@@ -11,6 +11,7 @@ import {
   shiftedEndInstant,
 } from "@/lib/events";
 import { returnPath } from "@/lib/return-path";
+import { ensemblesInProgram, resolveSeasonId } from "@/lib/competitions";
 
 // General events CRUD + weekly repeat helper (§5a, T013). Writers: director/admin
 // (events_write). Times arrive as program-tz wall clock and store UTC
@@ -125,6 +126,16 @@ export async function createEvent(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+
+  // The season and the audience arrive as form fields. Being a director of
+  // `programId` proves nothing about who owns those rows, so resolve both here
+  // before anything is written (Constitution I). A repeat multiplies the damage:
+  // one submit would otherwise plant a junction row per occurrence.
+  if (!(await resolveSeasonId(supabase, programId, seasonId))) redirect(fail("season"));
+  if (!(await ensemblesInProgram(supabase, programId, ensembleIds))) {
+    redirect(fail("ensemble"));
+  }
+
   const { data: inserted, error } = await supabase
     .from("events")
     .insert(rows)
@@ -141,7 +152,10 @@ export async function createEvent(formData: FormData): Promise<void> {
         ensemble_id,
       })),
     );
-    await supabase.from("event_ensembles").insert(junctionRows);
+    const { error: junctionErr } = await supabase
+      .from("event_ensembles")
+      .insert(junctionRows);
+    if (junctionErr) redirect(fail("save"));
   }
 
   revalidatePath(`/${slug}/events`);
@@ -236,32 +250,46 @@ export async function updateEvent(formData: FormData): Promise<void> {
     redirect(fail("dates"));
   }
 
-  const { error } = await supabase
+  // .select("id") makes this write authoritative. Scoping the filter alone is
+  // not enough: an eventId from another program matches zero rows and returns
+  // NO error, and the junction block below would then run against it. Requiring
+  // a row back means a foreign id stops here (Constitution I).
+  const { data: updated, error } = await supabase
     .from("events")
     .update(fields)
     .eq("id", eventId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
 
-  if (error) redirect(fail("save"));
+  if (error || ((updated as { id: string }[] | null) ?? []).length === 0) {
+    redirect(fail("save"));
+  }
 
   // Replace the targeted-ensemble subset. Zero selected ⇒ whole program (D2).
   // Who an event is for is detail-page work, so a sparse save leaves it alone
   // rather than reading its silence as "nobody in particular".
   if (!sparse) {
     const ensembleIds = ensembleIdsFrom(formData);
-    await supabase
+    if (!(await ensemblesInProgram(supabase, programId, ensembleIds))) {
+      redirect(fail("ensemble"));
+    }
+    const { error: delErr } = await supabase
       .from("event_ensembles")
       .delete()
       .eq("program_id", programId)
       .eq("event_id", eventId);
+    if (delErr) redirect(fail("save"));
     if (ensembleIds.length > 0) {
-      await supabase.from("event_ensembles").insert(
+      // A discarded error here is how an audience change reports success and
+      // never lands — a duplicate-key collision is exactly what it looks like.
+      const { error: insErr } = await supabase.from("event_ensembles").insert(
         ensembleIds.map((ensemble_id) => ({
           program_id: programId,
           event_id: eventId,
           ensemble_id,
         })),
       );
+      if (insErr) redirect(fail("save"));
     }
   }
 

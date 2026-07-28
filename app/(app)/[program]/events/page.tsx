@@ -151,6 +151,11 @@ export default async function EventsPage({
       {sp.error === "dates" && (
         <p className="alert-error">The end time is before the start.</p>
       )}
+      {sp.error === "ensemble" && (
+        <p className="alert-error">
+          Pick who this event is for from the ensembles listed.
+        </p>
+      )}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
 
       <div className="settings-tabs">

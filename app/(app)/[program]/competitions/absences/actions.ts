@@ -42,6 +42,27 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
     | null;
   if (!req || req.status !== "pending") redirect(`${queuePath(slug)}?error=gone`);
 
+  // The request row is ours, but the two ids ON it are references into other
+  // program-scoped tables and were written by the parent-facing request flow.
+  // Resolve them here too before they become an attendance row: attendance is
+  // keyed (competition, student) with no program column, so a bad pair squats a
+  // slot nobody in the affected program can see or clear (Constitution I).
+  const [{ data: comp }, { data: student }] = await Promise.all([
+    supabase
+      .from("competitions")
+      .select("id")
+      .eq("id", req!.competition_id)
+      .eq("program_id", programId)
+      .maybeSingle(),
+    supabase
+      .from("students")
+      .select("id")
+      .eq("id", req!.student_id)
+      .eq("program_id", programId)
+      .maybeSingle(),
+  ]);
+  if (!comp || !student) redirect(`${queuePath(slug)}?error=failed`);
+
   // Flip the attendance row to absent (idempotent upsert on the unique key).
   const { error: attErr } = await supabase.from("attendance").upsert(
     {

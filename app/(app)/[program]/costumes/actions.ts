@@ -39,6 +39,28 @@ function parseCondition(raw: string): PieceCondition {
     : "good";
 }
 
+// Cross-tenant reference guards (Constitution I, defense in depth). Set ids,
+// season ids and ensemble ids all arrive as <select>/hidden values; proving the
+// caller is a costume manager of the program they CLAIMED says nothing about
+// who owns those rows. Each returns the id when it belongs to this program,
+// null when the field was blank, or false when it belongs to someone else —
+// callers redirect on false rather than writing an invisible poisoned row.
+async function resolveOwnedId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: string,
+  programId: string,
+  id: string | null,
+): Promise<string | null | false> {
+  if (!id) return null;
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? false;
+}
+
 // ---------------------------------------------------------------------------
 // Pieces (inventory) — props/set_pieces are just kinds on the same rails (§4)
 // ---------------------------------------------------------------------------
@@ -55,11 +77,19 @@ export async function addPiece(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  const setId = await resolveOwnedId(
+    supabase,
+    "costume_sets",
+    programId,
+    textOrNull(formData.get("set_id")),
+  );
+  if (setId === false) redirect(`/${slug}/costumes?error=piece`);
+
   const { error } = await supabase.from("costume_pieces").insert({
     program_id: programId,
     kind,
     label,
-    set_id: textOrNull(formData.get("set_id")),
+    set_id: setId,
     size_label: textOrNull(formData.get("size_label")),
     color: textOrNull(formData.get("color")),
     condition: parseCondition(String(formData.get("condition") ?? "good")),
@@ -87,12 +117,20 @@ export async function updatePiece(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  const setId = await resolveOwnedId(
+    supabase,
+    "costume_sets",
+    programId,
+    textOrNull(formData.get("set_id")),
+  );
+  if (setId === false) redirect(`/${slug}/costumes/pieces/${pieceId}?error=piece`);
+
   const { error } = await supabase
     .from("costume_pieces")
     .update({
       kind,
       label,
-      set_id: textOrNull(formData.get("set_id")),
+      set_id: setId,
       size_label: textOrNull(formData.get("size_label")),
       color: textOrNull(formData.get("color")),
       condition: parseCondition(String(formData.get("condition") ?? "good")),
@@ -151,10 +189,16 @@ export async function addSet(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  const [season, ensembleId] = await Promise.all([
+    resolveOwnedId(supabase, "seasons", programId, seasonId),
+    resolveOwnedId(supabase, "ensembles", programId, textOrNull(formData.get("ensemble_id"))),
+  ]);
+  if (!season || ensembleId === false) redirect(`/${slug}/costumes/sets?error=save`);
+
   const { error } = await supabase.from("costume_sets").insert({
     program_id: programId,
     season_id: seasonId,
-    ensemble_id: textOrNull(formData.get("ensemble_id")),
+    ensemble_id: ensembleId,
     name,
     sort_order: parseSortOrder(String(formData.get("sort_order") ?? "0")),
     notes: textOrNull(formData.get("notes")),
@@ -179,10 +223,18 @@ export async function updateSet(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+  const ensembleId = await resolveOwnedId(
+    supabase,
+    "ensembles",
+    programId,
+    textOrNull(formData.get("ensemble_id")),
+  );
+  if (ensembleId === false) redirect(`/${slug}/costumes/sets?error=save`);
+
   const { error } = await supabase
     .from("costume_sets")
     .update({
-      ensemble_id: textOrNull(formData.get("ensemble_id")),
+      ensemble_id: ensembleId,
       name,
       sort_order: parseSortOrder(String(formData.get("sort_order") ?? "0")),
       notes: textOrNull(formData.get("notes")),
@@ -230,6 +282,11 @@ export async function assignPieceToSet(formData: FormData): Promise<void> {
   await requireRole(programId, COSTUME_WRITE_ROLES);
 
   const supabase = await createClient();
+  // setId comes off the form; a set from another program would pin their row.
+  if (!(await resolveOwnedId(supabase, "costume_sets", programId, setId))) {
+    redirect(`/${slug}/costumes/sets/${setId}?error=piece`);
+  }
+
   const { error } = await supabase
     .from("costume_pieces")
     .update({ set_id: setId })

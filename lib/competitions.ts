@@ -72,6 +72,69 @@ export const COMMON_CAPTIONS: readonly string[] = [
 ];
 
 // ============================================================================
+// Cross-tenant reference guards (Constitution I, defense in depth).
+// ----------------------------------------------------------------------------
+// A server action proving the CALLER is a director of the program they claimed
+// does not prove the uuids they posted belong to that program. Every action that
+// accepts a competition id / ensemble id from a form resolves it here first, so
+// a hand-edited hidden field can never stamp this program's rows onto another
+// program's records. RLS still gates the write; this is the layer that makes the
+// failure a friendly message instead of an invisible poisoned row.
+// ============================================================================
+
+// The competition id, only when it belongs to `programId`. Null otherwise —
+// callers redirect to their surface's existing error state.
+export async function resolveCompetitionId(
+  supabase: SupabaseClient,
+  programId: string,
+  competitionId: string,
+): Promise<string | null> {
+  if (!programId || !competitionId) return null;
+  const { data } = await supabase
+    .from("competitions")
+    .select("id")
+    .eq("id", competitionId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+// True when every posted ensemble id belongs to `programId`. A partial match is
+// a rejection, not a silent drop: quietly ignoring an id would change who a
+// competition/event is for without saying so.
+export async function ensemblesInProgram(
+  supabase: SupabaseClient,
+  programId: string,
+  ensembleIds: string[],
+): Promise<boolean> {
+  if (ensembleIds.length === 0) return true;
+  const { data } = await supabase
+    .from("ensembles")
+    .select("id")
+    .eq("program_id", programId)
+    .in("id", ensembleIds);
+  return ((data as { id: string }[] | null) ?? []).length === ensembleIds.length;
+}
+
+// The season id, only when it belongs to `programId`. Seasons are the parent of
+// competitions, events, hosted events, budgets and costume sets, so the same
+// guard is needed on every one of those create paths.
+export async function resolveSeasonId(
+  supabase: SupabaseClient,
+  programId: string,
+  seasonId: string,
+): Promise<string | null> {
+  if (!programId || !seasonId) return null;
+  const { data } = await supabase
+    .from("seasons")
+    .select("id")
+    .eq("id", seasonId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+// ============================================================================
 // Multi-ensemble eligibility helpers (Feature 004, research D5).
 // ----------------------------------------------------------------------------
 // A competition's participating ensembles live in the `competition_ensembles`

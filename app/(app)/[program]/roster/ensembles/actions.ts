@@ -112,6 +112,30 @@ export async function addMember(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+
+  // All three ids arrive from the form, and the write policy checks only the
+  // row's own program_id — so resolve each one inside THIS program before the
+  // insert (Constitution I). Without this, a membership row can be stamped onto
+  // another program's season/ensemble/student: invisible to them, undeletable by
+  // them, and squatting the (season, ensemble, student) slot they need.
+  const inProgram = async (table: string, id: string): Promise<boolean> => {
+    const { data } = await supabase
+      .from(table)
+      .select("id")
+      .eq("id", id)
+      .eq("program_id", programId)
+      .maybeSingle();
+    return Boolean(data);
+  };
+  const [seasonOk, ensembleOk, studentOk] = await Promise.all([
+    inProgram("seasons", seasonId),
+    inProgram("ensembles", ensembleId),
+    inProgram("students", studentId),
+  ]);
+  if (!seasonOk || !ensembleOk || !studentOk) {
+    redirect(`/${slug}/roster/ensembles/${ensembleId}?error=member`);
+  }
+
   const { error } = await supabase.from("ensemble_members").insert({
     program_id: programId,
     season_id: seasonId,

@@ -198,6 +198,29 @@ export default async function ShiftsPage({
         <p className="alert-error">Activate a season before adding shifts.</p>
       )}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
+      {sp.error === "attach" && (
+        <p className="alert-error">
+          That competition, trip, or event isn&apos;t part of this program. Reload
+          the page and pick one from the list.
+        </p>
+      )}
+      {sp.error === "shift" && (
+        <p className="alert-error">
+          That shift isn&apos;t part of this program. Reload the page and try again.
+        </p>
+      )}
+      {sp.error === "in_use" && (
+        <p className="alert-error">
+          Couldn&apos;t delete that shift — something still refers to it. It is
+          still listed below.
+        </p>
+      )}
+      {sp.error === "share" && (
+        <p className="alert-error">
+          Couldn&apos;t make a signup link. The old link has been retired, so make
+          a new one before sharing.
+        </p>
+      )}
 
       {canWrite && (
         <p className="muted">

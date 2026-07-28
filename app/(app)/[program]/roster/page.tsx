@@ -207,6 +207,12 @@ export default async function RosterPage({
         <p className="alert-error">A student needs a first and last name.</p>
       )}
       {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
+      {error === "student" && (
+        <p className="alert-error">
+          We couldn&apos;t find that student in this program. Pick them from the
+          roster below and try again.
+        </p>
+      )}
       {bulkCounts && (
         <p className={Number(bulkCounts[1]) > 0 ? "alert-ok" : "alert-error"}>
           Family links: {bulkCounts[1]} emailed, {bulkCounts[2]} skipped

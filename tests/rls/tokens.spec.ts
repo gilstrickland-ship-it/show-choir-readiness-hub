@@ -37,9 +37,12 @@ const INSERTS: Record<(typeof TOKEN_TABLES)[number], [string, unknown[]]> = {
     `insert into guardian_tokens (program_id, guardian_id, token_hash) values ($1, $2, 'anon-attempt-hash')`,
     [A.program, A.guardian],
   ],
+  // resource_id must be A's COMPETITION (what an 'itinerary' link points at):
+  // 0017's BEFORE-INSERT tenancy trigger would otherwise reject the row first,
+  // and this case exists to prove RLS denies anon — not the trigger.
   share_links: [
     `insert into share_links (program_id, resource, resource_id, token_hash) values ($1, 'itinerary', $2, 'anon-share-hash')`,
-    [A.program, A.itinerary],
+    [A.program, A.competition],
   ],
   token_events: [
     `insert into token_events (program_id, token_kind, token_id, action) values ($1, 'guardian', $2, 'view')`,

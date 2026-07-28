@@ -111,10 +111,14 @@ export default async function TripPage({
   let compName: string | null = null;
   let compEnsembleIds: string[] = [];
   if (trip.competition_id) {
+    // Scoped by program as well as id: the read policy already hides another
+    // program's competition, but a linked id is only ever this program's, and
+    // this page shouldn't be the one place that leans on RLS to say so.
     const { data: c } = await supabase
       .from("competitions")
       .select("name")
       .eq("id", trip.competition_id)
+      .eq("program_id", program.id)
       .maybeSingle();
     compName = (c as { name: string } | null)?.name ?? null;
     compEnsembleIds = await competitionEnsembleIds(supabase, trip.competition_id);
@@ -283,6 +287,7 @@ export default async function TripPage({
   const errKind = asGroupKind(one("errorKind")) ?? "bus";
   const overviewError = err?.slot === "overview" ? err.message : null;
   const chaperoneError = err?.slot === "chaperones" ? err.message : null;
+  const dangerError = err?.slot === "danger" ? err.message : null;
   const groupError = (k: TravelGroupKind): string | null =>
     err?.slot === "group" && errKind === k ? err.message : null;
 
@@ -547,10 +552,14 @@ export default async function TripPage({
       <section id="unassigned" className="travel-section stack">
         <div className="travel-section-head">
           <h2>Still to place</h2>
+          {/* Eligibility first: with nobody eligible the queue is also empty,
+              and "Everyone is placed" read as done when nothing had started. */}
           <span className="travel-section-summary">
-            {queue.length === 0
-              ? "Everyone is placed"
-              : `${queue.length} to go`}
+            {eligible.length === 0
+              ? "Nobody eligible yet"
+              : queue.length === 0
+                ? "Everyone is placed"
+                : `${queue.length} to go`}
           </span>
         </div>
         {eligible.length === 0 ? (
@@ -658,6 +667,7 @@ export default async function TripPage({
               Deleting a trip can&apos;t be undone
             </span>
           </div>
+          {dangerError && <p className="alert-error">{dangerError}</p>}
           <details open={confirmDeleteTrip}>
             <summary className="travel-disclosure">
               Delete trip · {groups.length} buses and rooms ·{" "}

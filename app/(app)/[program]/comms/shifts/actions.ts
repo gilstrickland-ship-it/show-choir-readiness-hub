@@ -34,20 +34,80 @@ function wallToIso(fd: FormData, key: string, tz: string): string | null {
   return zonedWallToUtc(wall, tz)?.toISOString() ?? null;
 }
 
-// Resolve the attach-to selection into exactly one of competition/trip/event
-// (or all null). The client sends attach_kind + the chosen id.
-function attachColumns(fd: FormData): {
-  competition_id: string | null;
-  trip_id: string | null;
-  event_id: string | null;
-} {
+// What a shift can be attached to, and the table each kind lives in.
+const ATTACH_TABLES = {
+  competition: "competitions",
+  trip: "trips",
+  event: "events",
+} as const;
+type AttachKind = keyof typeof ATTACH_TABLES;
+
+// Own-property check, not `in` — `in` walks the prototype chain, so a posted
+// attach_kind of "constructor" or "toString" would otherwise read as a valid
+// kind and hand a junk table name to the resolver.
+function attachKind(fd: FormData): AttachKind | null {
   const kind = str(fd, "attach_kind");
-  const id = str(fd, "attach_id") || null;
+  return Object.hasOwn(ATTACH_TABLES, kind) ? (kind as AttachKind) : null;
+}
+
+// Spread the attach-to selection into exactly one of competition/trip/event (or
+// all null). Takes an already-RESOLVED id — see resolveInProgram below.
+function attachColumns(
+  kind: AttachKind | null,
+  id: string | null,
+): { competition_id: string | null; trip_id: string | null; event_id: string | null } {
   return {
     competition_id: kind === "competition" ? id : null,
     trip_id: kind === "trip" ? id : null,
     event_id: kind === "event" ? id : null,
   };
+}
+
+type Db = Awaited<ReturnType<typeof createClient>>;
+
+// Resolve a client-posted id inside this program, returning it only when the row
+// really is this program's. Every id a shift points at (season, competition,
+// trip, event) and every shift a signup points at arrives from a hidden form
+// field, and the write policies check nothing but the new row's own program_id —
+// so this is the only thing stopping a shift or signup from being stamped onto
+// another program's records, where it is invisible to them, undeletable by them,
+// and silently blocks them from deleting the event or trip it hangs off
+// (Constitution I). Returns null for a blank id or a row outside the program.
+async function resolveInProgram(
+  supabase: Db,
+  table: string,
+  id: string,
+  programId: string,
+): Promise<string | null> {
+  if (!id) return null;
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+// The attach-to columns for a create, with the posted id resolved inside this
+// program. A kind with no id is a standalone shift (the "Which one" select left
+// blank) — that stays allowed; an id that isn't ours is refused.
+async function resolvedAttachColumns(
+  supabase: Db,
+  formData: FormData,
+  programId: string,
+): Promise<ReturnType<typeof attachColumns> | null> {
+  const kind = attachKind(formData);
+  const postedId = str(formData, "attach_id");
+  if (!kind || !postedId) return attachColumns(null, null);
+
+  const resolved = await resolveInProgram(
+    supabase,
+    ATTACH_TABLES[kind],
+    postedId,
+    programId,
+  );
+  return resolved ? attachColumns(kind, resolved) : null;
 }
 
 export async function createShift(formData: FormData): Promise<void> {
@@ -65,10 +125,17 @@ export async function createShift(formData: FormData): Promise<void> {
   const needed = Number.isFinite(neededRaw) && neededRaw > 0 ? Math.floor(neededRaw) : 1;
 
   const supabase = await createClient();
+
+  if (!(await resolveInProgram(supabase, "seasons", seasonId, programId))) {
+    redirect(`${shiftsPath(slug)}?error=season`);
+  }
+  const attach = await resolvedAttachColumns(supabase, formData, programId);
+  if (!attach) redirect(`${shiftsPath(slug)}?error=attach`);
+
   const { error } = await supabase.from("shifts").insert({
     program_id: programId,
     season_id: seasonId,
-    ...attachColumns(formData),
+    ...attach,
     title,
     starts_at: wallToIso(formData, "starts_at", tz),
     ends_at: wallToIso(formData, "ends_at", tz),
@@ -124,9 +191,18 @@ export async function deleteShift(formData: FormData): Promise<void> {
     .delete()
     .eq("program_id", programId)
     .eq("shift_id", shiftId);
-  await supabase.from("shifts").delete().eq("id", shiftId).eq("program_id", programId);
+  const { error } = await supabase
+    .from("shifts")
+    .delete()
+    .eq("id", shiftId)
+    .eq("program_id", programId);
 
   revalidatePath(shiftsPath(slug));
+  // The signup sweep above can only reach THIS program's rows, so a signup
+  // belonging to another program leaves the shift referenced and the delete
+  // fails. Say so — reporting "deleted" for a shift that is still there is the
+  // worst outcome, because staff stop looking.
+  if (error) redirect(`${shiftsPath(slug)}?error=in_use`);
   redirect(`${shiftsPath(slug)}?deleted=1`);
 }
 
@@ -142,9 +218,21 @@ export async function addStaffSignup(formData: FormData): Promise<void> {
   if (!name) redirect(`${shiftsPath(slug)}?error=name`);
 
   const supabase = await createClient();
+
+  // Resolve the shift inside this program before writing a name to it: a signup
+  // is free text that renders into the parent packet PDF, so a signup on another
+  // program's shift would put text of our choosing in front of THEIR families.
+  const resolvedShiftId = await resolveInProgram(
+    supabase,
+    "shifts",
+    shiftId,
+    programId,
+  );
+  if (!resolvedShiftId) redirect(`${shiftsPath(slug)}?error=shift`);
+
   await supabase.from("shift_signups").insert({
     program_id: programId,
-    shift_id: shiftId,
+    shift_id: resolvedShiftId,
     guardian_id: null,
     name,
     email: str(formData, "email") || null,
@@ -196,15 +284,18 @@ export async function regenerateSignupShareLink(formData: FormData): Promise<voi
     resource: "signup_page",
     resourceId: seasonId,
   });
+  // mintShareLink resolves seasonId inside this program, so a tampered season id
+  // mints nothing. The revoke above already ran, so a failure here would leave
+  // the program with no live link — say so instead of redirecting silently.
   const minted = await mintShareLink(supabase, {
     programId,
     resource: "signup_page",
     resourceId: seasonId,
   });
-  const share = "raw" in minted ? minted.raw : "";
 
   revalidatePath(shiftsPath(slug));
-  redirect(`${shiftsPath(slug)}${share ? `?share=${encodeURIComponent(share)}` : ""}`);
+  if (!("raw" in minted)) redirect(`${shiftsPath(slug)}?error=share`);
+  redirect(`${shiftsPath(slug)}?share=${encodeURIComponent(minted.raw)}`);
 }
 
 // Confirm a batch of suggested shifts (from the "Suggest shifts" flow). Each
@@ -223,6 +314,18 @@ export async function createSuggestedShifts(formData: FormData): Promise<void> {
   const count = Number(str(formData, "count")) || 0;
   const supabase = await createClient();
 
+  // Same resolution as createShift — the season and the competition these
+  // suggestions hang off both arrive as hidden fields.
+  if (!(await resolveInProgram(supabase, "seasons", seasonId, programId))) {
+    redirect(`${shiftsPath(slug)}?error=season`);
+  }
+  const attachedCompetitionId = competitionId
+    ? await resolveInProgram(supabase, "competitions", competitionId, programId)
+    : null;
+  if (competitionId && !attachedCompetitionId) {
+    redirect(`${shiftsPath(slug)}?error=attach`);
+  }
+
   const rows: Record<string, unknown>[] = [];
   for (let i = 0; i < count; i++) {
     if (str(formData, `keep_${i}`) !== "on") continue;
@@ -234,7 +337,7 @@ export async function createSuggestedShifts(formData: FormData): Promise<void> {
     rows.push({
       program_id: programId,
       season_id: seasonId,
-      competition_id: competitionId || null,
+      competition_id: attachedCompetitionId,
       title,
       starts_at: wallToIso(formData, `starts_${i}`, tz),
       ends_at: wallToIso(formData, `ends_${i}`, tz),

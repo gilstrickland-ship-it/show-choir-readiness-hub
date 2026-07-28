@@ -123,6 +123,11 @@ export default async function PacketPage({
       )}
       {sp.error === "upload" && <p className="alert-error">Upload failed. Try again.</p>}
       {sp.error === "save" && <p className="alert-error">Couldn&apos;t record the document.</p>}
+      {sp.error === "parse" && (
+        <p className="alert-error">
+          That parse doesn&apos;t belong to this competition, so it wasn&apos;t run.
+        </p>
+      )}
 
       {!parseEnabled && (
         <p className="muted">

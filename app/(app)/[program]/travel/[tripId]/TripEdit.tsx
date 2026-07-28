@@ -5,12 +5,14 @@ import { updateTrip } from "../actions";
 // inside and shows the current state, so nothing mutating hides behind a bare
 // triangle.
 //
-// Sparse save (`sparse=1`, the Wave-1 idiom): the form posts only the fields it
-// shows, and updateTrip leaves everything else alone. It shows the competition
-// link — trip-page work — so that one IS posted here, and clearing it to "none"
-// still unlinks. The overnight checkbox is room-safe: the action refuses to turn
-// it off while rooms exist and comes back with `overnight_rooms`, rendered by
-// the Overview section above this popover.
+// What updateTrip writes is decided by what this form posts, field by field:
+// every input below is written on save. The competition link is the one field
+// the two trip popovers differ on — the Season spine's doesn't show it and
+// doesn't post it, so the action leaves the link alone there — and this popover
+// does show it, so its value IS written, including the empty "— none" that
+// deliberately unlinks. The overnight checkbox is room-safe: the action refuses
+// to turn it off while rooms exist and comes back with `overnight_rooms`,
+// rendered by the Overview section above this popover.
 
 export function TripEdit({
   programId,
@@ -46,7 +48,6 @@ export function TripEdit({
         <input type="hidden" name="programId" value={programId} />
         <input type="hidden" name="slug" value={slug} />
         <input type="hidden" name="tripId" value={tripId} />
-        <input type="hidden" name="sparse" value="1" />
         <label>
           Name
           <input type="text" name="name" defaultValue={name} required />

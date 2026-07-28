@@ -177,8 +177,12 @@ insert into digest_sends (id, program_id, digest_id, email) values
 insert into guardian_tokens (id, program_id, guardian_id, token_hash) values
   ('${p.guardianToken}', '${p.program}', '${p.guardian}', '${prefix}-guardian-token-hash');
 
+-- resource_id for an 'itinerary' link is the COMPETITION id, not the itinerary
+-- row's — that is what the app writes and reads back (itinerary/actions.ts
+-- matches \`l.resource_id === competitionId\`) and what 0017's tenancy trigger
+-- enforces. This fixture used the itinerary id until the trigger caught it.
 insert into share_links (id, program_id, resource, resource_id, token_hash) values
-  ('${p.shareLink}', '${p.program}', 'itinerary', '${p.itinerary}', '${prefix}-share-link-hash');
+  ('${p.shareLink}', '${p.program}', 'itinerary', '${p.competition}', '${prefix}-share-link-hash');
 
 insert into token_events (id, program_id, token_kind, token_id, action) values
   ('${p.tokenEvent}', '${p.program}', 'guardian', '${p.guardianToken}', 'view');

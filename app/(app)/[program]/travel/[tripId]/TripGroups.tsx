@@ -15,6 +15,11 @@ import { studentName, type AssignmentRow, type GroupRow } from "./shared";
 //
 // Mutations that are not the day job (rename, capacity, delete) sit in one
 // labeled disclosure per card whose summary names the card and its count.
+//
+// Every form here posts ids only. The card's kind used to ride along so a failed
+// save could come back into the right section; the actions resolve the group and
+// read its kind off the row instead, which is the same routing without trusting
+// a client-posted copy of a stored value.
 
 export function GroupSection({
   kind,
@@ -128,10 +133,15 @@ export function GroupSection({
                         : "travel-member-row"
                     }
                   >
-                    <span>
-                      {a.student ? studentName(a.student) : "?"}
+                    {/* Name and badge are siblings, not nested: the "absent"
+                        dim applies to the name alone, so the danger chip keeps
+                        its full contrast. */}
+                    <span className="travel-member-who">
+                      <span className="travel-member-name">
+                        {a.student ? studentName(a.student) : "?"}
+                      </span>
                       {absent.has(a.student_id) && (
-                        <span className="chip danger"> absent</span>
+                        <span className="chip danger">absent</span>
                       )}
                     </span>
                     {canWrite && (
@@ -140,6 +150,11 @@ export function GroupSection({
                         <input type="hidden" name="slug" value={slug} />
                         <input type="hidden" name="tripId" value={tripId} />
                         <input type="hidden" name="assignmentId" value={a.id} />
+                        {/* Taking someone off mid-fill keeps the fill target up
+                            instead of ending the flow. */}
+                        {fillGroupId && (
+                          <input type="hidden" name="fill" value={fillGroupId} />
+                        )}
                         <button
                           type="submit"
                           className="linklike danger"
@@ -170,7 +185,6 @@ export function GroupSection({
                     <input type="hidden" name="slug" value={slug} />
                     <input type="hidden" name="tripId" value={tripId} />
                     <input type="hidden" name="groupId" value={g.id} />
-                    <input type="hidden" name="kind" value={kind} />
                     <label>
                       Name
                       <input

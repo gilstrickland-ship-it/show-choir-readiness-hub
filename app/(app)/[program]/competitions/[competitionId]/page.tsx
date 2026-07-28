@@ -356,6 +356,7 @@ export default async function CompetitionCommandCenter({
   const { data: resultsData } = await supabase
     .from("competition_results")
     .select("placement, division, score, captions, notes")
+    .eq("program_id", program.id)
     .eq("competition_id", competitionId)
     .maybeSingle();
   const results = resultsData as ResultsRow | null;

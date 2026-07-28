@@ -63,6 +63,7 @@ export default async function ItineraryPage({
     share?: string;
     accepted?: string;
     help?: string;
+    error?: string;
   }>;
 }) {
   const { program: slug, competitionId } = await params;
@@ -298,6 +299,9 @@ export default async function ItineraryPage({
         />
       )}
 
+      {sp.error === "save" && (
+        <p className="alert-error">Couldn&apos;t save that item. Try again.</p>
+      )}
       {sp.published && (
         <p className="alert-ok">Itinerary published — visible to parents.</p>
       )}

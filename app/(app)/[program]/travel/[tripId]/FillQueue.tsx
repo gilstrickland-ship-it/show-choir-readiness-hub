@@ -11,7 +11,10 @@ import type { GroupRow } from "./shared";
 //
 // The chip list offers only riders who still need THIS group's kind, so a tap
 // can never trip the one-room-one-bus guard. Counts re-derive from the
-// assignments query every render (no client state that can lie).
+// assignments query every render (no client state that can lie). The chip posts
+// ids and nothing else: assignStudent resolves the group (and reads its kind off
+// the row) and re-checks the student's eligibility server-side, because a list
+// the page chose to render is not a constraint on what can be posted.
 
 export interface FillChip {
   id: string;
@@ -38,8 +41,8 @@ export function FillQueue({
       <h2>Tap a name to add to {group.label}</h2>
       {chips.length === 0 ? (
         <p className="alert-ok">
-          Everyone who still needs a{" "}
-          {GROUP_KIND_LABEL[group.kind].toLowerCase()} is placed.
+          Nobody left to add — everyone eligible already has a{" "}
+          {GROUP_KIND_LABEL[group.kind].toLowerCase()}.
         </p>
       ) : (
         <div className="travel-chip-grid">
@@ -50,7 +53,6 @@ export function FillQueue({
               <input type="hidden" name="tripId" value={tripId} />
               <input type="hidden" name="travelGroupId" value={group.id} />
               <input type="hidden" name="studentId" value={s.id} />
-              <input type="hidden" name="kind" value={group.kind} />
               <input type="hidden" name="fill" value={group.id} />
               <button
                 type="submit"

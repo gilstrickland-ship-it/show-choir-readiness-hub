@@ -77,6 +77,27 @@ async function seasonIdByLabel(
   return (data as { id: string } | null)?.id ?? null;
 }
 
+// True when that season really is this program's. newSeasonId travels the wizard
+// as a hidden field, and every season-scoped row a step writes carries only the
+// row's own program_id for the write policy to check — so a tampered season id
+// would let rows be stamped into another program's season, invisible to them and
+// frozen the moment they archive it (Constitution I). Each step that writes
+// re-checks, because each step is its own POST.
+async function seasonInProgram(
+  supabase: Db,
+  programId: string,
+  seasonId: string,
+): Promise<boolean> {
+  if (!seasonId) return false;
+  const { data } = await supabase
+    .from("seasons")
+    .select("id")
+    .eq("id", seasonId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return Boolean(data);
+}
+
 // Flip the active season atomically: clear whatever is active, then set this
 // one. The partial unique index (one active season per program) guards against a
 // double-active state; clearing first keeps the flip valid and a re-run a no-op.
@@ -234,6 +255,10 @@ export async function rolloverStudents(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
 
+  if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
+    redirect(`/${slug}/settings/rollover?error=season`);
+  }
+
   const returning: { student_id: string; ensemble_id: string }[] = [];
   const graduating: string[] = [];
   for (const sid of studentIds) {
@@ -247,20 +272,47 @@ export async function rolloverStudents(formData: FormData): Promise<void> {
   }
 
   if (returning.length > 0) {
-    const rows = returning.map((r) => ({
-      program_id: programId,
-      season_id: newSeasonId,
-      ensemble_id: r.ensemble_id,
-      student_id: r.student_id,
-      role: "performer" as const,
-    }));
+    // The checklist posts a student id and an ensemble id per row, so both are
+    // client-supplied. Re-derive the eligible sets from the program itself and
+    // drop anything outside them: an ensemble_members row pointing at another
+    // program's student or ensemble is invisible to that program AND squats
+    // their (season, ensemble, student) slot, so their own rollover silently
+    // loses the student. `graduating` below is already program-scoped by its
+    // update — this brings the upsert to the same standard.
+    const ours = async (table: string, ids: string[]): Promise<Set<string>> => {
+      const unique = Array.from(new Set(ids));
+      if (unique.length === 0) return new Set();
+      const { data } = await supabase
+        .from(table)
+        .select("id")
+        .eq("program_id", programId)
+        .in("id", unique);
+      return new Set(((data as { id: string }[] | null) ?? []).map((r) => r.id));
+    };
+    const [ourStudents, ourEnsembles] = await Promise.all([
+      ours("students", returning.map((r) => r.student_id)),
+      ours("ensembles", returning.map((r) => r.ensemble_id)),
+    ]);
+
+    const rows = returning
+      .filter(
+        (r) => ourStudents.has(r.student_id) && ourEnsembles.has(r.ensemble_id),
+      )
+      .map((r) => ({
+        program_id: programId,
+        season_id: newSeasonId,
+        ensemble_id: r.ensemble_id,
+        student_id: r.student_id,
+        role: "performer" as const,
+      }));
+
     // Idempotent — the (season, ensemble, student) unique index dedupes re-runs.
-    await supabase
-      .from("ensemble_members")
-      .upsert(rows, {
+    if (rows.length > 0) {
+      await supabase.from("ensemble_members").upsert(rows, {
         onConflict: "season_id,ensemble_id,student_id",
         ignoreDuplicates: true,
       });
+    }
   }
 
   if (graduating.length > 0) {
@@ -289,6 +341,11 @@ export async function repointCostumeSets(formData: FormData): Promise<void> {
 
   if (!skip && fromSeasonId) {
     const supabase = await createClient();
+    // The reads below are already program-scoped; the INSERT stamps the posted
+    // newSeasonId, so that one needs resolving too.
+    if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
+      redirect(`/${slug}/settings/rollover?error=season`);
+    }
     const { data: oldSets } = await supabase
       .from("costume_sets")
       .select("name, ensemble_id, sort_order, notes")
@@ -335,6 +392,11 @@ export async function activateNewSeason(formData: FormData): Promise<void> {
   await requireRole(programId, SETTINGS_ROLES);
 
   const supabase = await createClient();
+  // makeSeasonActive is program-scoped, so a season that isn't ours would match
+  // nothing and still report success — check first and say what's wrong.
+  if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
+    redirect(`/${slug}/settings/rollover?error=season`);
+  }
   const activated = await makeSeasonActive(supabase, programId, newSeasonId);
   if (!activated) {
     redirect(

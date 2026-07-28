@@ -31,6 +31,7 @@ const ERR: Record<string, string> = {
   label: "Give the season a name, like 2027-28.",
   create: "Could not create the season. Try again.",
   activate: "Could not make the new season active. Try again.",
+  season: "That season is not one of this program's. Start the rollover again.",
   archive: "Could not archive that season.",
   unarchive: "Could not unarchive that season.",
 };

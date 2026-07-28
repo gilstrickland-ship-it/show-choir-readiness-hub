@@ -12,11 +12,20 @@ import {
 } from "@/lib/treasury";
 
 // Data loaders for the four derived documents (§6, §7, T017). Each takes a
-// Supabase client (the caller's RLS client, so tenant isolation is enforced at
-// the query) and a target id, and returns plain typed data the renderer turns
-// into a PDF. Documents are derived, never stored (Constitution VI): every load
-// runs against live rows. Returns null when the base resource is missing/hidden
-// so the route can 404.
+// Supabase client and a target id, and returns plain typed data the renderer
+// turns into a PDF. Documents are derived, never stored (Constitution VI): every
+// load runs against live rows. Returns null when the base resource is
+// missing/hidden so the route can 404.
+//
+// TENANT SCOPING IS THIS FILE'S JOB, not the client's. Two callers pass a
+// SERVICE-ROLE client — the share-link parent packet route and the export-all
+// zip builder — so RLS is off for them and an unscoped child query renders
+// whatever rows happen to reference the parent id. Rows carrying another
+// program's program_id can reference this program's parents (single-column FKs
+// plus RLS write policies that only check the row's own program_id), so every
+// child query below filters on the parent's program_id explicitly. Without that,
+// another tenant's free text prints as a chaperone name on this program's
+// parent-facing packet.
 
 export interface Rider {
   name: string;
@@ -115,6 +124,7 @@ export async function loadTripDoc(
     const { data: aRows } = await supabase
       .from("travel_assignments")
       .select("travel_group_id, student_id, student:students(first_name, last_name)")
+      .eq("program_id", trip.program_id)
       .in("travel_group_id", groupIds);
     for (const a of (aRows as {
       travel_group_id: string;
@@ -132,6 +142,7 @@ export async function loadTripDoc(
     const { data: cRows } = await supabase
       .from("travel_chaperones")
       .select("travel_group_id, name_override, guardian:guardians(name)")
+      .eq("program_id", trip.program_id)
       .in("travel_group_id", groupIds);
     for (const c of (cRows as {
       travel_group_id: string;
@@ -245,6 +256,7 @@ export async function loadPacketData(
     const { data: itemRows } = await supabase
       .from("itinerary_items")
       .select("starts_at, ends_at, kind, title, location, details, sort_order")
+      .eq("program_id", comp.program_id)
       .eq("itinerary_id", itinerary.id)
       .order("sort_order", { ascending: true })
       .order("starts_at", { ascending: true, nullsFirst: false });
@@ -301,6 +313,7 @@ export async function loadPacketData(
     const { data: signupRows } = await supabase
       .from("shift_signups")
       .select("shift_id, name, status, guardian:guardians(name)")
+      .eq("program_id", comp.program_id)
       .in("shift_id", shiftBase.map((s) => s.id))
       .eq("status", "confirmed");
     const bySh = new Map<string, string[]>();

@@ -39,7 +39,20 @@ export async function addItineraryItem(formData: FormData): Promise<void> {
 
   const kind = str(formData, "kind");
   const supabase = await createClient();
-  await supabase.from("itinerary_items").insert({
+
+  // itineraryId is a hidden field; resolve it against this program AND this
+  // competition before adding a row to it, so an edited field can't file items
+  // into someone else's itinerary (Constitution I).
+  const { data: parent } = await supabase
+    .from("itineraries")
+    .select("id")
+    .eq("id", itineraryId)
+    .eq("program_id", programId)
+    .eq("competition_id", competitionId)
+    .maybeSingle();
+  if (!parent) redirect(`${itinPath(slug, competitionId)}?error=save`);
+
+  const { error } = await supabase.from("itinerary_items").insert({
     itinerary_id: itineraryId,
     program_id: programId,
     starts_at: wallToIso(formData, "starts_at", tz),
@@ -50,6 +63,7 @@ export async function addItineraryItem(formData: FormData): Promise<void> {
     details: str(formData, "details") || null,
     sort_order: Number(str(formData, "sort_order")) || 0,
   });
+  if (error) redirect(`${itinPath(slug, competitionId)}?error=save`);
 
   revalidatePath(itinPath(slug, competitionId));
   redirect(itinPath(slug, competitionId));

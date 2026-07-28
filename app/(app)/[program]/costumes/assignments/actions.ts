@@ -27,6 +27,47 @@ export async function assignPiece(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
 
+  // The grid's dropdowns were the only thing keeping these four ids consistent,
+  // and a form field is not a constraint. Re-derive the whole eligibility list
+  // server-side: the set is ours and in this season, the piece is in that set,
+  // and the student is a member of the set's ensemble this season. Without this
+  // an edited field lands a row on UNIQUE(season_id, piece_id) — a key with no
+  // program column — squatting another program's slot permanently (Const. I).
+  const { data: setData } = await supabase
+    .from("costume_sets")
+    .select("id, ensemble_id")
+    .eq("id", setId)
+    .eq("program_id", programId)
+    .eq("season_id", seasonId)
+    .maybeSingle();
+  const set = setData as { id: string; ensemble_id: string | null } | null;
+  if (!set || !set.ensemble_id) redirect(`${back}&error=assign`);
+
+  const [{ data: season }, { data: piece }, { data: member }] = await Promise.all([
+    supabase
+      .from("seasons")
+      .select("id")
+      .eq("id", seasonId)
+      .eq("program_id", programId)
+      .maybeSingle(),
+    supabase
+      .from("costume_pieces")
+      .select("id")
+      .eq("id", pieceId)
+      .eq("program_id", programId)
+      .eq("set_id", set!.id)
+      .maybeSingle(),
+    supabase
+      .from("ensemble_members")
+      .select("student_id")
+      .eq("program_id", programId)
+      .eq("season_id", seasonId)
+      .eq("ensemble_id", set!.ensemble_id)
+      .eq("student_id", studentId)
+      .maybeSingle(),
+  ]);
+  if (!season || !piece || !member) redirect(`${back}&error=assign`);
+
   // Honor UNIQUE(season_id, piece_id): re-point an existing assignment instead
   // of inserting a duplicate. Reassigning to a new student resets the fitting
   // (the garment now needs checking against a different body).

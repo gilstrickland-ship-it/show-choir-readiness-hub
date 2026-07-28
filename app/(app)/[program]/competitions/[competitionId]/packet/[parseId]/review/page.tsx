@@ -75,11 +75,15 @@ export default async function ReviewPage({
     showGuide && membership.user_id
       ? await loadGuideState(supabase, program.id, membership.user_id)
       : {};
+  // Scoped to the program AND to the competition in the URL: a parse row only
+  // ever reviews its own competition's packet, so a row pointing somewhere else
+  // renders nowhere rather than under whichever competition was asked for.
   const { data: parseData } = await supabase
     .from("packet_parses")
     .select("id, document_id, status, error, raw_output")
     .eq("id", parseId)
     .eq("program_id", program.id)
+    .eq("competition_id", competitionId)
     .maybeSingle();
   const parse = parseData as ParseRow | null;
   if (!parse) notFound();
@@ -94,6 +98,7 @@ export default async function ReviewPage({
     .from("documents")
     .select("storage_path")
     .eq("id", parse.document_id)
+    .eq("program_id", program.id)
     .maybeSingle();
   let signedUrl: string | null = null;
   const path = (doc as { storage_path: string } | null)?.storage_path;

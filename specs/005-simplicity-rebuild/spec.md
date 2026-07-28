@@ -231,6 +231,28 @@ A brand-new director's journey panel walks the *new* happy path: start the seaso
 
 ---
 
+## Wave S — Tenant-isolation remediation (SECURITY, authorized schema exception)
+
+**Status**: escalated to the user 2026-07-27 and **approved** ("do all the work for me"). This is the RQ-3 escalation path being exercised, not a violation of it: RQ-3 says a wave that discovers a schema need must stop and escalate — it did, and the user authorized the schema change. Wave S is therefore the one wave in this feature permitted to ship a migration.
+
+**Origin**: the Wave-2 adversarial review confirmed a cross-tenant write in `assignStudent`; an 8-domain audit then found the same class across ~33 program-scoped tables. **This is pre-existing (not introduced by the rebuild) and live in production.**
+
+**The class**: tables carry `program_id` plus SINGLE-COLUMN FKs to other program-scoped tables. RLS write policies check only `has_role(row.program_id)` — never that the *referenced* rows belong to that program. Server actions insert client-posted UUIDs after `requireRole(claimed programId)` without resolving them. Since `/launch` lets any signed-in user self-create a program as director, an attacker can stamp their `program_id` onto rows pointing at another program's records.
+
+**Confirmed impact**: (a) two cross-tenant READS — `share_links.resource_id` is a polymorphic soft reference with no FK (mint in your program, point at a victim resource, read student PII through the token surface), and packet documents laundered via a service-role path; (b) attacker-controlled free text (`travel_chaperones.name_override`, shift signups) rendering into a victim program's parent-facing PDFs and export ZIPs, because service-role PDF/export queries selected children by parent id with no program filter; (c) invisible, undeletable rows that permanently block legitimate inserts (unique indexes are not RLS-filtered) and make "Delete trip"/"Delete group" fail silently while redirecting as success; (d) the one-room-one-bus trigger silently skipping its invariant (SECURITY INVOKER lookup returns NULL cross-tenant).
+
+**Production pre-flight (run 2026-07-27, read-only)**: **clean — 0 poisoned rows** across 15 key relationships. No exploitation has occurred; the migration will apply without any data purge.
+
+### Requirements
+
+- **S-1 (schema, `0017_tenant_fk_integrity.sql`)**: `unique (id, program_id)` on every program-scoped parent; every vulnerable child FK re-created as a COMPOSITE FK on `(ref_id, program_id)` preserving each constraint's existing ON DELETE behavior exactly. Engine-enforced, so it holds against direct API and service-role writes — which application checks alone cannot. Trigger `enforce_one_group_per_kind_per_trip` → SECURITY DEFINER with an explicit cross-program assertion; sweep all other triggers for the same invoker-RLS blind spot.
+- **S-2 (safety)**: the migration must FAIL LOUDLY and early if poisoned rows exist — never delete data — with a companion read-only pre-flight script listing offenders per table.
+- **S-3 (actions, defense in depth)**: every write resolves client-posted UUIDs with `.eq("program_id", …)` (plus natural parent scope) before use; denormalized values (e.g. a posted `kind`) are read off the resolved row, never trusted; UI-only constraints (eligibility lists, dropdown option sets) are re-derived server-side; DB FK rejections surface as friendly section-local messages, not 500s.
+- **S-4 (service-role paths)**: `lib/pdf/queries.ts` and `lib/export-run.ts` scope every child read by `program_id` — tenant scoping is those files' own responsibility, not their callers'.
+- **S-5 (share_links)**: polymorphic `resource_id` verified in-program at BOTH mint and resolve; capability allow-list stays tiny.
+- **S-6 (tests)**: an RLS suite that, for each vulnerable table, attempts the exact cross-tenant poisoning insert and asserts DB rejection; plus a same-program regression test that the one-room-one-bus trigger still fires.
+- **S-7 (deploy)**: production is at `0015`; `0016_multi_ensemble` is merged on main and REQUIRED by deployed code but was never applied (spec 004's T114 left unchecked) — competitions currently render with no ensembles and creates half-fail. Both `0016` and `0017` must be applied, in order. Claude cannot apply DDL here (blocked by the environment's safety classifier); the operator runs `supabase db push`.
+
 ## Cross-wave requirements
 
 - **RQ-1**: Every wave passes `typecheck` · `test:unit` · `test:rls` · `build`, statically reconciles `tests/e2e`, and keeps `npx playwright test --list --config playwright.config.e2e.ts` clean.

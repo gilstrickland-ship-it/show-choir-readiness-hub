@@ -57,6 +57,30 @@ function resolveHostedDates(
   return { event_date: eventDate, end_date: endDate };
 }
 
+// Resolve a visiting school inside BOTH this program and this hosted event.
+// hosted_slots.hosted_school_id is written straight from a <select>, and no
+// policy, constraint or trigger looks at it — so an unresolved id here files a
+// slot against another program's school, which then blocks that program from
+// ever deleting the school (Constitution I). Scoping to the event as well keeps
+// a slot from pointing at a school invited to a different invitational, which
+// would corrupt the host schedule and the door-sign PDFs.
+async function resolveHostedSchoolId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  programId: string,
+  eventId: string,
+  schoolId: string | null,
+): Promise<string | null | false> {
+  if (!schoolId) return null; // no school on this slot — a label-only row
+  const { data } = await supabase
+    .from("hosted_schools")
+    .select("id")
+    .eq("id", schoolId)
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? false;
+}
+
 // Resolve an event to its program + season + archived flag, scoped to programId.
 // Returns null when the event is missing/hidden (RLS) — the caller bounces.
 async function loadEventGuard(
@@ -94,6 +118,18 @@ export async function createHostedEvent(formData: FormData): Promise<void> {
   if (!dates) redirect(`/${slug}/hosting?error=enddate`);
 
   const supabase = await createClient();
+
+  // seasonId is a hidden field; resolve it inside this program before writing,
+  // so an edited field can't hang an invitational off another program's season
+  // (Constitution I).
+  const { data: season } = await supabase
+    .from("seasons")
+    .select("id")
+    .eq("id", seasonId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  if (!season) redirect(`/${slug}/hosting?error=season`);
+
   const { data, error } = await supabase
     .from("hosted_events")
     .insert({
@@ -296,10 +332,20 @@ export async function addHostedSlot(formData: FormData): Promise<void> {
     .maybeSingle();
   const nextSort = ((last as { sort_order: number } | null)?.sort_order ?? -1) + 1;
 
+  const schoolId = await resolveHostedSchoolId(
+    supabase,
+    programId,
+    eventId,
+    nullable(formData, "hosted_school_id"),
+  );
+  if (schoolId === false) {
+    redirect(`/${slug}/hosting/${eventId}?error=school#schedule`);
+  }
+
   const { error } = await supabase.from("hosted_slots").insert({
     program_id: programId,
     hosted_event_id: eventId,
-    hosted_school_id: nullable(formData, "hosted_school_id"),
+    hosted_school_id: schoolId,
     kind: HOSTED_SLOT_KINDS.includes(kind) ? kind : "other",
     label: nullable(formData, "label"),
     starts_at: startsAt,
@@ -329,17 +375,28 @@ export async function updateHostedSlot(formData: FormData): Promise<void> {
   const startWall = str(formData, "starts_at");
   const startsAt = startWall ? zonedWallToUtc(startWall, tz)?.toISOString() ?? null : null;
 
+  const schoolId = await resolveHostedSchoolId(
+    supabase,
+    programId,
+    eventId,
+    nullable(formData, "hosted_school_id"),
+  );
+  if (schoolId === false) {
+    redirect(`/${slug}/hosting/${eventId}?error=school#schedule`);
+  }
+
   const { error } = await supabase
     .from("hosted_slots")
     .update({
-      hosted_school_id: nullable(formData, "hosted_school_id"),
+      hosted_school_id: schoolId,
       kind: HOSTED_SLOT_KINDS.includes(kind) ? kind : "other",
       label: nullable(formData, "label"),
       starts_at: startsAt,
       duration_minutes: intOrNull(formData, "duration_minutes"),
     })
     .eq("id", slotId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId);
 
   if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schedule`);
   revalidatePath(`/${slug}/hosting/${eventId}`);
@@ -362,7 +419,8 @@ export async function removeHostedSlot(formData: FormData): Promise<void> {
     .from("hosted_slots")
     .delete()
     .eq("id", slotId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .eq("hosted_event_id", eventId);
 
   if (error) redirect(`/${slug}/hosting/${eventId}?error=save#schedule`);
   revalidatePath(`/${slug}/hosting/${eventId}`);

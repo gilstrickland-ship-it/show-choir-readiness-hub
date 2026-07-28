@@ -328,6 +328,11 @@ export default async function HostingEventPage({
           Add at least one school before generating a schedule.
         </p>
       )}
+      {sp.error === "school" && (
+        <p className="alert-error">
+          Pick a visiting school from this invitational&apos;s list.
+        </p>
+      )}
       {sp.error === "delta" && (
         <p className="alert-error">
           Enter a non-zero number of minutes to shift.

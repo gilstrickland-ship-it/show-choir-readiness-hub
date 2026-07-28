@@ -36,6 +36,29 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
 
+  // Both ids come off the form and the write policy checks only the row's own
+  // program_id, so resolve them inside THIS program first (Constitution I).
+  // Otherwise an announcement can be pinned to another program's season or
+  // ensemble — a row they can neither see nor delete, which then blocks them
+  // from ever deleting that ensemble. It also mails nobody, because
+  // computeRecipients is program-scoped: an honest director who somehow gets
+  // here deserves the error rather than a "sent" that reached no one.
+  const inProgram = async (table: string, id: string): Promise<boolean> => {
+    const { data } = await supabase
+      .from(table)
+      .select("id")
+      .eq("id", id)
+      .eq("program_id", programId)
+      .maybeSingle();
+    return Boolean(data);
+  };
+  if (seasonId && !(await inProgram("seasons", seasonId))) {
+    redirect(`/${slug}/comms/announcements?error=season`);
+  }
+  if (ensembleId && !(await inProgram("ensembles", ensembleId))) {
+    redirect(`/${slug}/comms/announcements?error=ensemble`);
+  }
+
   // Create the announcement (sent).
   const { data: annData, error: annErr } = await supabase
     .from("announcements")

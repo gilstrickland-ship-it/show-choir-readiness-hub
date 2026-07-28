@@ -9,6 +9,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // no membership yet to authorize the INSERTs, so the service-role client writes
 // both rows. The only authorization required is "is signed in" — creating a NEW
 // program grants no access to anyone else's tenant.
+//
+// That last sentence is an invariant this action DEPENDS ON, not one it enforces:
+// anyone can stand up a program here and be its director, so "director of the
+// program named in this form" proves nothing about any OTHER program. Every write
+// that accepts a row id from a client must therefore resolve that id inside its
+// own program before trusting it (Constitution I) — a program_id column and a
+// role check are not enough on their own.
 
 // Turn a program name into a URL-safe slug. Falls back to "program" if the name
 // has no slug-able characters (e.g. all punctuation).

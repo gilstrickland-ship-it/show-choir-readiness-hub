@@ -30,10 +30,13 @@ const STATUSES: Array<{ key: "expected" | "absent" | "partial"; label: string }>
 
 export default async function AttendancePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { program: slug, competitionId } = await params;
+  const { error } = await searchParams;
   const { program, role } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = ATTENDANCE_WRITE_ROLES.includes(role);
@@ -63,6 +66,10 @@ export default async function AttendancePage({
     <section className="stack">
       <CompetitionTabs slug={slug} competitionId={competitionId} active="attendance" />
       <h1>Attendance</h1>
+
+      {error === "save" && (
+        <p className="alert-error">Couldn&apos;t save that attendance change. Try again.</p>
+      )}
 
       {rows.length === 0 && (
         <p className="muted">

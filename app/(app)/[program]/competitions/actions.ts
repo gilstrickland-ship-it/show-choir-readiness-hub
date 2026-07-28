@@ -11,6 +11,9 @@ import {
   seedAttendance,
   competitionEnsembleIds,
   competitionRoster,
+  ensemblesInProgram,
+  resolveCompetitionId,
+  resolveSeasonId,
   type CompetitionStatus,
 } from "@/lib/competitions";
 import { flag, type FlaggableProgram } from "@/lib/flags";
@@ -85,6 +88,15 @@ export async function createCompetition(formData: FormData): Promise<void> {
   if (ensembleIds.length === 0) redirect(fail("ensemble"));
 
   const supabase = await createClient();
+
+  // The season and the ensembles arrive as hidden fields / checkbox values, so
+  // being a director of `programId` says nothing about who owns those rows.
+  // Resolve both inside this program before anything is written (Constitution I).
+  if (!(await resolveSeasonId(supabase, programId, seasonId))) redirect(fail("season"));
+  if (!(await ensemblesInProgram(supabase, programId, ensembleIds))) {
+    redirect(fail("ensemble"));
+  }
+
   const { data, error } = await supabase
     .from("competitions")
     .insert({
@@ -180,6 +192,19 @@ export async function updateCompetition(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
 
+  // The competition id is a form field. Scoping only the UPDATE below is not
+  // enough: a foreign id matches zero rows there WITHOUT an error, and the
+  // junction writes further down would still run against it. Resolve it first
+  // and stop (Constitution I).
+  if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
+    redirect(fail("save"));
+  }
+  // seasonId only narrows the reseed/release queries below, but a season that
+  // isn't ours is still a posted id we never checked — fail closed.
+  if (seasonId && !(await resolveSeasonId(supabase, programId, seasonId))) {
+    redirect(fail("season"));
+  }
+
   // Who is going is detail-page work, so a sparse save never diffs the junction:
   // it has no opinion about the set, and treating "didn't say" as "remove" is how
   // a concurrent ensemble add turned a date fix into a removal-confirm bounce.
@@ -188,8 +213,11 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   let newEnsembleIds: string[] = [];
   if (!sparse) {
     newEnsembleIds = ensembleIdsFrom(formData);
-    // ≥1 ensemble required (F6, D3).
+    // ≥1 ensemble required (F6, D3), and every one of them has to be ours.
     if (newEnsembleIds.length === 0) redirect(fail("ensemble"));
+    if (!(await ensemblesInProgram(supabase, programId, newEnsembleIds))) {
+      redirect(fail("ensemble"));
+    }
     const confirmed = str(formData, "confirm_ensemble") === "1";
 
     const currentEnsembleIds = await competitionEnsembleIds(supabase, competitionId);
@@ -214,15 +242,17 @@ export async function updateCompetition(formData: FormData): Promise<void> {
 
   if (error) redirect(fail("save"));
 
-  // Apply junction changes.
+  // Apply junction changes. A failure here is a real failure — swallowing it is
+  // how a "who is going" change reports success and never lands.
   if (added.length > 0) {
-    await supabase.from("competition_ensembles").insert(
+    const { error: junctionErr } = await supabase.from("competition_ensembles").insert(
       added.map((ensemble_id) => ({
         program_id: programId,
         competition_id: competitionId,
         ensemble_id,
       })),
     );
+    if (junctionErr) redirect(fail("save"));
   }
   if (removed.length > 0) {
     await supabase
@@ -329,6 +359,15 @@ export async function reseedAttendance(formData: FormData): Promise<void> {
   await requireRole(programId, COMPETITION_WRITE_ROLES);
 
   const supabase = await createClient();
+  // Seeding writes attendance rows keyed on competition_id, so an unresolved
+  // competition id here would plant them against another program's competition.
+  if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
+    redirect(`/${slug}/competitions/${competitionId}?error=save`);
+  }
+  if (seasonId && !(await resolveSeasonId(supabase, programId, seasonId))) {
+    redirect(`/${slug}/competitions/${competitionId}?error=save`);
+  }
+
   const ensembleIds = await competitionEnsembleIds(supabase, competitionId);
   await seedAttendance(supabase, { programId, competitionId, ensembleIds, seasonId });
 
@@ -357,6 +396,12 @@ export async function saveResults(formData: FormData): Promise<void> {
   const score = scoreRaw ? Number(scoreRaw) : null;
 
   const supabase = await createClient();
+  // competition_results is unique per competition, so an unresolved id here can
+  // permanently squat another program's single results slot. Resolve first.
+  if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
+    redirect(`/${slug}/competitions/${competitionId}?error=results`);
+  }
+
   const { error } = await supabase.from("competition_results").upsert(
     {
       program_id: programId,
@@ -391,7 +436,9 @@ export async function attachPacket(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
 
-  // Scope the document + competition to this program before mutating.
+  // Scope the document + competition to this program before mutating. Both are
+  // client-posted ids; attaching to a competition we don't own would file our
+  // document — and the parse row below — against another program's record.
   const { data: docData } = await supabase
     .from("documents")
     .select("id, competition_id")
@@ -400,6 +447,9 @@ export async function attachPacket(formData: FormData): Promise<void> {
     .maybeSingle();
   const doc = docData as { id: string; competition_id: string | null } | null;
   if (!doc) redirect(`/${slug}/competitions?error=attach`);
+  if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
+    redirect(`/${slug}/competitions?error=attach`);
+  }
 
   await supabase
     .from("documents")

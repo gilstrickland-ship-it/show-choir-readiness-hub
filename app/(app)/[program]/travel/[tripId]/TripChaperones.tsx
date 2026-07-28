@@ -39,6 +39,19 @@ export function ChaperoneSection({
     (n, g) => n + (chaperonesByGroup.get(g.id)?.length ?? 0),
     0,
   );
+  // The summary counts what a director actually wants to know: how many buses
+  // and rooms still have nobody riding with them. (It used to count every group
+  // as "covered" and say "across 1 groups".) Phrased to avoid a plural on the
+  // number so the count can be anything.
+  const uncovered = groups.filter(
+    (g) => (chaperonesByGroup.get(g.id)?.length ?? 0) === 0,
+  ).length;
+  const summary =
+    total === 0
+      ? "None assigned yet"
+      : uncovered === 0
+        ? `${total} assigned · every bus and room has one`
+        : `${total} assigned · ${uncovered} still without one`;
   const nameOf = (c: ChaperoneRow): string =>
     c.guardian_id
       ? (guardianName.get(c.guardian_id) ?? c.guardian?.name ?? "?")
@@ -48,13 +61,7 @@ export function ChaperoneSection({
     <section id="chaperones" className="travel-section stack">
       <div className="travel-section-head">
         <h2>Chaperones</h2>
-        <span className="travel-section-summary">
-          {total === 0
-            ? "None assigned yet"
-            : `${total} assigned${
-                groups.length > 0 ? ` across ${groups.length} groups` : ""
-              }`}
-        </span>
+        <span className="travel-section-summary">{summary}</span>
       </div>
       {error && <p className="alert-error">{error}</p>}
 
@@ -144,9 +151,12 @@ export function ChaperoneSection({
                           </option>
                         ))}
                       </select>
+                      {/* This name is printed on the parent packet as typed, so
+                          it is bounded here and again in addChaperone. */}
                       <input
                         type="text"
                         name="name_override"
+                        maxLength={120}
                         placeholder="…or type a one-off helper's name"
                         aria-label={`Chaperone for ${g.label} — or type a one-off helper's name`}
                       />

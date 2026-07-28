@@ -36,6 +36,31 @@ function sanitizeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(-80) || "receipt";
 }
 
+// A ledger entry carries four references — its season plus up to three optional
+// tags (budget line, competition, trip). All four arrive as form fields, and
+// requireRole only proves the caller runs the program they CLAIMED. Resolve each
+// inside this program before the row is written (Constitution I): a tag pointing
+// at another program's row is invisible to them, un-deletable by them, and made
+// permanent by the void-only trigger, which freezes those columns after insert.
+// Returns the id when it is ours, null when the field was blank, false when it
+// belongs to someone else — a miss is an error, never a silently dropped tag,
+// because a dropped tag is a money-attribution bug (Constitution V).
+async function resolveOwnedId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  table: string,
+  programId: string,
+  id: string | null,
+): Promise<string | null | false> {
+  if (!id) return null;
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? false;
+}
+
 const RECEIPT_TYPES = new Set([
   "application/pdf",
   "image/png",
@@ -122,7 +147,13 @@ async function voidEntryRow(
   entryId: string,
   reason: string,
 ): Promise<boolean> {
-  const { error } = await supabase
+  // .select("id") is what proves the void happened. A filter that matches
+  // nothing — an entry from another program, or one already voided — returns NO
+  // error, so checking only `error` audited voids that never occurred and told
+  // the treasurer "saved" either way. ledger_audit is the append-only
+  // embezzlement control (Constitution V); nothing may be written to it for a
+  // row this call did not actually void.
+  const { data, error } = await supabase
     .from("ledger_entries")
     .update({
       voided_at: new Date().toISOString(),
@@ -131,8 +162,9 @@ async function voidEntryRow(
     })
     .eq("id", entryId)
     .eq("program_id", programId)
-    .is("voided_at", null); // never touch an already-voided row
-  if (error) return false;
+    .is("voided_at", null) // never touch an already-voided row
+    .select("id");
+  if (error || ((data as { id: string }[] | null) ?? []).length === 0) return false;
 
   await supabase.from("ledger_audit").insert({
     program_id: programId,
@@ -163,6 +195,19 @@ export async function addEntry(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+
+  // Resolve the season and all three tags before uploading anything, so a bad
+  // reference never leaves a stranded receipt object behind.
+  const [season, budgetLineId, competitionId, tripId] = await Promise.all([
+    resolveOwnedId(supabase, "seasons", programId, seasonId),
+    resolveOwnedId(supabase, "budget_lines", programId, textOrNull(formData.get("budget_line_id"))),
+    resolveOwnedId(supabase, "competitions", programId, textOrNull(formData.get("competition_id"))),
+    resolveOwnedId(supabase, "trips", programId, textOrNull(formData.get("trip_id"))),
+  ]);
+  if (!season || budgetLineId === false || competitionId === false || tripId === false) {
+    redirect(`${ledgerPath(slug)}?error=entry`);
+  }
+
   const receiptPath = await uploadReceipt(
     supabase,
     programId,
@@ -176,9 +221,9 @@ export async function addEntry(formData: FormData): Promise<void> {
     entry_date: entryDate,
     direction: direction as LedgerDirection,
     amount_cents: amount as number,
-    budget_line_id: textOrNull(formData.get("budget_line_id")),
-    competition_id: textOrNull(formData.get("competition_id")),
-    trip_id: textOrNull(formData.get("trip_id")),
+    budget_line_id: budgetLineId,
+    competition_id: competitionId,
+    trip_id: tripId,
     memo: textOrNull(formData.get("memo")),
     counterparty: textOrNull(formData.get("counterparty")),
     receipt_path: receiptPath,
@@ -302,6 +347,12 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
+
+  // The budget line is posted; the original entry is re-read program-scoped
+  // below, but the line it is being re-entered against never was.
+  if (!(await resolveOwnedId(supabase, "budget_lines", programId, budgetLineId))) {
+    redirect(`${ledgerPath(slug)}?error=categorize`);
+  }
 
   // Read the original (must be live and uncategorized).
   const { data: orig } = await supabase
