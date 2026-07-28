@@ -5,10 +5,7 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { TREASURY_ROLES } from "@/lib/nav";
 import {
-  formatCents,
-  actualForDirection,
   lineActualsFromRows,
-  lineVariance,
   seasonTotalsFromRow,
   type CategoryDirection,
   type LineActual,
@@ -16,30 +13,27 @@ import {
 } from "@/lib/treasury";
 import { SubTabs } from "../../SubTabs";
 import { treasuryTabs } from "@/lib/subnav";
+import {
+  SeasonSummary,
+  LineSection,
+  type CatRow,
+  type LineRow,
+} from "./PlanTables";
 
-// Budget vs Actual (T020). Per line: planned / actual (non-voided ledger sum) /
-// variance, grouped income then expense, category subtotals, and a season header
-// with planned in/out, actual in/out, and net. Read-only — no writes here.
+// Budget vs Actual (T020, replanned in spec 005 Wave 12): what the season
+// planned beside what actually cleared the ledger, line by line. Read-only —
+// no writes here, for any seat.
+//
+// A load-and-compose page: this file reads, the tables render (PlanTables), the
+// vocabulary lives with them. What it says out loud is the ledger's vocabulary
+// — money in, money out, spent so far, still available — because a treasurer
+// moving between the two screens should not have to translate.
 //
 // Actuals come from the same 0019 SQL aggregates the ledger page reads
 // (ledger_season_totals for the header, ledger_line_actuals per line), not from
 // a fetched entry list. Summing fetched rows meant both pages silently stopped
 // at PostgREST's 1000-row cap — and could stop at DIFFERENT rows, so the two
 // money screens could disagree with each other and neither would say so.
-
-interface CatRow {
-  id: string;
-  name: string;
-  direction: CategoryDirection;
-  sort_order: number;
-}
-interface LineRow {
-  id: string;
-  category_id: string;
-  name: string;
-  planned_cents: number;
-  sort_order: number;
-}
 
 export default async function BudgetVsActualPage({
   params,
@@ -67,6 +61,10 @@ export default async function BudgetVsActualPage({
   // the OTHER rpc — so every line printed "$0.00 actual" against a real planned
   // figure, and every variance read as a full-budget underspend.
   let actualsUnavailable = false;
+  // And the budget's own shape can fail on its own too. An empty category list
+  // renders as "No money-in categories yet." — which is a statement about the
+  // budget, not about the read, and it is false when the read is what failed.
+  let structureUnavailable = false;
 
   if (season) {
     const { data: budget } = await supabase
@@ -82,7 +80,7 @@ export default async function BudgetVsActualPage({
     budgetName = b?.name ?? null;
 
     if (b) {
-      const [{ data: catData }, lineActualsRes, totalsRes] = await Promise.all([
+      const [catRes, lineActualsRes, totalsRes] = await Promise.all([
         supabase
           .from("budget_categories")
           .select("id, name, direction, sort_order")
@@ -99,7 +97,8 @@ export default async function BudgetVsActualPage({
           p_season_id: season.id,
         }),
       ]);
-      cats = (catData as CatRow[] | null) ?? [];
+      cats = (catRes.data as CatRow[] | null) ?? [];
+      structureUnavailable = !!catRes.error;
       actualsUnavailable = !!lineActualsRes.error;
       actualByLine = lineActualsRes.error
         ? new Map()
@@ -110,7 +109,7 @@ export default async function BudgetVsActualPage({
       totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
 
       if (cats.length > 0) {
-        const { data: lineData } = await supabase
+        const { data: lineData, error: lineError } = await supabase
           .from("budget_lines")
           .select("id, category_id, name, planned_cents, sort_order")
           .eq("program_id", program.id)
@@ -120,6 +119,7 @@ export default async function BudgetVsActualPage({
           )
           .order("sort_order", { ascending: true });
         lines = (lineData as LineRow[] | null) ?? [];
+        if (lineError) structureUnavailable = true;
       }
     }
   }
@@ -131,113 +131,24 @@ export default async function BudgetVsActualPage({
     linesByCat.set(l.category_id, arr);
   }
 
-  // Header totals: planned per direction (sum of line planned), actual per
-  // direction (non-voided ledger, tagged or not), net = actual in − actual out.
+  // Planned per direction — the sum of the budget's own line amounts, which are
+  // rows we have in hand and are always known.
   const plannedByDir: Record<CategoryDirection, number> = { income: 0, expense: 0 };
   for (const c of cats) {
     for (const l of linesByCat.get(c.id) ?? []) {
       plannedByDir[c.direction] += l.planned_cents;
     }
   }
-  // A failed totals read prints "—", never "$0.00" — a zero here would read as
-  // "the season took in nothing", which is a claim, not a blank.
-  const money = (cents: number | null): string =>
-    cents === null ? "—" : formatCents(cents);
-
-  const section = (dir: CategoryDirection) => {
-    const secCats = cats.filter((c) => c.direction === dir);
-    return (
-      <div className="stack">
-        <h2>{dir === "income" ? "Income" : "Expense"}</h2>
-        <table className="members">
-          <thead>
-            <tr>
-              <th>Line</th>
-              <th className="num">Planned</th>
-              <th className="num">Actual</th>
-              <th className="num">Variance</th>
-            </tr>
-          </thead>
-          {secCats.map((c) => {
-              const catLines = linesByCat.get(c.id) ?? [];
-              let cPlanned = 0;
-              let cActual = 0;
-              const rows = catLines.map((l) => {
-                const a = actualForDirection(actualByLine.get(l.id), dir);
-                cPlanned += l.planned_cents;
-                cActual += a;
-                return { l, a, v: lineVariance(l.planned_cents, a, dir) };
-              });
-              return (
-                <tbody key={c.id}>
-                  <tr>
-                    <td colSpan={4}>
-                      <strong>{c.name}</strong>
-                    </td>
-                  </tr>
-                  {/* Planned is a budget row and is always known. Actual and
-                      variance come off the ledger aggregate, so when that read
-                      failed they are blanks, never zeros — "$0.00 spent" is a
-                      claim about a season. */}
-                  {rows.map(({ l, a, v }) => (
-                    <tr key={l.id}>
-                      <td style={{ paddingLeft: "1.5rem" }}>{l.name}</td>
-                      <td className="num">{formatCents(l.planned_cents)}</td>
-                      <td className="num">{money(actualsUnavailable ? null : a)}</td>
-                      <td className="num">{money(actualsUnavailable ? null : v)}</td>
-                    </tr>
-                  ))}
-                  {catLines.length === 0 && (
-                    <tr>
-                      <td className="muted" style={{ paddingLeft: "1.5rem" }}>
-                        No lines.
-                      </td>
-                      <td className="num">{formatCents(0)}</td>
-                      <td className="num">{money(actualsUnavailable ? null : 0)}</td>
-                      <td className="num">{money(actualsUnavailable ? null : 0)}</td>
-                    </tr>
-                  )}
-                  <tr>
-                    <td style={{ paddingLeft: "1.5rem" }} className="muted">
-                      {c.name} subtotal
-                    </td>
-                    <td className="num">{formatCents(cPlanned)}</td>
-                    <td className="num">
-                      {money(actualsUnavailable ? null : cActual)}
-                    </td>
-                    <td className="num">
-                      {money(
-                        actualsUnavailable
-                          ? null
-                          : lineVariance(cPlanned, cActual, dir),
-                      )}
-                    </td>
-                  </tr>
-                </tbody>
-              );
-            })}
-            {secCats.length === 0 && (
-              <tbody>
-                <tr>
-                  <td colSpan={4} className="muted">
-                    No {dir} categories.
-                  </td>
-                </tr>
-              </tbody>
-            )}
-        </table>
-      </div>
-    );
-  };
 
   return (
     <section className="stack">
       <SubTabs strip={treasuryTabs(slug, "bva")} />
       <h1>Budget vs Actual</h1>
       <p className="muted">
-        Planned versus what actually cleared the ledger (voided entries excluded).
-        Positive variance is favorable: under budget on expense, ahead of plan on
-        income.
+        What you planned, next to what actually happened. Voided entries never
+        count. Positive numbers are good news — money still available to spend,
+        or more taken in than planned; a negative number means the season has
+        gone past its plan.
       </p>
 
       {!season && <p className="alert-error">No active season.</p>}
@@ -248,87 +159,54 @@ export default async function BudgetVsActualPage({
         </p>
       )}
 
+      {/* Two aggregates and the budget's own shape feed this page and each can
+          fail alone. The banner names whichever one is missing, because the
+          figures it explains are blanks — and a blank nobody explained reads as
+          "there is no money here". */}
       {season && budgetName && (!totals || actualsUnavailable) && (
         <p className="alert-error">
           {!totals && actualsUnavailable
-            ? "The season actuals could not be read just now, so the totals and every line's Actual below are blank rather than wrong."
+            ? "The season actuals could not be read just now, so the totals and every line's figures below are blank rather than wrong."
             : !totals
               ? "The season actuals could not be read just now, so the header totals below are blank rather than wrong."
-              : "The per-line actuals could not be read just now, so each line's Actual and Variance below are blank rather than wrong."}{" "}
+              : "The per-line actuals could not be read just now, so each line's figures below are blank rather than wrong."}{" "}
           Reload to try again.
+        </p>
+      )}
+
+      {season && budgetName && structureUnavailable && (
+        <p className="alert-error">
+          The budget&apos;s categories and lines could not be read just now, so
+          this page is showing less of the budget than it has — not an empty
+          one. Reload to try again.
         </p>
       )}
 
       {season && budgetName && (
         <>
-          <div className="detail-list">
-            <div>
-              <span className="muted">Budget</span>
-              <span>{budgetName}</span>
-            </div>
-            <div>
-              <span className="muted">Season</span>
-              <span>{season.label}</span>
-            </div>
-          </div>
+          <dl className="detail-list">
+            <dt>Budget</dt>
+            <dd>{budgetName}</dd>
+            <dt>Season</dt>
+            <dd>{season.label}</dd>
+          </dl>
 
-          <table className="members">
-            <thead>
-              <tr>
-                <th></th>
-                <th className="num">Planned</th>
-                <th className="num">Actual</th>
-                <th className="num">Variance</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Income</td>
-                <td className="num">{formatCents(plannedByDir.income)}</td>
-                <td className="num">{money(totals?.inCents ?? null)}</td>
-                <td className="num">
-                  {money(
-                    totals
-                      ? lineVariance(plannedByDir.income, totals.inCents, "income")
-                      : null,
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>Expense</td>
-                <td className="num">{formatCents(plannedByDir.expense)}</td>
-                <td className="num">{money(totals?.outCents ?? null)}</td>
-                <td className="num">
-                  {money(
-                    totals
-                      ? lineVariance(
-                          plannedByDir.expense,
-                          totals.outCents,
-                          "expense",
-                        )
-                      : null,
-                  )}
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <strong>Net</strong>
-                </td>
-                <td className="num">
-                  <strong>
-                    {formatCents(plannedByDir.income - plannedByDir.expense)}
-                  </strong>
-                </td>
-                <td className="num">
-                  <strong>{money(totals?.netCents ?? null)}</strong>
-                </td>
-                <td className="num">—</td>
-              </tr>
-            </tbody>
-          </table>
+          <SeasonSummary
+            plannedIn={plannedByDir.income}
+            plannedOut={plannedByDir.expense}
+            totals={totals}
+          />
 
-          {section("income")}
-          {section("expense")}
+          {(["income", "expense"] as CategoryDirection[]).map((dir) => (
+            <LineSection
+              key={dir}
+              direction={dir}
+              cats={cats}
+              linesByCat={linesByCat}
+              actualByLine={actualByLine}
+              unavailable={actualsUnavailable}
+            />
+          ))}
         </>
       )}
     </section>
