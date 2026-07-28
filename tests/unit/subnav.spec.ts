@@ -52,13 +52,23 @@ describe("People (was RosterTabs)", () => {
 });
 
 describe("Money (was TreasuryTabs)", () => {
-  test("four tabs, read-visible to every money seat", () => {
+  test("five tabs, read-visible to every money seat", () => {
     expect(shape(treasuryTabs(SLUG, "ledger"))).toEqual([
       ["Ledger", "/demo/treasury"],
+      ["Commitments", "/demo/treasury/commitments"],
       ["Budget", "/demo/treasury/budget"],
       ["Budget vs Actual", "/demo/treasury/budget-vs-actual"],
       ["Reports", "/demo/treasury/reports"],
     ]);
+  });
+
+  // Money reads planned → committed → spent → still available, and the strip
+  // reads the same way: commitments are what changes what is still available, so
+  // they sit between the ledger and the plan rather than at the end with the
+  // reports (spec 006 §1).
+  test("commitments sit directly after the ledger", () => {
+    const keys = treasuryTabs(SLUG, "commitments").items.map((i) => i.key);
+    expect(keys.indexOf("commitments")).toBe(keys.indexOf("ledger") + 1);
   });
 });
 

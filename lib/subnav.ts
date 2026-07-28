@@ -57,10 +57,21 @@ export function rosterTabs(
   };
 }
 
-// Money — Ledger / Budget / Budget vs Actual / Reports. Every tab is
-// read-visible to all TREASURY_ROLES (board_member reads); the write controls
+// Money — Ledger / Commitments / Budget / Budget vs Actual / Reports. Every tab
+// is read-visible to all TREASURY_ROLES (board_member reads); the write controls
 // inside each page gate on canWrite, not the strip.
-export type TreasuryTab = "ledger" | "budget" | "bva" | "reports";
+//
+// Commitments sits SECOND, directly after the ledger, because that is where it
+// sits in the money itself: planned → committed → spent → still available. It
+// is the layer between the budget and the ledger, and putting it at the end of
+// the strip would have it read as a report rather than as the thing that changes
+// what is still available (spec 006 §1).
+export type TreasuryTab =
+  | "ledger"
+  | "commitments"
+  | "budget"
+  | "bva"
+  | "reports";
 
 export function treasuryTabs(slug: string, active: TreasuryTab): SubTabStrip {
   const base = `/${slug}/treasury`;
@@ -68,6 +79,7 @@ export function treasuryTabs(slug: string, active: TreasuryTab): SubTabStrip {
     active,
     items: [
       { key: "ledger", label: "Ledger", href: base },
+      { key: "commitments", label: "Commitments", href: `${base}/commitments` },
       { key: "budget", label: "Budget", href: `${base}/budget` },
       { key: "bva", label: "Budget vs Actual", href: `${base}/budget-vs-actual` },
       { key: "reports", label: "Reports", href: `${base}/reports` },
