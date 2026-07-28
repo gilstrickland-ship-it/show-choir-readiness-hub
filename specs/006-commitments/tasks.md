@@ -19,11 +19,16 @@ Sequenced BEFORE spec 005's Wave 9 (tutorials), so first-use guidance covers com
 - [X] T174 Commitments list + detail under Money, using the established idioms (drawer create, `?edit=` full-width row panel, shared `Flash`/`SubTabs`, live-summary heads). Detail shows the drawdown and its linked ledger entries; "record a payment against this" pre-fills the ledger drawer so most entries never touch the tag (R3).
 - [X] T175 Lifecycle: request → approve → issue → partially received → received → closed, plus cancel/void and **revisions** (R2, the "change amount" button quietly writes a revision). Explicit close releasing the remainder with visible confirmation and recorded `released_cents` (R4). Overspend **warns, never blocks** (R5). After-the-fact commitments allowed but marked in neutral copy (R6).
 - [X] T176 Expected money (the inbound subtype): same machinery, different labels and math — does NOT increase available budget until received; shown separately as expected. Covers district allocation, grant award, sponsorship pledge, and an invoice to another district that owes entry fees.
-- [ ] T177 Thresholds in settings (R/D6): two editable numbers per program — second approver above $X (default $250), board approval above $Y (default $1,000) — plus a "get three quotes above $Z" nudge. Stale-open-commitments nudge on Today and in the rollover flow (R7).
+- [X] T177 Thresholds in settings (R/D6): two editable numbers per program — second approver above $X (default $250), board approval above $Y (default $1,000) — plus a "get three quotes above $Z" nudge. Stale-open-commitments nudge on Today and in the rollover flow (R7).
 
 ## Phase 4 — Verification
 
-- [ ] T178 Full gate + e2e (a treasurer/director pair walking request → approve → pay → close, and the self-approval refusal) + measured visual pass; production migration applied after review.
+- [X] T178 Full gate + e2e (a treasurer/director pair walking request → approve → pay → close, and the self-approval refusal) + measured visual pass; production migration applied after review.
+
+## Production migrations — READY, NOT APPLIED
+
+Apply in order: `0021_commitments.sql` → `0022_commitment_drawdown_rows.sql` → `0023_commitment_thresholds.sql`. All idempotent and re-runnable.
+**0023 is deploy-blocking**: `lib/tenant.ts` now selects the three `programs` threshold columns, so an unmigrated database 400s that select. 0021 must precede any code passing `add_ledger_entry`'s twelfth parameter.
 
 ## Resolved during implementation
 
