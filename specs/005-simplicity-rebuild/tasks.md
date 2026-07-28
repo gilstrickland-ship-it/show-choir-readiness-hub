@@ -56,8 +56,8 @@
 
 ## Phase 7 — Wave 7: Hosting
 
-- [ ] T139 Visible host command center (US11): schools + schedule as visible tables; mutations in labeled disclosures with live-count summaries; generate-schedule as primary; toast searchParams collapsed.
-- [ ] T140 Wave-7 verification: full gate + e2e + visual QA.
+- [X] T139 Visible host command center (US11): schools + schedule as visible tables; mutations in labeled disclosures with live-count summaries; generate-schedule as primary; toast searchParams collapsed.
+- [X] T140 Wave-7 verification: full gate + e2e + visual QA.
 
 ## Phase 8 — Wave 8: System pass
 
