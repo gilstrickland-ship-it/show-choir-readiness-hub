@@ -8,6 +8,7 @@ import { archiveSeason, unarchiveSeason } from "../actions";
 import { ArchivedBanner } from "../../ArchivedBanner";
 import { SubTabs } from "../../SubTabs";
 import { settingsTabs } from "@/lib/subnav";
+import { flashFrom, oneParam } from "@/lib/flash";
 import {
   createRolloverSeason,
   confirmEnsembles,
@@ -28,27 +29,35 @@ import {
 const STEPS = ["new", "ensembles", "students", "costumes", "activate", "archive"] as const;
 type Step = (typeof STEPS)[number];
 
-const ERR: Record<string, string> = {
-  label: "Give the season a name, like 2027-28.",
-  create: "Could not create the season. Try again.",
-  activate: "Could not make the new season active. Try again.",
-  season: "That season is not one of this program's. Start the rollover again.",
-  archive: "Could not archive that season.",
-  unarchive: "Could not unarchive that season.",
-};
+// One section here — the page has a single message area — but the lookup is the
+// app's shared one, because the code rides in the URL: `?error=constructor`
+// would otherwise walk up Object.prototype and hand React a function to render,
+// and `?error=a&error=b` arrives as an ARRAY, which `ERR[sp.error]` indexed with
+// (spec 005 T143a).
+const ERR = {
+  label: { section: "page", message: "Give the season a name, like 2027-28." },
+  create: { section: "page", message: "Could not create the season. Try again." },
+  activate: {
+    section: "page",
+    message: "Could not make the new season active. Try again.",
+  },
+  season: {
+    section: "page",
+    message:
+      "That season is not one of this program's. Start the rollover again.",
+  },
+  archive: { section: "page", message: "Could not archive that season." },
+  unarchive: { section: "page", message: "Could not unarchive that season." },
+} as const;
 
 export default async function RolloverPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    step?: string;
-    newSeason?: string;
-    error?: string;
-    archived?: string;
-    unarchived?: string;
-  }>;
+  // Next hands back an ARRAY for a duplicated param (?error=a&error=b), so this
+  // is typed as what it really is and every read goes through `one()`.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -58,12 +67,15 @@ export default async function RolloverPage({
     );
   }
   const sp = await searchParams;
+  const one = (key: string): string | null => oneParam(sp, key);
   const isDirector = role === "director";
 
-  const step: Step = (STEPS as readonly string[]).includes(sp.step ?? "")
-    ? (sp.step as Step)
+  const step: Step = (STEPS as readonly string[]).includes(one("step") ?? "")
+    ? (one("step") as Step)
     : "new";
-  const newSeasonId = sp.newSeason ?? "";
+  const newSeasonId = one("newSeason") ?? "";
+  const errorCode = one("error");
+  const error = flashFrom(ERR, errorCode);
 
   const supabase = await createClient();
 
@@ -112,9 +124,15 @@ export default async function RolloverPage({
         names — and archive past seasons to freeze them read-only.
       </p>
 
-      {sp.error && <p className="alert-error">{ERR[sp.error] ?? "Something went wrong."}</p>}
-      {sp.archived && <p className="alert-ok">Season archived — it is now read-only.</p>}
-      {sp.unarchived && <p className="alert-ok">Season unarchived.</p>}
+      {errorCode && (
+        <p className="alert-error">
+          {error?.message ?? "Something went wrong."}
+        </p>
+      )}
+      {one("archived") && (
+        <p className="alert-ok">Season archived — it is now read-only.</p>
+      )}
+      {one("unarchived") && <p className="alert-ok">Season unarchived.</p>}
 
       {/* --- Wizard --- */}
       <div className="confirm-box stack" style={{ width: "100%" }}>

@@ -200,7 +200,7 @@ export async function createTrip(formData: FormData): Promise<void> {
 
   if (error || !data) redirect(fail("save"));
 
-  revalidatePath(`/${slug}/travel`);
+  revalidatePath(travelPath(slug));
   if (back) {
     revalidatePath(back);
     // The fragment scrolls the new row into view; ?created= is what actually
@@ -292,7 +292,7 @@ export async function updateTrip(formData: FormData): Promise<void> {
 
   if (error) redirect(fail("save"));
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   if (back) {
     revalidatePath(back);
     redirect(`${back}?saved=trip-${tripId}#item-trip-${tripId}`);
@@ -349,7 +349,7 @@ export async function deleteTrip(formData: FormData): Promise<void> {
     .eq("program_id", programId);
   if (error) redirect(fail);
 
-  revalidatePath(`/${slug}/travel`);
+  revalidatePath(travelPath(slug));
   redirect(travelPath(slug));
 }
 
@@ -394,7 +394,7 @@ export async function createGroup(formData: FormData): Promise<void> {
   });
   if (error) redirect(failGroup);
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   // Land back on the section that was just added to (…#rooms / …#buses) rather
   // than scrolled to the top — a director adding several groups stays in place.
   const anchor = kind === "room" ? "rooms" : "buses";
@@ -434,7 +434,7 @@ export async function updateGroup(formData: FormData): Promise<void> {
     .eq("program_id", programId);
   if (error) redirect(failGroup);
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   redirect(self);
 }
 
@@ -476,7 +476,7 @@ export async function deleteGroup(formData: FormData): Promise<void> {
     .eq("program_id", programId);
   if (error) redirect(failGroup);
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   redirect(self);
 }
 
@@ -554,7 +554,7 @@ export async function assignStudent(formData: FormData): Promise<void> {
     redirect(`${self}?error=assign${kindQuery(group.kind)}${fillQ}`);
   }
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   redirect(fill ? `${self}?fill=${encodeURIComponent(fill)}` : self);
 }
 
@@ -576,7 +576,7 @@ export async function unassignStudent(formData: FormData): Promise<void> {
     .eq("id", assignmentId)
     .eq("program_id", programId);
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   const self = tripPath(slug, tripId);
   redirect(fill ? `${self}?fill=${encodeURIComponent(fill)}` : self);
 }
@@ -627,7 +627,7 @@ export async function addChaperone(formData: FormData): Promise<void> {
   });
   if (error) redirect(`${self}?error=chaperone`);
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   redirect(self);
 }
 
@@ -645,6 +645,6 @@ export async function removeChaperone(formData: FormData): Promise<void> {
     .eq("id", chaperoneId)
     .eq("program_id", programId);
 
-  revalidatePath(`/${slug}/travel/${tripId}`);
+  revalidatePath(tripPath(slug, tripId));
   redirect(tripPath(slug, tripId));
 }

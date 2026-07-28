@@ -39,6 +39,15 @@ export function programPath(slug: string, path: string): string | null {
   return `/${slug}/${path}`;
 }
 
+// The program's ROOT path — what `revalidatePath(…, "layout")` is given when a
+// write changes the tenant shell (the header prints the active season's label).
+// Separate from programPath because that one always appends a segment, and
+// `/demo/` is not the same cache key as `/demo`.
+export function programRoot(slug: string): string | null {
+  if (!isProgramSlug(slug)) return null;
+  return `/${slug}`;
+}
+
 // The absolute path for an allow-listed key, or null when the caller sent
 // nothing (the module-page flow), something we don't recognize, or a slug that
 // isn't a slug.

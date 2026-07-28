@@ -11,6 +11,7 @@ import {
   revokeShareLinksForResource,
   activeShareLinks,
 } from "@/lib/tokens";
+import { programPath } from "@/lib/return-path";
 
 // Manual itinerary editor (§5, T014). One itinerary per competition; items CRUD;
 // publish gates parent visibility (invariant §9.3). Times arrive as program-tz
@@ -26,7 +27,11 @@ function wallToIso(fd: FormData, key: string, tz: string): string | null {
 }
 
 function itinPath(slug: string, competitionId: string): string {
-  return `/${slug}/competitions/${competitionId}/itinerary`;
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  return programPath(slug, `competitions/${competitionId}/itinerary`) ?? "/";
 }
 
 export async function addItineraryItem(formData: FormData): Promise<void> {

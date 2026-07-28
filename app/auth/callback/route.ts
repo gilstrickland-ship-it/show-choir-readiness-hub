@@ -9,8 +9,13 @@ import { createClient } from "@/lib/supabase/server";
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
+  // A leading "/" is not enough to make a value local: "//evil.com" and
+  // "/\evil.com" both start with one and both are read as ANOTHER ORIGIN by
+  // browsers that normalize the path. Only a single slash followed by something
+  // that isn't a slash or a backslash is a path we own (spec 005 T143a).
   const nextParam = searchParams.get("redirect");
-  const next = nextParam && nextParam.startsWith("/") ? nextParam : "/launch";
+  const next =
+    nextParam && /^\/(?![/\\])/.test(nextParam) ? nextParam : "/launch";
 
   if (code) {
     const supabase = await createClient();

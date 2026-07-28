@@ -10,7 +10,7 @@ import {
   EVENT_KINDS,
   shiftedEndInstant,
 } from "@/lib/events";
-import { returnPath } from "@/lib/return-path";
+import { returnPath, programPath } from "@/lib/return-path";
 import { ensemblesInProgram, resolveSeasonId } from "@/lib/competitions";
 
 // General events CRUD + weekly repeat helper (§5a, T013). Writers: director/admin
@@ -27,6 +27,19 @@ function str(fd: FormData, key: string): string {
 // client-supplied URL. Absent/unknown ⇒ null ⇒ today's redirects, unchanged.
 function seasonReturn(fd: FormData, slug: string): string | null {
   return returnPath(slug, str(fd, "from"));
+}
+
+// The module-page fallbacks that `back` falls through to. `slug` arrives as a
+// form field, so a value like "/evil.com" interpolated into a path makes a
+// protocol-relative URL the browser follows off-site — the same class the
+// allow-list above closes for the borrowed-form path, closed here too for the
+// ordinary one (spec 005 T143a).
+function eventsPath(slug: string): string {
+  return programPath(slug, "events") ?? "/";
+}
+
+function eventPath(slug: string, eventId: string): string {
+  return programPath(slug, `events/${eventId}`) ?? "/";
 }
 
 // A SPARSE save carries only the fields it edits (the Season page's row-edit
@@ -74,7 +87,7 @@ export async function createEvent(formData: FormData): Promise<void> {
   // section reopened on the same error message it always used.
   const back = seasonReturn(formData, slug);
   const fail = (code: string): string =>
-    back ? `${back}?error=${code}&add=event` : `/${slug}/events?error=${code}`;
+    back ? `${back}?error=${code}&add=event` : `${eventsPath(slug)}?error=${code}`;
 
   const title = str(formData, "title");
   if (!title) redirect(fail("title"));
@@ -158,7 +171,7 @@ export async function createEvent(formData: FormData): Promise<void> {
     if (junctionErr) redirect(fail("save"));
   }
 
-  revalidatePath(`/${slug}/events`);
+  revalidatePath(eventsPath(slug));
   if (back) {
     revalidatePath(back);
     // A weekly repeat makes many rows; the spine highlights the first one. The
@@ -167,7 +180,7 @@ export async function createEvent(formData: FormData): Promise<void> {
     const key = `event-${(inserted as { id: string }[])[0]?.id ?? ""}`;
     redirect(`${back}?created=${key}#item-${key}`);
   }
-  redirect(`/${slug}/events?created=${rows.length}`);
+  redirect(`${eventsPath(slug)}?created=${rows.length}`);
 }
 
 export async function updateEvent(formData: FormData): Promise<void> {
@@ -183,7 +196,7 @@ export async function updateEvent(formData: FormData): Promise<void> {
   const fail = (code: string): string =>
     back
       ? `${back}?error=${code}&edit=event-${eventId}`
-      : `/${slug}/events/${eventId}?error=${code}`;
+      : `${eventPath(slug, eventId)}?error=${code}`;
 
   // The spine popover edits three fields and sends three fields; everything it
   // doesn't send is left exactly as it is, instead of being cleared by a save
@@ -293,12 +306,12 @@ export async function updateEvent(formData: FormData): Promise<void> {
     }
   }
 
-  revalidatePath(`/${slug}/events`);
+  revalidatePath(eventsPath(slug));
   if (back) {
     revalidatePath(back);
     redirect(`${back}?saved=event-${eventId}#item-event-${eventId}`);
   }
-  redirect(`/${slug}/events/${eventId}?saved=1`);
+  redirect(`${eventPath(slug, eventId)}?saved=1`);
 }
 
 export async function deleteEvent(formData: FormData): Promise<void> {
@@ -310,6 +323,6 @@ export async function deleteEvent(formData: FormData): Promise<void> {
   const supabase = await createClient();
   await supabase.from("events").delete().eq("id", eventId).eq("program_id", programId);
 
-  revalidatePath(`/${slug}/events`);
-  redirect(`/${slug}/events`);
+  revalidatePath(eventsPath(slug));
+  redirect(eventsPath(slug));
 }

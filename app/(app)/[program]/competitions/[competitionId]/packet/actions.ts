@@ -8,6 +8,7 @@ import { COMPETITION_WRITE_ROLES, resolveCompetitionId } from "@/lib/competition
 import { flag, type FlaggableProgram } from "@/lib/flags";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { runPacketParse } from "@/lib/ai/packet-parse";
+import { programPath } from "@/lib/return-path";
 
 // Packet upload + parse trigger (§5, T015, Constitution IV). Upload a PDF/image to
 // Storage under {program_id}/{competition_id}/..., record a documents row, and —
@@ -16,7 +17,11 @@ import { runPacketParse } from "@/lib/ai/packet-parse";
 // recorded even with the flag off, so the manual editor can still show it (T014).
 
 function packetPath(slug: string, competitionId: string): string {
-  return `/${slug}/competitions/${competitionId}/packet`;
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  return programPath(slug, `competitions/${competitionId}/packet`) ?? "/";
 }
 
 const ALLOWED = new Set([

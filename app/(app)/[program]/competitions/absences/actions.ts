@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { ATTENDANCE_WRITE_ROLES } from "@/lib/competitions";
 import { notifyAbsenceOutcome } from "@/lib/comms-send";
+import { programPath } from "@/lib/return-path";
 
 // Staff review queue for parent-submitted absence requests (§5, §8a). Confirm
 // flips the student's attendance row to 'absent' and stamps the request
@@ -19,7 +20,11 @@ function str(fd: FormData, key: string): string {
 }
 
 function queuePath(slug: string): string {
-  return `/${slug}/competitions/absences`;
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  return programPath(slug, "competitions/absences") ?? "/";
 }
 
 export async function confirmAbsence(formData: FormData): Promise<void> {

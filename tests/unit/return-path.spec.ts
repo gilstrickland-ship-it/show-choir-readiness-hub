@@ -13,6 +13,7 @@ import {
   programPath,
   isProgramSlug,
   isReturnSurface,
+  programRoot,
 } from "@/lib/return-path";
 
 describe("returnPath", () => {
@@ -75,6 +76,22 @@ describe("programPath", () => {
 
   test("returns null rather than a path a caller could interpolate anyway", () => {
     expect(programPath("/evil.example", "dashboard")).toBeNull();
+  });
+});
+
+describe("programRoot (T143a)", () => {
+  test("is the program's own path, with no trailing segment", () => {
+    // revalidatePath(…, "layout") is given this when a write changes the shell
+    // (the header prints the active season's label). `/demo/` is a different
+    // cache key from `/demo`, which is why it is not programPath(slug, "").
+    expect(programRoot("demo")).toBe("/demo");
+    expect(programPath("demo", "")).toBe("/demo/");
+  });
+
+  test("fails closed on the same hostile values programPath does", () => {
+    expect(programRoot("/evil.example")).toBeNull();
+    expect(programRoot("")).toBeNull();
+    expect(programRoot("HTTPS://evil.example")).toBeNull();
   });
 });
 

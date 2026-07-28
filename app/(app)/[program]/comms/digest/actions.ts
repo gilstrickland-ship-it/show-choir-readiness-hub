@@ -8,6 +8,7 @@ import { DIGEST_WRITE_ROLES, currentWeekOf } from "@/lib/comms";
 import { sendDigestCore } from "@/lib/comms-send";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { draftDigest } from "@/lib/ai/digest-draft";
+import { programPath } from "@/lib/return-path";
 
 // Digest review actions (§8, T025, Constitution IV). Director/admin only. The AI
 // NEVER sends: "Draft now" produces a `draft`, a human edits + approves, and only
@@ -22,7 +23,11 @@ function str(fd: FormData, key: string): string {
 // the state and links here, so every action below returns to this page and the
 // `backTo` fork these redirects used to carry is gone with the landing's forms.
 function digestPath(slug: string): string {
-  return `/${slug}/comms/digest`;
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  return programPath(slug, "comms/digest") ?? "/";
 }
 
 // "Draft now" fallback (mirrors the packet-parse inline path). Runs the gather →

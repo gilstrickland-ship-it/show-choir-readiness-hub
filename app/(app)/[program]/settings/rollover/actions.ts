@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
-import { returnPath, programPath } from "@/lib/return-path";
+import { returnPath, programPath, programRoot } from "@/lib/return-path";
 
 // Season rollover wizard actions (§3, §9.4, T028). Every step is a director/admin
 // server action that re-checks the role (Constitution I) and is idempotent /
@@ -21,8 +21,21 @@ import { returnPath, programPath } from "@/lib/return-path";
 
 type Db = Awaited<ReturnType<typeof createClient>>;
 
+// Every path this file builds runs through programPath: `slug` arrives as a form
+// field, and a value like "/evil.com" interpolated into a path makes a
+// protocol-relative URL the browser follows off-site (spec 005 T143a).
+function rolloverPath(slug: string): string {
+  return programPath(slug, "settings/rollover") ?? "/";
+}
+
+// The tenant shell — what `revalidatePath(…, "layout")` refreshes when the
+// active season changes, since the header prints its label.
+function shellPath(slug: string): string {
+  return programRoot(slug) ?? "/";
+}
+
 function wizardPath(slug: string, step: string, newSeasonId: string): string {
-  return `/${slug}/settings/rollover?step=${step}&newSeason=${newSeasonId}`;
+  return `${rolloverPath(slug)}?step=${step}&newSeason=${newSeasonId}`;
 }
 
 // Insert a season, or reuse the same-label one that is already there (which is
@@ -160,7 +173,7 @@ export async function startFirstSeason(formData: FormData): Promise<void> {
   if (existing.length > 0) {
     const alreadyDone = existing.some((s) => s.label === label && s.is_active);
     if (alreadyDone) {
-      revalidatePath(`/${slug}`, "layout");
+      revalidatePath(shellPath(slug), "layout");
       redirect(`${back}?seasonStarted=1`);
     }
     redirect(`${back}?seasonError=exists`);
@@ -190,7 +203,7 @@ export async function startFirstSeason(formData: FormData): Promise<void> {
   }
 
   // The season label rides in the app-shell header, so revalidate the layout.
-  revalidatePath(`/${slug}`, "layout");
+  revalidatePath(shellPath(slug), "layout");
   redirect(`${back}?seasonStarted=1`);
 }
 
@@ -202,7 +215,7 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
 
   const label = String(formData.get("label") ?? "").trim();
   if (!label) {
-    redirect(`/${slug}/settings/rollover?error=label`);
+    redirect(`${rolloverPath(slug)}?error=label`);
   }
 
   const supabase = await createClient();
@@ -213,7 +226,7 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
     endsOn: String(formData.get("ends_on") ?? "").trim() || null,
   });
   if (!newSeasonId) {
-    redirect(`/${slug}/settings/rollover?error=create`);
+    redirect(`${rolloverPath(slug)}?error=create`);
   }
 
   // Nothing to carry over? Then the ensembles / returning-students / costume
@@ -227,7 +240,7 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
     .neq("id", newSeasonId);
   const nextStep = (priorCount ?? 0) === 0 ? "activate" : "ensembles";
 
-  revalidatePath(`/${slug}/settings/rollover`);
+  revalidatePath(rolloverPath(slug));
   redirect(wizardPath(slug, nextStep, newSeasonId));
 }
 
@@ -256,7 +269,7 @@ export async function rolloverStudents(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
-    redirect(`/${slug}/settings/rollover?error=season`);
+    redirect(`${rolloverPath(slug)}?error=season`);
   }
 
   const returning: { student_id: string; ensemble_id: string }[] = [];
@@ -323,7 +336,7 @@ export async function rolloverStudents(formData: FormData): Promise<void> {
       .in("id", graduating);
   }
 
-  revalidatePath(`/${slug}/settings/rollover`);
+  revalidatePath(rolloverPath(slug));
   redirect(wizardPath(slug, "costumes", newSeasonId));
 }
 
@@ -344,7 +357,7 @@ export async function repointCostumeSets(formData: FormData): Promise<void> {
     // The reads below are already program-scoped; the INSERT stamps the posted
     // newSeasonId, so that one needs resolving too.
     if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
-      redirect(`/${slug}/settings/rollover?error=season`);
+      redirect(`${rolloverPath(slug)}?error=season`);
     }
     const { data: oldSets } = await supabase
       .from("costume_sets")
@@ -380,7 +393,7 @@ export async function repointCostumeSets(formData: FormData): Promise<void> {
     }
   }
 
-  revalidatePath(`/${slug}/settings/rollover`);
+  revalidatePath(rolloverPath(slug));
   redirect(wizardPath(slug, "activate", newSeasonId));
 }
 
@@ -395,15 +408,15 @@ export async function activateNewSeason(formData: FormData): Promise<void> {
   // makeSeasonActive is program-scoped, so a season that isn't ours would match
   // nothing and still report success — check first and say what's wrong.
   if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
-    redirect(`/${slug}/settings/rollover?error=season`);
+    redirect(`${rolloverPath(slug)}?error=season`);
   }
   const activated = await makeSeasonActive(supabase, programId, newSeasonId);
   if (!activated) {
     redirect(
-      `/${slug}/settings/rollover?step=activate&newSeason=${newSeasonId}&error=activate`,
+      `${rolloverPath(slug)}?step=activate&newSeason=${newSeasonId}&error=activate`,
     );
   }
 
-  revalidatePath(`/${slug}`, "layout");
+  revalidatePath(shellPath(slug), "layout");
   redirect(wizardPath(slug, "archive", newSeasonId));
 }

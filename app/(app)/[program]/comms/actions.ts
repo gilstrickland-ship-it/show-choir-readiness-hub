@@ -8,6 +8,7 @@ import { flag, type FlaggableProgram } from "@/lib/flags";
 import { ANNOUNCEMENT_WRITE_ROLES } from "@/lib/comms";
 import { sendAnnouncementCore } from "@/lib/comms-send";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
+import { programPath } from "@/lib/return-path";
 
 // Send an announcement (§8, T038). Immediate: creates the announcement (status
 // 'sent'), then fans out one announcement_sends row per deduped recipient,
@@ -23,6 +24,18 @@ function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
 }
 
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+function commsPath(slug: string): string {
+  return programPath(slug, "comms") ?? "/";
+}
+
+function announcementsPath(slug: string): string {
+  return programPath(slug, "comms/announcements") ?? "/";
+}
+
 export async function sendAnnouncement(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -33,7 +46,7 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
   const bodyMd = str(formData, "body_md");
   const ensembleId = str(formData, "ensemble_id") || null;
 
-  if (!subject || !bodyMd) redirect(`/${slug}/comms/announcements?error=empty`);
+  if (!subject || !bodyMd) redirect(`${announcementsPath(slug)}?error=empty`);
 
   const supabase = await createClient();
 
@@ -50,7 +63,7 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     (progData as FlaggableProgram | null) ?? { tier: "prep", feature_overrides: null },
     "announcements",
   );
-  if (!announcementsOn) redirect(`/${slug}/comms`);
+  if (!announcementsOn) redirect(commsPath(slug));
 
   // Both ids come off the form and the write policy checks only the row's own
   // program_id, so resolve them inside THIS program first (Constitution I).
@@ -69,10 +82,10 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     return Boolean(data);
   };
   if (seasonId && !(await inProgram("seasons", seasonId))) {
-    redirect(`/${slug}/comms/announcements?error=season`);
+    redirect(`${announcementsPath(slug)}?error=season`);
   }
   if (ensembleId && !(await inProgram("ensembles", ensembleId))) {
-    redirect(`/${slug}/comms/announcements?error=ensemble`);
+    redirect(`${announcementsPath(slug)}?error=ensemble`);
   }
 
   // Create the announcement (sent).
@@ -89,7 +102,7 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     })
     .select("id")
     .maybeSingle();
-  if (annErr || !annData) redirect(`/${slug}/comms/announcements?error=save`);
+  if (annErr || !annData) redirect(`${announcementsPath(slug)}?error=save`);
   const announcementId = (annData as { id: string }).id;
 
   // Async path: enqueue the fan-out and return immediately (the announcement is
@@ -99,8 +112,8 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
       name: "announcement/send",
       data: { programId, announcementId, seasonId, ensembleId, subject, bodyMd },
     });
-    revalidatePath(`/${slug}/comms/announcements`);
-    redirect(`/${slug}/comms/announcements?done=1&queued=1`);
+    revalidatePath(announcementsPath(slug));
+    redirect(`${announcementsPath(slug)}?done=1&queued=1`);
   }
 
   // Inline fallback (no Inngest): run the same core now and report counts.
@@ -113,8 +126,8 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
     bodyMd,
   });
 
-  revalidatePath(`/${slug}/comms/announcements`);
+  revalidatePath(announcementsPath(slug));
   redirect(
-    `/${slug}/comms/announcements?done=1&sent=${sent}&skipped=${skipped}&failed=${failed}`,
+    `${announcementsPath(slug)}?done=1&sent=${sent}&skipped=${skipped}&failed=${failed}`,
   );
 }

@@ -10,6 +10,7 @@ import {
   resolveCompetitionId,
 } from "@/lib/competitions";
 import { zonedWallToUtc } from "@/lib/datetime";
+import { programPath } from "@/lib/return-path";
 
 // Accept a parsed packet (§5 step 5, T015). Materializes the (director-edited)
 // parsed items into the competition's DRAFT itinerary, replacing any existing
@@ -31,7 +32,18 @@ export async function acceptParse(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
 
-  const bounce = `/${slug}/competitions/${competitionId}/packet/${parseId}/review?error=itinerary`;
+  // A redirect target is never built by interpolating a value the form posted:
+  // `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+  // every browser reads as a different ORIGIN and follows off-site. programPath
+  // validates the slug shape and fails closed to "/" (spec 005 T143a).
+  const reviewPath =
+    programPath(
+      slug,
+      `competitions/${competitionId}/packet/${parseId}/review`,
+    ) ?? "/";
+  const itineraryPath =
+    programPath(slug, `competitions/${competitionId}/itinerary`) ?? "/";
+  const bounce = `${reviewPath}?error=itinerary`;
 
   // The competition and the parse both arrive as form fields. Resolve them
   // inside this program first — otherwise the lookup below finds nothing (RLS
@@ -115,6 +127,6 @@ export async function acceptParse(formData: FormData): Promise<void> {
     .eq("id", parseId)
     .eq("program_id", programId);
 
-  revalidatePath(`/${slug}/competitions/${competitionId}/itinerary`);
-  redirect(`/${slug}/competitions/${competitionId}/itinerary?accepted=1`);
+  revalidatePath(itineraryPath);
+  redirect(`${itineraryPath}?accepted=1`);
 }

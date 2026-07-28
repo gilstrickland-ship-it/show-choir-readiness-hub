@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole, type Role } from "@/lib/auth";
 import { mintShareLink, revokeShareLinksForResource } from "@/lib/tokens";
+import { programPath } from "@/lib/return-path";
 
 // Season page server actions (Wave G / G1). Minting/rotating the season-calendar
 // share link is director/admin only — the share_links RLS write policy gates on
@@ -16,7 +17,11 @@ function str(fd: FormData, key: string): string {
 }
 
 function seasonPath(slug: string): string {
-  return `/${slug}/season`;
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  return programPath(slug, "season") ?? "/";
 }
 
 // Mint (or rotate) the subscribable season-calendar share link (§8a, FR-002). The

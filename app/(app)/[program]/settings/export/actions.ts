@@ -7,6 +7,7 @@ import { requireRole } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { runExportJob } from "@/lib/export-run";
+import { programPath } from "@/lib/return-path";
 
 // Async export request (§13.2, T036). director/admin. Creates an export_jobs row
 // (service-role: the table has no client write policy) and either enqueues the
@@ -14,6 +15,14 @@ import { runExportJob } from "@/lib/export-run";
 // the build inline — the same dual-path pattern as packet-parse. The synchronous
 // direct-download route stays as the dev fallback; this path emails a signed link
 // (or, with no email key, surfaces a signed link on the export page).
+
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+function exportPath(slug: string): string {
+  return programPath(slug, "settings/export") ?? "/";
+}
 
 export async function requestExport(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
@@ -30,7 +39,7 @@ export async function requestExport(formData: FormData): Promise<void> {
     .single();
 
   if (error || !created) {
-    redirect(`/${slug}/settings/export?error=export`);
+    redirect(`${exportPath(slug)}?error=export`);
   }
   const jobId = (created as { id: string }).id;
 
@@ -41,6 +50,6 @@ export async function requestExport(formData: FormData): Promise<void> {
     await runExportJob(jobId, programId);
   }
 
-  revalidatePath(`/${slug}/settings/export`);
-  redirect(`/${slug}/settings/export?requested=1`);
+  revalidatePath(exportPath(slug));
+  redirect(`${exportPath(slug)}?requested=1`);
 }

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
+import { programPath } from "@/lib/return-path";
 
 // Meal-count logistics note (T031, §5). The note is a competitions column
 // (meal_note); writes ride the competitions_write RLS policy (director/admin,
@@ -29,7 +30,11 @@ export async function saveMealNote(formData: FormData): Promise<void> {
     .eq("id", competitionId)
     .eq("program_id", programId);
 
-  const path = `/${slug}/competitions/${competitionId}/meals`;
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  const path = programPath(slug, `competitions/${competitionId}/meals`) ?? "/";
   revalidatePath(path);
   redirect(`${path}?saved=1`);
 }

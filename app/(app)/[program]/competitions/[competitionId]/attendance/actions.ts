@@ -9,6 +9,7 @@ import {
   ATTENDANCE_STATUSES,
   resolveCompetitionId,
 } from "@/lib/competitions";
+import { programPath } from "@/lib/return-path";
 
 // Attendance edit (§5, T012). Writers: director/admin/costume_manager (matrix
 // "Attendance edit"). Upsert one row per (competition, student); the note rides
@@ -26,7 +27,12 @@ export async function setAttendance(formData: FormData): Promise<void> {
     : "expected";
   const note = String(formData.get("note") ?? "").trim() || null;
 
-  const path = `/${slug}/competitions/${competitionId}/attendance`;
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/…", which
+// every browser reads as a different ORIGIN and follows off-site. programPath
+// validates the slug shape and fails closed to "/" (spec 005 T143a).
+  const path =
+    programPath(slug, `competitions/${competitionId}/attendance`) ?? "/";
   const supabase = await createClient();
 
   // Both ids come off the form. The row's unique key is (competition, student)

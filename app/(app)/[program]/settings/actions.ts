@@ -9,6 +9,15 @@ import { requireRole, type Role } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { supportAccessUntilFromNow } from "@/lib/support";
 import { revokeShareLink } from "@/lib/tokens";
+import { programPath } from "@/lib/return-path";
+
+// A redirect target is never built by interpolating a value the form posted:
+// `slug="/evil.com"` would produce a protocol-relative "//evil.com/settings",
+// which every browser reads as a different ORIGIN and follows off-site.
+// programPath validates the slug shape and fails closed to "/" (spec 005 T143a).
+function settingsPath(slug: string, sub = ""): string {
+  return programPath(slug, sub ? `settings/${sub}` : "settings") ?? "/";
+}
 
 // Season archive/unarchive + support access are director-only (unarchive and the
 // support-consent toggle are the most consequential lifecycle switches; §10, §9.4).
@@ -73,7 +82,7 @@ export async function updateProgram(formData: FormData): Promise<void> {
   const name = String(formData.get("name") ?? "").trim();
   const timezone = String(formData.get("timezone") ?? "").trim();
   if (!name || !timezone) {
-    redirect(`/${slug}/settings?error=missing`);
+    redirect(`${settingsPath(slug)}?error=missing`);
   }
 
   const supabase = await createClient();
@@ -89,10 +98,10 @@ export async function updateProgram(formData: FormData): Promise<void> {
     .eq("id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings?error=save`);
+    redirect(`${settingsPath(slug)}?error=save`);
   }
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(`${settingsPath(slug)}?saved=1`);
 }
 
 // Invite a member: create an `invited` program_members row, then best-effort
@@ -106,7 +115,7 @@ export async function inviteMember(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const role = String(formData.get("role") ?? "") as Role;
   if (!email || !VALID_ROLES.includes(role)) {
-    redirect(`/${slug}/settings/members?error=invite`);
+    redirect(`${settingsPath(slug, "members")}?error=invite`);
   }
 
   const supabase = await createClient();
@@ -122,7 +131,7 @@ export async function inviteMember(formData: FormData): Promise<void> {
     .single();
 
   if (error || !created) {
-    redirect(`/${slug}/settings/members?error=invite`);
+    redirect(`${settingsPath(slug, "members")}?error=invite`);
   }
 
   // Best-effort transactional invite email. Failure is non-fatal — the members
@@ -148,8 +157,8 @@ export async function inviteMember(formData: FormData): Promise<void> {
     // Ignore — link is surfaced in the UI regardless.
   }
 
-  revalidatePath(`/${slug}/settings/members`);
-  redirect(`/${slug}/settings/members?invited=${created.id}`);
+  revalidatePath(settingsPath(slug, "members"));
+  redirect(`${settingsPath(slug, "members")}?invited=${created.id}`);
 }
 
 // Re-role a member (single dropdown per §2). Blocks demoting the last director.
@@ -161,7 +170,7 @@ export async function reRoleMember(formData: FormData): Promise<void> {
   await requireRole(programId, SETTINGS_ROLES);
 
   if (!VALID_ROLES.includes(role)) {
-    redirect(`/${slug}/settings/members?error=role`);
+    redirect(`${settingsPath(slug, "members")}?error=role`);
   }
 
   const supabase = await createClient();
@@ -178,7 +187,7 @@ export async function reRoleMember(formData: FormData): Promise<void> {
     role !== "director" &&
     (await activeDirectorCount(programId)) <= 1
   ) {
-    redirect(`/${slug}/settings/members?error=last_director`);
+    redirect(`${settingsPath(slug, "members")}?error=last_director`);
   }
 
   const { error } = await supabase
@@ -188,10 +197,10 @@ export async function reRoleMember(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings/members?error=role`);
+    redirect(`${settingsPath(slug, "members")}?error=role`);
   }
-  revalidatePath(`/${slug}/settings/members`);
-  redirect(`/${slug}/settings/members?saved=1`);
+  revalidatePath(settingsPath(slug, "members"));
+  redirect(`${settingsPath(slug, "members")}?saved=1`);
 }
 
 // Remove a member (status = 'removed'). Blocks removing the last director.
@@ -214,7 +223,7 @@ export async function removeMember(formData: FormData): Promise<void> {
     target.role === "director" &&
     (await activeDirectorCount(programId)) <= 1
   ) {
-    redirect(`/${slug}/settings/members?error=last_director`);
+    redirect(`${settingsPath(slug, "members")}?error=last_director`);
   }
 
   const { error } = await supabase
@@ -224,10 +233,10 @@ export async function removeMember(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings/members?error=remove`);
+    redirect(`${settingsPath(slug, "members")}?error=remove`);
   }
-  revalidatePath(`/${slug}/settings/members`);
-  redirect(`/${slug}/settings/members?saved=1`);
+  revalidatePath(settingsPath(slug, "members"));
+  redirect(`${settingsPath(slug, "members")}?saved=1`);
 }
 
 // ---------------------------------------------------------------------------
@@ -248,10 +257,10 @@ export async function grantSupportAccess(formData: FormData): Promise<void> {
     .eq("id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings?error=support`);
+    redirect(`${settingsPath(slug)}?error=support`);
   }
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(`${settingsPath(slug)}?saved=1`);
 }
 
 export async function revokeSupportAccess(formData: FormData): Promise<void> {
@@ -266,10 +275,10 @@ export async function revokeSupportAccess(formData: FormData): Promise<void> {
     .eq("id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings?error=support`);
+    redirect(`${settingsPath(slug)}?error=support`);
   }
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(`${settingsPath(slug)}?saved=1`);
 }
 
 // ---------------------------------------------------------------------------
@@ -288,8 +297,8 @@ export async function revokeShareLinkAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
   await revokeShareLink(supabase, { programId, shareLinkId });
 
-  revalidatePath(`/${slug}/settings`);
-  redirect(`/${slug}/settings?saved=1`);
+  revalidatePath(settingsPath(slug));
+  redirect(`${settingsPath(slug)}?saved=1`);
 }
 
 // ---------------------------------------------------------------------------
@@ -314,10 +323,10 @@ export async function archiveSeason(formData: FormData): Promise<void> {
     .is("archived_at", null);
 
   if (error) {
-    redirect(`/${slug}/settings/rollover?error=archive`);
+    redirect(`${settingsPath(slug, "rollover")}?error=archive`);
   }
-  revalidatePath(`/${slug}/settings/rollover`);
-  redirect(`/${slug}/settings/rollover?archived=1`);
+  revalidatePath(settingsPath(slug, "rollover"));
+  redirect(`${settingsPath(slug, "rollover")}?archived=1`);
 }
 
 export async function unarchiveSeason(formData: FormData): Promise<void> {
@@ -334,8 +343,8 @@ export async function unarchiveSeason(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/settings/rollover?error=unarchive`);
+    redirect(`${settingsPath(slug, "rollover")}?error=unarchive`);
   }
-  revalidatePath(`/${slug}/settings/rollover`);
-  redirect(`/${slug}/settings/rollover?unarchived=1`);
+  revalidatePath(settingsPath(slug, "rollover"));
+  redirect(`${settingsPath(slug, "rollover")}?unarchived=1`);
 }

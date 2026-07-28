@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { programPath } from "@/lib/return-path";
 
 // Accept a membership invite. The invited program_members row is read/written
 // with the service-role client because the invitee is not yet a member and RLS
@@ -50,5 +51,5 @@ export async function acceptInvite(formData: FormData): Promise<void> {
   }
 
   const program = member.program as unknown as { slug: string } | null;
-  redirect(program ? `/${program.slug}/dashboard` : "/");
+  redirect((program && programPath(program.slug, "dashboard")) || "/");
 }

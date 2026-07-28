@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { programPath } from "@/lib/return-path";
 
 // Self-serve program creation (F1). A signed-in user with no program can create
 // one and become its director in a single step. RLS can't cover this: there is
@@ -97,5 +98,9 @@ export async function createProgram(formData: FormData): Promise<void> {
     redirect("/launch?error=create");
   }
 
-  redirect(`/${program.slug}/dashboard`);
+  // The slug was just minted by slugify above, so it is already a slug — but
+  // every in-app path in this codebase is built through the one guard, so there
+  // is no second way to build one that could later be handed a value that isn't
+  // (spec 005 T143a).
+  redirect(programPath(program.slug, "dashboard") ?? "/launch");
 }
