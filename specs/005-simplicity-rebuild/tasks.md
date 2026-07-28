@@ -25,9 +25,9 @@
 
 ## Phase 3 — Wave 3: Comp week
 
-- [ ] T128 Hub de-duplication (US7): comp page → header + readiness rail + per-area glance cards (status sourced from existing readiness queries); remove hub-inline attendance grid + duplicated itinerary/meals editing; keep Results/Edit-details/ensembles with standard idiom; ensemble-change confirm slimmed to id + new ensemble ids + confirm flag (server re-reads state).
-- [ ] T129 Packet pipeline step indicator (US7-4): shared 5-step component (Uploaded → Parsed → Reviewed → On itinerary → Published) on packet/review/itinerary pages, rendered from existing statuses; no behavior change.
-- [ ] T130 Wave-3 verification: full gate + e2e + visual QA.
+- [X] T128 Hub de-duplication (US7): comp page → header + readiness rail + per-area glance cards (status sourced from existing readiness queries); remove hub-inline attendance grid + duplicated itinerary/meals editing; keep Results/Edit-details/ensembles with standard idiom; ensemble-change confirm slimmed to id + new ensemble ids + confirm flag (server re-reads state).
+- [X] T129 Packet pipeline step indicator (US7-4): shared 5-step component (Uploaded → Parsed → Reviewed → On itinerary → Published) on packet/review/itinerary pages, rendered from existing statuses; no behavior change.
+- [X] T130 Wave-3 verification: full gate + e2e + visual QA.
 
 ## Phase 4 — Wave 4: Money
 
