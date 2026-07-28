@@ -45,12 +45,15 @@ const ERR: Record<string, string> = {
   cat_in_use: "Remove this category's lines before deleting it.",
   not_empty:
     "This budget already has categories — the template only seeds an empty budget.",
+  budget_gone: "That budget is no longer here. Nothing was changed.",
+  category_gone: "That category is no longer here. Nothing was changed.",
 };
 
 const LINE_ERR: Record<string, string> = {
   line: "A line needs a name and a valid planned amount (e.g. 1,234.56).",
   line_in_use:
     "This line has ledger entries tagged to it. Re-tag those entries (void + redo) before deleting the line.",
+  line_gone: "That line is no longer here. Nothing was changed.",
 };
 
 function message(map: Record<string, string>, code: string | null): string | null {
@@ -147,12 +150,20 @@ export default async function BudgetPage({
 
   // A line's edit popover reopens on `?edit=line-<id>` carrying its own message
   // (the Wave-2 section-local error contract); everything else is page-level.
+  // The row-scoped message only stays row-scoped while that row is actually on
+  // screen — a line that was deleted, or that belongs to another program, has no
+  // popover to render into, and a message that renders nowhere is worse than one
+  // in the wrong place. Those fail OPEN to the page banner.
   const errorCode = one("error");
   const openKey = canWrite ? one("edit") : null;
-  const lineError = openKey?.startsWith(LINE_EDIT_PREFIX)
-    ? message(LINE_ERR, errorCode)
+  const openLineId = openKey?.startsWith(LINE_EDIT_PREFIX)
+    ? openKey.slice(LINE_EDIT_PREFIX.length)
     : null;
-  const pageError = lineError ? null : message(ERR, errorCode);
+  const lineWillRender = !!openLineId && lines.some((l) => l.id === openLineId);
+  const lineError = lineWillRender ? message(LINE_ERR, errorCode) : null;
+  const pageError = lineError
+    ? null
+    : (message(ERR, errorCode) ?? message(LINE_ERR, errorCode));
   const unknownError = errorCode && !lineError && !pageError;
 
   // Fair-share guide (display-only): planned expenses ÷ students in the active
