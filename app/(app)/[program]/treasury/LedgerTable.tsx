@@ -8,7 +8,7 @@ import {
 } from "@/lib/treasury";
 import { voidEntry, categorizeEntry } from "./actions";
 import { entryAnchor } from "./flash";
-import { LineSelect, optionName, type TagOptions } from "./shared";
+import { LineSelect, Pager, optionName, type TagOptions } from "./shared";
 
 // The ledger itself, plus the one correction affordance (spec 005 US8-2). The
 // vocabulary is the task, not the mechanism: a treasurer who typed the wrong
@@ -40,6 +40,10 @@ export interface EntryRow {
   budget_line_id: string | null;
   competition_id: string | null;
   trip_id: string | null;
+  // The drawdown link (spec 006 R3). Frozen by the void-only trigger like every
+  // other reference on an entry: moving a payment from one purchase order to
+  // another after the fact is the alteration the whole feature exists to stop.
+  commitment_id: string | null;
   memo: string | null;
   counterparty: string | null;
   receipt_path: string | null;
@@ -100,7 +104,11 @@ export function LedgerTable({
       <tbody>
         {entries.map((e) => {
           const voided = !!e.voided_at;
+          // The commitment comes FIRST when there is one: "which purchase order
+          // is this against?" is the question a bookkeeper asks of a payment,
+          // and the competition or trip is the one she asks of a report.
           const tag =
+            optionName(options.commits, e.commitment_id) ??
             optionName(options.comps, e.competition_id) ??
             optionName(options.trips, e.trip_id) ??
             "";
@@ -218,54 +226,12 @@ export function LedgerTable({
         )}
       </tbody>
     </table>
-    <LedgerPager range={range} pageHref={pageHref} />
+    <Pager
+      range={range}
+      pageHref={pageHref}
+      noun={{ one: "entry", many: "entries" }}
+    />
     </>
-  );
-}
-
-// How much of the ledger this page is actually showing, said out loud. The list
-// used to stop at PostgREST's 1000-row cap with no indication, so a treasurer
-// scrolling to the bottom of a long season had no way to know entries were
-// missing. Prev/Next are plain links — the page re-renders on the server, so
-// paging works with no client JavaScript.
-function LedgerPager({
-  range,
-  pageHref,
-}: {
-  range: LedgerPageRange;
-  pageHref: (page: number) => string;
-}) {
-  if (range.totalKnown && range.total === 0) return null;
-  if (!range.totalKnown && range.firstShown === 0 && !range.hasPrev) return null;
-  return (
-    <div className="row-inline money-pager">
-      <span className="muted">
-        {range.totalKnown ? (
-          <>
-            Showing {range.firstShown}–{range.lastShown} of {range.total}{" "}
-            {range.total === 1 ? "entry" : "entries"}
-            {range.pages > 1 ? ` · page ${range.page} of ${range.pages}` : ""}
-          </>
-        ) : (
-          // The count failed. Say which rows these are and page on; claiming a
-          // total we could not read is how "100 entries" became the whole book.
-          <>
-            Showing {range.firstShown}–{range.lastShown} · page {range.page} ·
-            the total couldn&apos;t be read
-          </>
-        )}
-      </span>
-      {range.hasPrev && (
-        <Link href={pageHref(range.page - 1)} rel="prev">
-          ← Newer
-        </Link>
-      )}
-      {range.hasNext && (
-        <Link href={pageHref(range.page + 1)} rel="next">
-          Older →
-        </Link>
-      )}
-    </div>
   );
 }
 

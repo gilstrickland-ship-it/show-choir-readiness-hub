@@ -85,6 +85,7 @@ const OC = {
   competition: "OC013",
   trip: "OC014",
   noLine: "OC015",
+  commitment: "OC016",
 } as const;
 
 // `code` on a PostgREST error is the SQLSTATE verbatim. Own-property lookup, not
@@ -264,35 +265,53 @@ export async function addEntry(formData: FormData): Promise<void> {
     entryDate = zonedDateKey(new Date(), tz);
   }
 
-  // Resolve the season and all three tags before uploading anything, so a bad
+  // Resolve the season and all four tags before uploading anything, so a bad
   // reference never leaves a stranded receipt object behind.
-  const [season, budgetLineId, competitionId, tripId] = await Promise.all([
-    programOwns(supabase, "seasons", programId, seasonId),
-    resolveBudgetLineInSeason(
-      supabase,
-      programId,
-      seasonId,
-      textOrNull(formData.get("budget_line_id")),
-    ),
-    resolveSeasonScopedId(
-      supabase,
-      "competitions",
-      programId,
-      seasonId,
-      textOrNull(formData.get("competition_id")),
-    ),
-    resolveSeasonScopedId(
-      supabase,
-      "trips",
-      programId,
-      seasonId,
-      textOrNull(formData.get("trip_id")),
-    ),
-  ]);
+  const [season, budgetLineId, competitionId, tripId, commitmentId] =
+    await Promise.all([
+      programOwns(supabase, "seasons", programId, seasonId),
+      resolveBudgetLineInSeason(
+        supabase,
+        programId,
+        seasonId,
+        textOrNull(formData.get("budget_line_id")),
+      ),
+      resolveSeasonScopedId(
+        supabase,
+        "competitions",
+        programId,
+        seasonId,
+        textOrNull(formData.get("competition_id")),
+      ),
+      resolveSeasonScopedId(
+        supabase,
+        "trips",
+        programId,
+        seasonId,
+        textOrNull(formData.get("trip_id")),
+      ),
+      // The drawdown link (spec 006 R3). Resolved exactly like the other three:
+      // commitments carry season_id directly, so this is the same two-column
+      // lookup — and a commitment from another season would be FROZEN onto this
+      // entry by the void-only trigger, decrementing a balance on the wrong
+      // year's books permanently.
+      resolveSeasonScopedId(
+        supabase,
+        "commitments",
+        programId,
+        seasonId,
+        textOrNull(formData.get("commitment_id")),
+      ),
+    ]);
   if (!season) {
     redirect(fail(slug, "entry"));
   }
-  if (budgetLineId === false || competitionId === false || tripId === false) {
+  if (
+    budgetLineId === false ||
+    competitionId === false ||
+    tripId === false ||
+    commitmentId === false
+  ) {
     redirect(fail(slug, "entry_tag"));
   }
 
@@ -339,6 +358,7 @@ export async function addEntry(formData: FormData): Promise<void> {
     p_memo: textOrNull(formData.get("memo")),
     p_counterparty: textOrNull(formData.get("counterparty")),
     p_receipt_path: receiptPath,
+    p_commitment_id: commitmentId,
   });
 
   if (error || !newId) {
@@ -361,6 +381,7 @@ export async function addEntry(formData: FormData): Promise<void> {
             [OC.budgetLine]: "entry_line",
             [OC.competition]: "entry_competition",
             [OC.trip]: "entry_trip",
+            [OC.commitment]: "entry_commitment",
           },
           error,
           "entry",

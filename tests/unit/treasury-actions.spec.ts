@@ -24,6 +24,7 @@ const PROGRAM = "11111111-1111-1111-1111-111111111111";
 const SEASON = "22222222-2222-2222-2222-222222222222";
 const ENTRY = "33333333-3333-3333-3333-333333333333";
 const LINE = "44444444-4444-4444-4444-444444444444";
+const COMMITMENT = "55555555-5555-5555-5555-555555555555";
 
 const h = vi.hoisted(() => ({
   // What the rpc answers with: either data, or an error carrying a SQLSTATE.
@@ -246,18 +247,37 @@ describe("addEntry — the rejection names what it rejected", () => {
     expect(h.rpcCalls[0].args.p_amount_cents).toBe(123456);
   });
 
-  test("five guards, five sentences", async () => {
+  test("six guards, six sentences", async () => {
     const cases: [string, string][] = [
       ["OC010", "entry"],
       ["OC011", "entry_season"],
       ["OC012", "entry_line"],
       ["OC013", "entry_competition"],
       ["OC014", "entry_trip"],
+      // The drawdown link (spec 006 R3) is resolved like every other tag, and
+      // its rejection reads like every other tag's rather than as advice about
+      // the amount format.
+      ["OC016", "entry_commitment"],
     ];
     for (const [code, expected] of cases) {
       h.rpcResult = { data: null, error: { code } };
       expect(errorCodeOf(await run(addEntry, fields)), code).toBe(expected);
     }
+  });
+
+  // The link is what decrements a commitment's remaining balance. An action that
+  // resolved it and then forgot to send it would leave every purchase order
+  // reading as untouched while the money went out the door.
+  test("the commitment the drawer picked is what reaches the database", async () => {
+    h.rpcResult = { data: "new-entry-id", error: null };
+    await run(addEntry, { ...fields, commitment_id: COMMITMENT });
+    expect(h.rpcCalls[0].args.p_commitment_id).toBe(COMMITMENT);
+  });
+
+  test("an entry with nothing picked sends null, not an empty string", async () => {
+    h.rpcResult = { data: "new-entry-id", error: null };
+    await run(addEntry, fields);
+    expect(h.rpcCalls[0].args.p_commitment_id).toBeNull();
   });
 
   test("an unknown code still reads as a save failure", async () => {

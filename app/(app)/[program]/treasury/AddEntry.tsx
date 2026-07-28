@@ -6,7 +6,12 @@ import {
   type LedgerDirection,
 } from "@/lib/treasury";
 import { addEntry } from "./actions";
-import { LineSelect, optionName, type TagOptions } from "./shared";
+import {
+  CommitmentSelect,
+  LineSelect,
+  optionName,
+  type TagOptions,
+} from "./shared";
 
 // Recording money is four decisions (spec 005 US8-1): in or out, how much, who
 // it went to or came from, and what it was for. Nothing else is a decision at
@@ -21,22 +26,35 @@ import { LineSelect, optionName, type TagOptions } from "./shared";
 // count then nudges. Filing it later is a void plus a fresh row, never an edit:
 // the 0002 trigger freezes every money column after insert (Constitution V).
 
-// Everything the drawer prefills after a "Void & redo". `redoOf` is the voided
-// entry's id, posted back so the server can carry its RECEIPT forward: a file
-// input cannot be prefilled, and dropping the receipt silently would lose the
-// only proof of what the money bought. `hadReceipt` is what the panel says about
-// it, so the treasurer can tell whether to attach a different file.
+// Everything the drawer prefills, from either of the two places that open it
+// filled in.
+//
+// A "VOID & REDO" sets `redoOf` — the voided entry's id, posted back so the
+// server can carry its RECEIPT forward: a file input cannot be prefilled, and
+// dropping the receipt silently would lose the only proof of what the money
+// bought. `hadReceipt` is what the panel says about it, so the treasurer can
+// tell whether to attach a different file.
+//
+// "RECORD A PAYMENT AGAINST THIS" (spec 006 R3) sets `againstCommitment` and
+// leaves `redoOf` null. It is the reason most entries never touch the drawdown
+// select at all: the commitment's own page knows the line, the vendor, the
+// purpose and what is left on it, so the treasurer arrives at a form that is
+// already filled in and presses one button.
 export interface EntryPrefill {
-  redoOf: string;
+  redoOf: string | null;
   entry_date: string;
   direction: LedgerDirection;
   amount_cents: number;
   budget_line_id: string | null;
   competition_id: string | null;
   trip_id: string | null;
+  commitment_id: string | null;
   memo: string | null;
   counterparty: string | null;
   hadReceipt: boolean;
+  // How the commitment this payment is against is named out loud ("PO 1042 —
+  // Costume Co"), or null when the drawer was not opened from one.
+  againstCommitment: string | null;
 }
 
 export function AddEntry({
@@ -57,8 +75,10 @@ export function AddEntry({
   prefill: EntryPrefill | null;
 }) {
   const date = prefill?.entry_date ?? today;
+  const redoing = !!prefill?.redoOf;
   const connected = [
     optionName(options.lines, prefill?.budget_line_id),
+    optionName(options.commits, prefill?.commitment_id),
     optionName(options.comps, prefill?.competition_id),
     optionName(options.trips, prefill?.trip_id),
   ].filter((n): n is string => !!n);
@@ -68,19 +88,30 @@ export function AddEntry({
       <summary className="button-link accent">+ Add entry</summary>
       <div className="drawer-panel" id="add-entry">
         <h2 className="drawer-title">
-          {prefill ? "Redo this entry" : "Add an entry"}
+          {redoing
+            ? "Redo this entry"
+            : prefill?.againstCommitment
+              ? `Pay ${prefill.againstCommitment}`
+              : "Add an entry"}
         </h2>
-        {prefill && (
+        {redoing && (
           <p className="muted">
             The original stays in the ledger, voided. Fix what was wrong and
             save — this writes a new entry rather than changing the old one.
+          </p>
+        )}
+        {!redoing && prefill?.againstCommitment && (
+          <p className="muted">
+            Filled in from {prefill.againstCommitment}, with what is still owed
+            on it as the amount. Change anything that is different — a part
+            payment leaves the rest committed.
           </p>
         )}
         <form action={addEntry} className="stack" encType="multipart/form-data">
           <input type="hidden" name="programId" value={programId} />
           <input type="hidden" name="slug" value={slug} />
           <input type="hidden" name="seasonId" value={seasonId} />
-          {prefill && (
+          {prefill?.redoOf && (
             <input type="hidden" name="redo_of" value={prefill.redoOf} />
           )}
 
@@ -107,8 +138,15 @@ export function AddEntry({
                 inputMode="decimal"
                 required
                 placeholder="1,234.56"
+                // Blank rather than "0.00" when there is no amount to offer —
+                // a commitment whose remaining balance could not be read opens
+                // this drawer with an empty box, because a zero here is a number
+                // the form would then refuse and the treasurer would have to
+                // clear first.
                 defaultValue={
-                  prefill ? (prefill.amount_cents / 100).toFixed(2) : ""
+                  prefill && prefill.amount_cents > 0
+                    ? (prefill.amount_cents / 100).toFixed(2)
+                    : ""
                 }
               />
             </label>
@@ -149,6 +187,24 @@ export function AddEntry({
                   blankLabel="Not on a line yet"
                 />
               </label>
+              {/* THE DRAWDOWN, AND WHERE IT SITS (spec 006 R3). One more
+                  optional select inside the disclosure that was already here —
+                  never a fifth always-visible field. Recording money stays four
+                  decisions; connecting it to a purchase order is a fifth thing
+                  that most entries do not need, because the commitment's own
+                  page pre-fills this form. It is offered only when the season
+                  actually has an open commitment: an empty picker is a control
+                  that teaches nothing. */}
+              {options.commits.length > 0 && (
+                <label>
+                  Against a commitment
+                  <CommitmentSelect
+                    name="commitment_id"
+                    defaultValue={prefill?.commitment_id ?? ""}
+                    options={options}
+                  />
+                </label>
+              )}
               <div className="row-inline">
                 <label>
                   Competition
@@ -197,7 +253,7 @@ export function AddEntry({
                   accept="application/pdf,image/*"
                 />
               </label>
-              {prefill?.hadReceipt && (
+              {redoing && prefill?.hadReceipt && (
                 <p className="muted">
                   The voided entry&apos;s receipt comes along automatically.
                   Attach a file here only if you want to replace it.
@@ -213,7 +269,7 @@ export function AddEntry({
 
           <p className="muted">{NO_HEALTH_LABEL}</p>
           <button type="submit">
-            {prefill ? "Save corrected entry" : "Add entry"}
+            {redoing ? "Save corrected entry" : "Add entry"}
           </button>
         </form>
       </div>

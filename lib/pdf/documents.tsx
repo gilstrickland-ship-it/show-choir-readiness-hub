@@ -3,6 +3,7 @@ import { Document, View, Text, DocPage, styles } from "./components";
 import { formatDateInTz, formatTimeInTz } from "@/lib/datetime";
 import { groupItemsByDay } from "@/lib/itinerary-days";
 import { formatHostedDateRange } from "@/lib/hosting";
+import { stillAvailable } from "@/lib/treasury";
 import {
   formatCents,
   type TripDocData,
@@ -516,6 +517,70 @@ function TotalRow({ label, planned, actual }: { label: string; planned: number; 
   );
 }
 
+// The four numbers, printed in the order the money runs (spec 006 §1). A board
+// reading "Total expenses planned $40,000, spent $8,000" concludes $32,000 is
+// available; if $12,000 of it is already promised to vendors that conclusion is
+// wrong, and this is the block that says so. It is the SAME arithmetic the
+// Reports page shows (lib/treasury stillAvailable) over the SAME aggregate
+// definitions, which is what makes "the handout agrees with the screen" a
+// property of the code rather than a hope.
+//
+// Expected money is printed BELOW the rule, deliberately outside the four: a
+// district allocation or a grant award that has not arrived does not increase
+// what may be spent (§2 — the asymmetry is the accounting reality).
+function StillAvailable({ data }: { data: BoardSnapshotData }) {
+  const rows: [string, string][] = [
+    ["Planned (expenses)", formatCents(data.totalPlannedExpense)],
+    ["Less committed — promised, not yet paid", formatCents(data.openCommittedCents)],
+    ["Less spent (money out this season)", formatCents(data.seasonOutCents)],
+  ];
+  const flags: string[] = [];
+  if (data.staleCommitmentCount > 0) {
+    flags.push(`${data.staleCommitmentCount} past its need-by date`);
+  }
+  if (data.overspentCommitmentCount > 0) {
+    flags.push(`${data.overspentCommitmentCount} paid past its amount`);
+  }
+  if (data.afterTheFactCount > 0) {
+    flags.push(`${data.afterTheFactCount} recorded after the purchase`);
+  }
+  return (
+    <View style={[styles.section, { marginTop: 6 }]}>
+      <Text style={styles.sectionTitle}>Still available</Text>
+      {rows.map(([label, value], i) => (
+        <View style={styles.tableRow} key={i}>
+          <Text style={{ flexGrow: 1 }}>{label}</Text>
+          <Text style={{ width: 90, textAlign: "right" }}>{value}</Text>
+        </View>
+      ))}
+      <View style={[styles.tableRow, { borderTopWidth: 1, borderTopColor: "#111827" }]}>
+        <Text style={[styles.bold, { flexGrow: 1, fontSize: 12 }]}>Still available to spend</Text>
+        <Text style={[styles.bold, { width: 90, textAlign: "right", fontSize: 12 }]}>
+          {formatCents(
+            stillAvailable(
+              data.totalPlannedExpense,
+              data.seasonOutCents,
+              data.openCommittedCents,
+            ),
+          )}
+        </Text>
+      </View>
+      <Text style={styles.muted}>
+        {data.openCommitmentCount === 1
+          ? "1 open commitment"
+          : `${data.openCommitmentCount} open commitments`}
+        {flags.length > 0 ? ` · ${flags.join(" · ")}` : ""}
+      </Text>
+      {data.openExpectedCents > 0 && (
+        <Text style={styles.muted}>
+          Expected in: {formatCents(data.openExpectedCents)} — promised to the program and
+          not yet received, so it is not counted as available.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 // ============================ HOST-MODE DOCUMENTS ============================
 // Three day-of documents for the program running its own invitational (Wave I2),
 // all derived from one hosted event's schools + slots (Constitution VI). Times
@@ -791,6 +856,8 @@ export function BoardSnapshot({ data }: { data: BoardSnapshotData }) {
           )}
           <TotalRow label="Total expenses" planned={data.totalPlannedExpense} actual={data.totalActualExpense} />
         </View>
+
+        <StillAvailable data={data} />
 
         <View style={[styles.section, { marginTop: 6 }]}>
           <View style={[styles.tableRow, { borderTopWidth: 1, borderTopColor: "#111827" }]}>

@@ -1,7 +1,9 @@
 import Link from "next/link";
 import {
   formatCents,
+  stillAvailable,
   type CategoryDirection,
+  type CommitmentTotals,
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
 
@@ -45,6 +47,8 @@ export function BoardSnapshot({
   cats,
   catActual,
   totals,
+  plannedExpense,
+  commitments,
   actualsUnavailable,
   structureUnavailable,
 }: {
@@ -58,6 +62,12 @@ export function BoardSnapshot({
   cats: SnapshotCatRow[];
   catActual: Map<string, number>;
   totals: LedgerSeasonTotals | null;
+  // The two halves of "still available", each nullable on its own: what the
+  // season planned to spend (the budget's own lines) and what it has already
+  // promised (public.commitment_totals). Null is "we could not read it", and a
+  // number built from a null operand is never printed.
+  plannedExpense: number | null;
+  commitments: CommitmentTotals | null;
   actualsUnavailable: boolean;
   structureUnavailable: boolean;
 }) {
@@ -119,6 +129,13 @@ export function BoardSnapshot({
           <strong>{totals ? formatCents(totals.netCents) : "—"}</strong>
         </dd>
       </dl>
+
+      <StillAvailableBlock
+        slug={slug}
+        plannedExpense={plannedExpense}
+        spentExpense={totals?.outCents ?? null}
+        commitments={commitments}
+      />
 
       <h3>By category</h3>
       <table className="members money-ledger">
@@ -188,6 +205,105 @@ export function BoardSnapshot({
           Download board snapshot (PDF)
         </a>
       </p>
+    </>
+  );
+}
+
+// THE FOUR NUMBERS (spec 006 §1), in the order the money runs. A board told
+// "$40,000 planned, $8,000 spent" concludes $32,000 is free; when $12,000 of it
+// is already promised to vendors that conclusion is wrong, and this is the block
+// that says so out loud.
+//
+// The identical block is printed by the downloadable PDF (lib/pdf/documents
+// StillAvailable) off the identical arithmetic (lib/treasury stillAvailable) and
+// the identical aggregate definitions, because this page and that handout go to
+// the same meeting.
+//
+// Expected money sits BELOW the total and outside the subtraction, deliberately:
+// a grant award or a district allocation that has not arrived does not raise
+// what may be spent (§2). Treating it as available is exactly the mistake the
+// asymmetry exists to prevent.
+function StillAvailableBlock({
+  slug,
+  plannedExpense,
+  spentExpense,
+  commitments,
+}: {
+  slug: string;
+  plannedExpense: number | null;
+  spentExpense: number | null;
+  commitments: CommitmentTotals | null;
+}) {
+  const known =
+    plannedExpense !== null && spentExpense !== null && commitments !== null;
+  const flags: string[] = [];
+  if (commitments) {
+    if (commitments.staleCount > 0) {
+      flags.push(`${commitments.staleCount} past its need-by date`);
+    }
+    if (commitments.overspentCount > 0) {
+      flags.push(`${commitments.overspentCount} paid past its amount`);
+    }
+    if (commitments.afterTheFactCount > 0) {
+      flags.push(`${commitments.afterTheFactCount} recorded after the purchase`);
+    }
+  }
+  return (
+    <>
+      <h3>Still available</h3>
+      {!known && (
+        <p className="alert-error">
+          {commitments === null
+            ? "What the program has already committed could not be read just now, so the still-available figure is blank rather than wrong — and a blank here is the point: what a budget says is left is not what is free to spend."
+            : "The budget's planned figures could not be read just now, so the still-available figure is blank rather than wrong."}{" "}
+          Reload to try again.
+        </p>
+      )}
+      <dl className="detail-list">
+        <dt>Planned (expenses)</dt>
+        <dd className="num">
+          {plannedExpense === null ? "—" : formatCents(plannedExpense)}
+        </dd>
+        <dt>Committed — promised, not yet paid</dt>
+        <dd className="num">
+          {commitments === null
+            ? "—"
+            : formatCents(commitments.openCommittedCents)}
+        </dd>
+        <dt>Spent (money out this season)</dt>
+        <dd className="num">
+          {spentExpense === null ? "—" : formatCents(spentExpense)}
+        </dd>
+        <dt>Still available to spend</dt>
+        <dd className="num">
+          <strong>
+            {known
+              ? formatCents(
+                  stillAvailable(
+                    plannedExpense,
+                    spentExpense,
+                    commitments.openCommittedCents,
+                  ),
+                )
+              : "—"}
+          </strong>
+        </dd>
+      </dl>
+      {commitments && (
+        <p className={flags.length > 0 ? "alert-error" : "muted"}>
+          {commitments.openCount === 1
+            ? "1 open commitment"
+            : `${commitments.openCount} open commitments`}
+          {flags.length > 0 ? ` · ${flags.join(" · ")}` : ""}.{" "}
+          <Link href={`/${slug}/treasury/commitments`}>See them</Link>.
+        </p>
+      )}
+      {commitments && commitments.openExpectedCents > 0 && (
+        <p className="muted">
+          Expected in: {formatCents(commitments.openExpectedCents)} — promised to
+          the program and not yet received, so it is not counted as available.
+        </p>
+      )}
     </>
   );
 }

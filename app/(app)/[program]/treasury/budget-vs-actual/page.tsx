@@ -7,15 +7,20 @@ import { TREASURY_ROLES } from "@/lib/nav";
 import {
   lineActualsFromRows,
   seasonTotalsFromRow,
+  commitmentTotalsFromRow,
+  commitmentLineTotalsFromRows,
   pickSeasonBudget,
   type CategoryDirection,
   type LineActual,
+  type LineCommitment,
   type LedgerSeasonTotals,
+  type CommitmentTotals,
 } from "@/lib/treasury";
 import { SubTabs } from "../../SubTabs";
 import { treasuryTabs } from "@/lib/subnav";
 import {
   SeasonSummary,
+  StillAvailableStrip,
   LineSection,
   type CatRow,
   type LineRow,
@@ -57,6 +62,14 @@ export default async function BudgetVsActualPage({
   let lines: LineRow[] = [];
   let actualByLine = new Map<string, LineActual>();
   let totals: LedgerSeasonTotals | null = null;
+  // The middle layer (spec 006): what each line has already promised, and the
+  // season roll-up of the same. Two more aggregates that fail on their own, so
+  // two more figures that go blank on their own rather than reading as "nothing
+  // is committed" — which on THIS page is the precise sentence the feature
+  // exists to stop a director believing.
+  let committedByLine = new Map<string, LineCommitment>();
+  let commitmentTotals: CommitmentTotals | null = null;
+  let commitmentsUnavailable = false;
   // The per-line aggregate fails independently of the header aggregate, and its
   // failure used to collapse into an empty map while the only banner keyed on
   // the OTHER rpc — so every line printed "$0.00 actual" against a real planned
@@ -84,23 +97,32 @@ export default async function BudgetVsActualPage({
     budgetName = b?.name ?? null;
 
     if (b) {
-      const [catRes, lineActualsRes, totalsRes] = await Promise.all([
-        supabase
-          .from("budget_categories")
-          .select("id, name, direction, sort_order")
-          .eq("program_id", program.id)
-          .eq("budget_id", b.id)
-          .order("direction", { ascending: true })
-          .order("sort_order", { ascending: true }),
-        supabase.rpc("ledger_line_actuals", {
-          p_program_id: program.id,
-          p_season_id: season.id,
-        }),
-        supabase.rpc("ledger_season_totals", {
-          p_program_id: program.id,
-          p_season_id: season.id,
-        }),
-      ]);
+      const [catRes, lineActualsRes, totalsRes, lineCommitRes, commitTotalsRes] =
+        await Promise.all([
+          supabase
+            .from("budget_categories")
+            .select("id, name, direction, sort_order")
+            .eq("program_id", program.id)
+            .eq("budget_id", b.id)
+            .order("direction", { ascending: true })
+            .order("sort_order", { ascending: true }),
+          supabase.rpc("ledger_line_actuals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+          supabase.rpc("ledger_season_totals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+          supabase.rpc("commitment_line_totals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+          supabase.rpc("commitment_totals", {
+            p_program_id: program.id,
+            p_season_id: season.id,
+          }),
+        ]);
       cats = (catRes.data as CatRow[] | null) ?? [];
       structureUnavailable = !!catRes.error;
       actualsUnavailable = !!lineActualsRes.error;
@@ -111,6 +133,16 @@ export default async function BudgetVsActualPage({
         ? totalsRes.data[0]
         : totalsRes.data;
       totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
+      commitmentsUnavailable = !!lineCommitRes.error || !!commitTotalsRes.error;
+      committedByLine = lineCommitRes.error
+        ? new Map()
+        : commitmentLineTotalsFromRows(lineCommitRes.data);
+      const commitRow = Array.isArray(commitTotalsRes.data)
+        ? commitTotalsRes.data[0]
+        : commitTotalsRes.data;
+      commitmentTotals = commitTotalsRes.error
+        ? null
+        : commitmentTotalsFromRow(commitRow);
 
       if (cats.length > 0) {
         const { data: lineData, error: lineError } = await supabase
@@ -186,6 +218,16 @@ export default async function BudgetVsActualPage({
         </p>
       )}
 
+      {season && budgetName && commitmentsUnavailable && (
+        <p className="alert-error">
+          What this season has already committed could not be read just now, so
+          the committed and still-available figures are blank rather than wrong.
+          Treat &ldquo;spent so far&rdquo; as what has moved, not as what is
+          free — money already promised to a vendor is missing from this page
+          until it reloads.
+        </p>
+      )}
+
       {season && budgetName && (
         <>
           <dl className="detail-list">
@@ -200,6 +242,17 @@ export default async function BudgetVsActualPage({
               which case the sum is zero for a reason that has nothing to do
               with the budget. Then it is a blank, like every other figure this
               page could not read. */}
+          {/* The headline, before the tables: planned → committed → spent →
+              still available. It is first because it is the question a director
+              arrives with, and because the tables underneath are the working
+              that produced it. */}
+          <StillAvailableStrip
+            slug={slug}
+            plannedOut={structureUnavailable ? null : plannedByDir.expense}
+            spentOut={totals?.outCents ?? null}
+            commitments={commitmentTotals}
+          />
+
           <SeasonSummary
             plannedIn={structureUnavailable ? null : plannedByDir.income}
             plannedOut={structureUnavailable ? null : plannedByDir.expense}
@@ -213,7 +266,9 @@ export default async function BudgetVsActualPage({
               cats={cats}
               linesByCat={linesByCat}
               actualByLine={actualByLine}
+              committedByLine={committedByLine}
               unavailable={actualsUnavailable}
+              commitmentsUnavailable={commitmentsUnavailable}
             />
           ))}
         </>

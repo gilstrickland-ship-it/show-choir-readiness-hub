@@ -28,6 +28,7 @@ export type LedgerErrorKey =
   | "entry_line"
   | "entry_competition"
   | "entry_trip"
+  | "entry_commitment"
   | "receipt_type"
   | "receipt_upload"
   | "reconcile"
@@ -56,7 +57,7 @@ const LEDGER_ERROR: FlashMap<LedgerErrorKey, LedgerSection> = {
   entry_tag: {
     section: "page",
     message:
-      "That budget line, competition, or trip isn't in this season. Pick one from this season's lists.",
+      "That budget line, competition, trip, or commitment isn't in this season. Pick one from this season's lists.",
   },
   // One sentence per rejection the database can raise (0020). These used to be
   // one message about the amount format, so a tag from last season sent the
@@ -80,6 +81,11 @@ const LEDGER_ERROR: FlashMap<LedgerErrorKey, LedgerSection> = {
     section: "page",
     message:
       "That trip isn't in this season. Pick one from this season's list. Nothing was saved.",
+  },
+  entry_commitment: {
+    section: "page",
+    message:
+      "That commitment isn't in this season. Pick one from this season's list. Nothing was saved.",
   },
   receipt_type: { section: "page", message: "Receipts must be a PDF or image." },
   receipt_upload: {

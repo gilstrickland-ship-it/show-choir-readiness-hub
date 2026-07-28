@@ -8,6 +8,7 @@ import { oneParam } from "@/lib/flash";
 import {
   lineActualsFromRows,
   seasonTotalsFromRow,
+  commitmentTotalsFromRow,
   actualForDirection,
   pickSeasonBudget,
   monthKeyForDate,
@@ -16,6 +17,7 @@ import {
   UNCATEGORIZED_KEY,
   type LineActual,
   type LedgerSeasonTotals,
+  type CommitmentTotals,
 } from "@/lib/treasury";
 import { SubTabs } from "../../SubTabs";
 import { treasuryTabs } from "@/lib/subnav";
@@ -38,6 +40,9 @@ interface LineRow {
   id: string;
   category_id: string;
   name: string;
+  // Planned is what "Still available" is measured against (spec 006 §1), so the
+  // snapshot needs the budget's own figures, not only the ledger's.
+  planned_cents: number;
 }
 
 export default async function ReportsPage({
@@ -68,6 +73,11 @@ export default async function ReportsPage({
   let trips: NamedRow[] = [];
   let seasonByLine = new Map<string, LineActual>();
   let totals: LedgerSeasonTotals | null = null;
+  // The middle layer (spec 006). Its own aggregate, so its own failure: a
+  // committed figure we could not read is a blank, and the "still available"
+  // line is withheld entirely rather than printed as though nothing were
+  // promised — which is the exact wrong number this feature exists to stop.
+  let commitmentTotals: CommitmentTotals | null = null;
   // The per-line aggregate can fail on its own, and it used to fail SILENTLY:
   // its error collapsed into an empty map while the only banner keyed on the
   // OTHER rpc, so a board snapshot could print $0.00 actuals for every category
@@ -80,8 +90,14 @@ export default async function ReportsPage({
   let structureUnavailable = false;
 
   if (season) {
-    const [budgetRes, { data: compData }, { data: tripData }, lineRes, totalsRes] =
-      await Promise.all([
+    const [
+      budgetRes,
+      { data: compData },
+      { data: tripData },
+      lineRes,
+      totalsRes,
+      commitmentRes,
+    ] = await Promise.all([
         // The ACTIVE budget, else the newest — the same choice the board PDF
         // makes (lib/pdf/queries loadBoardSnapshot), which matters here more
         // than anywhere: this page and that PDF are the two things a treasurer
@@ -114,6 +130,14 @@ export default async function ReportsPage({
           p_program_id: program.id,
           p_season_id: season.id,
         }),
+        // The same aggregate the ledger strip and Budget vs Actual read, and the
+        // same definition the board PDF restates in TypeScript on its
+        // service-role path — one source, so the handout and the screen cannot
+        // put two different "still available" figures in front of one meeting.
+        supabase.rpc("commitment_totals", {
+          p_program_id: program.id,
+          p_season_id: season.id,
+        }),
       ]);
 
     // The budget's own row failing reads downstream as "this program has no
@@ -132,6 +156,12 @@ export default async function ReportsPage({
       ? totalsRes.data[0]
       : totalsRes.data;
     totals = totalsRes.error ? null : seasonTotalsFromRow(totalsRow);
+    const commitmentRow = Array.isArray(commitmentRes.data)
+      ? commitmentRes.data[0]
+      : commitmentRes.data;
+    commitmentTotals = commitmentRes.error
+      ? null
+      : commitmentTotalsFromRow(commitmentRow);
 
     if (b) {
       const { data: catData, error: catError } = await supabase
@@ -146,7 +176,7 @@ export default async function ReportsPage({
       if (cats.length > 0) {
         const { data: lineData, error: lineError } = await supabase
           .from("budget_lines")
-          .select("id, category_id, name")
+          .select("id, category_id, name, planned_cents")
           .eq("program_id", program.id)
           .in(
             "category_id",
@@ -189,6 +219,21 @@ export default async function ReportsPage({
       (catActual.get(catId) ?? 0) + actualForDirection(actual, direction),
     );
   }
+  // What the season PLANNED to spend — the first of the four numbers. Only the
+  // expense side has a "still available", because only spending authority can be
+  // committed against (spec §2, decision D4). Null when the budget's own lines
+  // could not be read: a planned total of $0 would make every committed dollar
+  // read as an overrun.
+  const plannedExpense = structureUnavailable
+    ? null
+    : lines.reduce(
+        (sum, l) =>
+          catDirection.get(l.category_id) === "expense"
+            ? sum + l.planned_cents
+            : sum,
+        0,
+      );
+
   const asOf = formatDateTimeInTz(new Date(), program.timezone);
 
   // "Reconciled through" (Wave L): the latest contiguous month whose books were
@@ -284,6 +329,8 @@ export default async function ReportsPage({
             cats={cats}
             catActual={catActual}
             totals={totals}
+            plannedExpense={plannedExpense}
+            commitments={commitmentTotals}
             actualsUnavailable={actualsUnavailable}
             structureUnavailable={structureUnavailable}
           />

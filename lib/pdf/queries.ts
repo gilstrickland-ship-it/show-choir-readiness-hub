@@ -8,10 +8,14 @@ import {
   reconciledThroughMonth,
   formatMonthKey,
   summarizeSeasonLedger,
+  summarizeCommitments,
   actualForDirection,
+  pickSeasonBudget,
   UNCATEGORIZED_KEY,
+  type CommitmentRow,
   type LedgerEntryRow,
 } from "@/lib/treasury";
+import { zonedDateKey } from "@/lib/datetime";
 
 // Data loaders for the four derived documents (§6, §7, T017). Each takes a
 // Supabase client and a target id, and returns plain typed data the renderer
@@ -842,6 +846,27 @@ export interface BoardSnapshotData {
   // "Reconciled through {Month YYYY}" — the latest contiguous month whose books
   // were checked against the bank statement (Wave L). Null when none yet.
   reconciledThroughLabel: string | null;
+  // The middle layer (spec 006). Money the program has already promised but has
+  // not yet paid — the difference between what a budget says is left and what is
+  // actually free to spend. Expected money is carried SEPARATELY and never added
+  // to what is available: you may not spend money you have merely been promised.
+  openCommittedCents: number;
+  openExpectedCents: number;
+  openCommitmentCount: number;
+  // Every dollar that left the account this season, however it was coded —
+  // `ledger_season_totals.out_cents` and nothing else. "Still available" is
+  // measured against this rather than against the expense categories' rollup,
+  // because a dollar spent out of an income line still left the account, and
+  // because the on-screen snapshot reads exactly this one aggregate: two
+  // definitions of "spent" is how the handout and the screen came to disagree
+  // once already.
+  seasonOutCents: number;
+  // The three numbers a board is owed about how the commitments themselves are
+  // being run: overdue, over their amount, and recorded after the purchase (R6 —
+  // the single most valuable number on a board snapshot).
+  staleCommitmentCount: number;
+  overspentCommitmentCount: number;
+  afterTheFactCount: number;
 }
 
 interface SeasonBase {
@@ -888,7 +913,12 @@ export async function loadBoardSnapshot(
         .order("id", { ascending: true }),
     "board snapshot budgets",
   );
-  const budget = budgets.find((b) => b.status === "active") ?? budgets[0] ?? null;
+  // The ACTIVE budget, else the newest — the shared choice, not a local repeat
+  // of it. `.order("status")` sorts the enum by DECLARATION order, so the query
+  // that looked like it preferred 'active' actually preferred the DRAFT; this
+  // page and the Reports page are the two things a treasurer hands the same
+  // meeting, so they ask one helper (lib/treasury pickSeasonBudget).
+  const budget = pickSeasonBudget(budgets);
 
   // THE SEASON'S LIVE LEDGER, WHOLE. This used to be one unbounded select whose
   // rows were summed here, which meant the board snapshot silently stopped at
@@ -896,18 +926,54 @@ export async function loadBoardSnapshot(
   // — the two surfaces a board compares. It pages now (see fetchAllRows above
   // for why this path cannot call the 0019 aggregates), and the reduction is the
   // shared pure helper that restates those aggregates' definitions.
+  //
+  // `commitment_id` rides along because the drawdown is computed from it: a
+  // commitment's remaining balance is DERIVED from the entries linked to it
+  // (there is no stored paid_cents), so a read that omitted the column would
+  // report every commitment as untouched and overstate what is still committed.
   const ledger = await fetchAllRows<LedgerEntryRow>(
     () =>
       supabase
         .from("ledger_entries")
-        .select("direction, amount_cents, budget_line_id, voided_at, entry_date")
+        .select(
+          "direction, amount_cents, budget_line_id, commitment_id, voided_at, entry_date",
+        )
         .eq("program_id", season.program_id)
         .eq("season_id", seasonId)
         .is("voided_at", null)
         .order("id", { ascending: true }),
     "board snapshot ledger",
   );
-  const { totals, byLine } = summarizeSeasonLedger(ledger);
+  const { totals, byLine, byCommitment } = summarizeSeasonLedger(ledger);
+
+  // THE SEASON'S COMMITMENTS, WHOLE — same reasoning, same paging. This path
+  // cannot call public.commitment_totals for the reason stated at the top of the
+  // file (a service-role client has no auth.uid(), so the read guard refuses and
+  // widening it would carve an exception into a fiduciary control), so it reads
+  // the rows and reduces them with the pure helper that restates the SQL
+  // definitions field for field. tests/rls/commitments.spec.ts runs both over the
+  // same 1,100 rows in real Postgres and asserts they agree.
+  const commitments = await fetchAllRows<CommitmentRow>(
+    () =>
+      supabase
+        .from("commitments")
+        .select(
+          "id, kind, budget_line_id, amount_cents, shipping_cents, tax_cents, need_by, after_the_fact, closed_at, cancelled_at, superseded_at",
+        )
+        .eq("program_id", season.program_id)
+        .eq("season_id", seasonId)
+        .order("id", { ascending: true }),
+    "board snapshot commitments",
+  );
+  // "Overdue" is a calendar judgement and the calendar belongs to the PROGRAM
+  // (Constitution VII) — the same date public.commitment_totals computes from
+  // programs.timezone, so a UTC host never decides a Chicago program's purchase
+  // order is late.
+  const commitmentSummary = summarizeCommitments(
+    commitments,
+    byCommitment,
+    zonedDateKey(new Date(), program?.timezone ?? "UTC"),
+  );
 
   // A line's actual is read the way its CATEGORY means it — an income line
   // counts money in, an expense line counts money out (lib/treasury
@@ -1024,5 +1090,12 @@ export async function loadBoardSnapshot(
     totalPlannedExpense: sum(expenseCategories, "plannedCents"),
     totalActualExpense: sum(expenseCategories, "actualCents") + uncategorizedOut,
     reconciledThroughLabel,
+    seasonOutCents: totals.outCents,
+    openCommittedCents: commitmentSummary.totals.openCommittedCents,
+    openExpectedCents: commitmentSummary.totals.openExpectedCents,
+    openCommitmentCount: commitmentSummary.totals.openCount,
+    staleCommitmentCount: commitmentSummary.totals.staleCount,
+    overspentCommitmentCount: commitmentSummary.totals.overspentCount,
+    afterTheFactCount: commitmentSummary.totals.afterTheFactCount,
   };
 }

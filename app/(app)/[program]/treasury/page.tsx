@@ -7,15 +7,23 @@ import { TREASURY_ROLES } from "@/lib/nav";
 import {
   TREASURY_WRITE_ROLES,
   LEDGER_DIRECTIONS,
+  COMMITMENT_STATUS_LABELS,
   formatCents,
   ledgerSearchTerm,
   seasonTotalsFromRow,
+  commitmentTotalsFromRow,
+  commitmentDrawdownFromRows,
+  commitmentRefLabel,
   ledgerPageRange,
   ledgerPageRangeUnknownTotal,
   parsePageParam,
   monthKeyForDate,
   pickSeasonBudget,
   LEDGER_PAGE_SIZE,
+  type CommitmentFundingSource,
+  type CommitmentKind,
+  type CommitmentStatus,
+  type CommitmentTotals,
   type LedgerDirection,
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
@@ -35,7 +43,7 @@ import { AddEntry, type EntryPrefill } from "./AddEntry";
 import { LedgerFilters } from "./LedgerFilters";
 import { LedgerTable, type EntryRow } from "./LedgerTable";
 import { Reconciliation } from "./Reconciliation";
-import type { CatOpt, LineOpt, NamedOpt, TagOptions } from "./shared";
+import type { CatOpt, CommitOpt, LineOpt, NamedOpt, TagOptions } from "./shared";
 
 // The running ledger (T019) — the treasury landing, and after spec 005 US8 a
 // load-and-compose page: the season metric strip and the Uncategorized nudge
@@ -52,7 +60,13 @@ import type { CatOpt, LineOpt, NamedOpt, TagOptions } from "./shared";
 // says which slice of how many it is showing.
 
 const ENTRY_COLUMNS =
-  "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, memo, counterparty, receipt_path, voided_at, void_reason";
+  "id, entry_date, direction, amount_cents, budget_line_id, competition_id, trip_id, commitment_id, memo, counterparty, receipt_path, voided_at, void_reason";
+
+// The open commitments this season's entries can be paid against (spec 006 R3).
+// Ordered newest-first and capped: this is a PICKER, not a report — the
+// commitments page is the report, and it pages. A season with more open purchase
+// orders than this has a different problem than a truncated dropdown.
+const COMMITMENT_PICKER_LIMIT = 200;
 
 // The filter chain, described once and applied to BOTH the count query and the
 // page query, so "showing 1–100 of 412" can never be describing a different set
@@ -148,6 +162,10 @@ export default async function LedgerPage({
   let lines: LineOpt[] = [];
   let comps: NamedOpt[] = [];
   let trips: NamedOpt[] = [];
+  let commits: CommitOpt[] = [];
+  // Every open commitment's remaining balance, so opening the drawer from a
+  // commitment can put what is still owed in the Amount box.
+  const commitRemaining = new Map<string, number>();
 
   if (season) {
     // Which budget's lines the entry form offers. The ACTIVE one, else the
@@ -166,7 +184,7 @@ export default async function LedgerPage({
         (budgetRows as { id: string; status: string }[] | null) ?? [],
       )?.id ?? null;
 
-    const [catRes, compRes, tripRes] = await Promise.all([
+    const [catRes, compRes, tripRes, commitRes] = await Promise.all([
       budgetId
         ? supabase
             .from("budget_categories")
@@ -188,11 +206,42 @@ export default async function LedgerPage({
         .eq("program_id", program.id)
         .eq("season_id", season.id)
         .order("starts_on", { ascending: false }),
+      // OPEN commitments only — a closed or cancelled document is not something
+      // a treasurer means to pay down, and it is what the money math counts. The
+      // database still accepts any status, so a late invoice against a closed
+      // purchase order remains recordable from that commitment's own page.
+      supabase
+        .from("commitments")
+        .select("id, kind, funding_source, number, revision, vendor")
+        .eq("program_id", program.id)
+        .eq("season_id", season.id)
+        .is("closed_at", null)
+        .is("cancelled_at", null)
+        .is("superseded_at", null)
+        .order("funding_source", { ascending: true })
+        .order("number", { ascending: false })
+        .limit(COMMITMENT_PICKER_LIMIT),
     ]);
 
     cats = (catRes.data as CatOpt[] | null) ?? [];
     comps = (compRes.data as NamedOpt[] | null) ?? [];
     trips = (tripRes.data as NamedOpt[] | null) ?? [];
+    commits = (
+      (commitRes.data as
+        | {
+            id: string;
+            kind: CommitmentKind;
+            funding_source: CommitmentFundingSource;
+            number: number;
+            revision: number;
+            vendor: string;
+          }[]
+        | null) ?? []
+    ).map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      name: `${commitmentRefLabel(c.funding_source, c.number, c.revision)} — ${c.vendor}`,
+    }));
 
     if (cats.length > 0) {
       const { data: lineData } = await supabase
@@ -206,9 +255,23 @@ export default async function LedgerPage({
         .order("sort_order", { ascending: true });
       lines = (lineData as LineOpt[] | null) ?? [];
     }
-  }
 
-  const options: TagOptions = { cats, lines, comps, trips };
+    // What is still owed on each of those, in SQL (0022) rather than summed over
+    // whatever ledger rows a fetch returned — a per-document remaining balance
+    // is a money total, and every money total in this app is a SQL aggregate for
+    // the reason the header of this file gives. Only the ids in the picker are
+    // asked about, so the answer is bounded by the picker, not by the season.
+    if (commits.length > 0) {
+      const { data: drawRows } = await supabase.rpc("commitment_drawdown_rows", {
+        p_program_id: program.id,
+        p_season_id: season.id,
+        p_commitment_ids: commits.map((c) => c.id),
+      });
+      for (const [id, d] of commitmentDrawdownFromRows(drawRows)) {
+        commitRemaining.set(id, d.remainingCents);
+      }
+    }
+  }
 
   // ---- Filters --------------------------------------------------------------
   const includeVoided = one("voided") === "1";
@@ -331,13 +394,29 @@ export default async function LedgerPage({
   // reconciliation month list. A failed read renders as "—", never as $0.00: a
   // zero balance is a number a treasurer would read aloud to a board.
   let totals: LedgerSeasonTotals | null = null;
+  // The middle layer (spec 006): money this season has already promised. It is
+  // on THIS page because the balance above it is the number a director reads as
+  // "what we have" — and what a program has is not what it can spend.
+  let committed: CommitmentTotals | null = null;
   if (season) {
-    const { data: totalsData, error: totalsError } = await supabase.rpc(
-      "ledger_season_totals",
-      { p_program_id: program.id, p_season_id: season.id },
-    );
-    const row = Array.isArray(totalsData) ? totalsData[0] : totalsData;
-    totals = totalsError ? null : seasonTotalsFromRow(row);
+    const [totalsRes, committedRes] = await Promise.all([
+      supabase.rpc("ledger_season_totals", {
+        p_program_id: program.id,
+        p_season_id: season.id,
+      }),
+      supabase.rpc("commitment_totals", {
+        p_program_id: program.id,
+        p_season_id: season.id,
+      }),
+    ]);
+    const row = Array.isArray(totalsRes.data) ? totalsRes.data[0] : totalsRes.data;
+    totals = totalsRes.error ? null : seasonTotalsFromRow(row);
+    const committedRow = Array.isArray(committedRes.data)
+      ? committedRes.data[0]
+      : committedRes.data;
+    committed = committedRes.error
+      ? null
+      : commitmentTotalsFromRow(committedRow);
   }
   const totalsUnavailable = !!season && !totals;
 
@@ -365,9 +444,17 @@ export default async function LedgerPage({
       ? confirmParam.slice("unmark_".length)
       : null;
 
-  // ---- "Void & redo" prefill (from the entry that was just voided) ----------
+  // ---- Prefill: the two ways the drawer opens already filled in -------------
+  // `?reenter=` is a "Void & redo" (spec 005 §7); `?commit=` is "record a
+  // payment against this" from a commitment's page (spec 006 R3), which is what
+  // keeps most entries from ever touching the drawdown select. Neither id is
+  // trusted: each is re-read in THIS program, and the commitment must also be in
+  // THIS season — an id from another season would be frozen onto the entry by
+  // the void-only trigger and would decrement a balance on the wrong year's
+  // books.
   let prefill: EntryPrefill | null = null;
   const reenterId = one("reenter");
+  const payCommitmentId = one("commit");
   if (canWrite && reenterId) {
     const { data } = await supabase
       .from("ledger_entries")
@@ -385,12 +472,113 @@ export default async function LedgerPage({
         budget_line_id: row.budget_line_id,
         competition_id: row.competition_id,
         trip_id: row.trip_id,
+        commitment_id: row.commitment_id,
         memo: row.memo,
         counterparty: row.counterparty,
         hadReceipt: !!row.receipt_path,
+        againstCommitment: null,
+      };
+    }
+  } else if (canWrite && season && payCommitmentId) {
+    const { data } = await supabase
+      .from("commitments")
+      .select(
+        "id, kind, funding_source, number, revision, vendor, purpose, budget_line_id",
+      )
+      .eq("id", payCommitmentId)
+      .eq("program_id", program.id)
+      .eq("season_id", season.id)
+      .maybeSingle();
+    const c = data as {
+      id: string;
+      kind: CommitmentKind;
+      funding_source: CommitmentFundingSource;
+      number: number;
+      revision: number;
+      vendor: string;
+      purpose: string;
+      budget_line_id: string;
+    } | null;
+    if (c) {
+      const label = `${commitmentRefLabel(c.funding_source, c.number, c.revision)} — ${c.vendor}`;
+      prefill = {
+        redoOf: null,
+        entry_date: zonedDateKey(new Date(), program.timezone),
+        // A spending commitment is paid down by money OUT and expected money by
+        // money IN — the same rule the aggregates apply, so the form opens on the
+        // direction that will actually draw it down.
+        direction: c.kind === "spending" ? "out" : "in",
+        // What is still owed, when we could read it. Zero rather than a guess
+        // when we could not: an amount is a required field the treasurer is
+        // about to check anyway, and a wrong number in it is worse than an empty
+        // one.
+        amount_cents: commitRemaining.get(c.id) ?? 0,
+        budget_line_id: c.budget_line_id,
+        competition_id: null,
+        trip_id: null,
+        commitment_id: c.id,
+        memo: c.purpose,
+        counterparty: c.vendor,
+        hadReceipt: false,
+        againstCommitment: label,
       };
     }
   }
+
+  // A DEFAULT VALUE A SELECT DOES NOT CONTAIN IS A DROPPED LINK. The picker
+  // offers OPEN commitments, and both prefills can carry one that isn't: "record
+  // a payment against this" from a closed purchase order (a late invoice is a
+  // real fact about the money, which is why the database accepts it), and a
+  // "Void & redo" of an entry whose commitment has been closed since. Without
+  // its option present the select falls back to "Not against one" and the redo
+  // silently releases money back into the available balance — the same class of
+  // defect as dropping the receipt. So the prefill's own commitment joins the
+  // list, once, at the end.
+  if (season && prefill?.commitment_id) {
+    const known = commits.some((c) => c.id === prefill!.commitment_id);
+    if (!known) {
+      const { data } = await supabase
+        .from("commitments")
+        .select("id, kind, funding_source, number, revision, vendor, status")
+        .eq("id", prefill.commitment_id)
+        .eq("program_id", program.id)
+        .eq("season_id", season.id)
+        .maybeSingle();
+      const c = data as {
+        id: string;
+        kind: CommitmentKind;
+        funding_source: CommitmentFundingSource;
+        number: number;
+        revision: number;
+        vendor: string;
+        status: string;
+      } | null;
+      if (c) {
+        // Own-property lookup, not a bare index. The value is a database enum
+        // and can only be one of the eight — but every map in this app that is
+        // keyed by a value from outside the module reads this way, because
+        // `LABELS["constructor"]` hands React a function to render.
+        const statusLabel = Object.hasOwn(COMMITMENT_STATUS_LABELS, c.status)
+          ? COMMITMENT_STATUS_LABELS[c.status as CommitmentStatus]
+          : c.status;
+        commits = [
+          ...commits,
+          {
+            id: c.id,
+            kind: c.kind,
+            name: `${commitmentRefLabel(c.funding_source, c.number, c.revision)} — ${c.vendor} (${statusLabel})`,
+          },
+        ];
+      } else {
+        // It is not this program's, or not this season's. Drop the prefilled
+        // link rather than posting an id the server would refuse: the entry
+        // itself is still worth saving, and the drawer says nothing is tagged.
+        prefill = { ...prefill, commitment_id: null, againstCommitment: null };
+      }
+    }
+  }
+
+  const options: TagOptions = { cats, lines, comps, trips, commits };
 
   // A row's popover reopens on `?edit=<entryId>` and carries its own error —
   // but only when that row is really on this page and still live. A voided row
@@ -411,7 +599,7 @@ export default async function LedgerPage({
 
   // Paging links keep every filter and drop the one-shot params (a flash, an
   // error, a reopened popover) so page 2 is not still shouting about page 1.
-  const ONE_SHOT = ["edit", "error", "ok", "confirm", "reenter"];
+  const ONE_SHOT = ["edit", "error", "ok", "confirm", "reenter", "commit"];
   const TRANSIENT = new Set(["page", ...ONE_SHOT]);
   const keepFilters = (drop: Set<string>): URLSearchParams => {
     const qs = new URLSearchParams();
@@ -536,6 +724,35 @@ export default async function LedgerPage({
             {metric(totals && formatCents(totals.outCents))}
           </div>
           <div className="metric-sub">expenses paid</div>
+        </div>
+        {/* THE MIDDLE LAYER, ON THE PAGE THAT SHOWS THE BALANCE (spec 006).
+            Balance is money that has moved; this is money that has been
+            promised and has not. A director reading a $3,200 balance beside
+            $3,200 already committed to a costume vendor has $0, and until this
+            cell existed nothing on any screen said so. Same aggregate as Budget
+            vs Actual and the board snapshot; "—" when it could not be read. */}
+        <div className={`metric-cell${committed?.openCommittedCents ? " warn" : ""}`}>
+          <div className="metric-label">Committed</div>
+          <div className="metric-value">
+            {metric(committed && formatCents(committed.openCommittedCents))}
+          </div>
+          <div className="metric-sub">
+            {!committed ? (
+              "could not be read"
+            ) : (
+              <>
+                promised, not yet paid ·{" "}
+                <Link
+                  href={`/${slug}/treasury/commitments`}
+                  className="metric-link"
+                >
+                  {committed.openCount === 1
+                    ? "1 open"
+                    : `${committed.openCount} open`}
+                </Link>
+              </>
+            )}
+          </div>
         </div>
         <div
           className={`metric-cell${totals && totals.uncategorizedCount > 0 ? " warn" : ""}`}
