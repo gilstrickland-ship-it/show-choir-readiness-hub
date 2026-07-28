@@ -18,11 +18,19 @@ import {
   shareCan,
   shareResourceTable,
   revokeShareLink,
+  documentAllowsToken,
+  parentSurfaceAvailable,
+  seasonCalendarAvailable,
   CAPABILITIES,
   GUARDIAN_CAPABILITIES,
   SHARE_CAPABILITIES,
   GUARDIAN_WRITE_CAPABILITIES,
+  DOCUMENT_TOKEN_KINDS,
+  PARENT_SURFACE_FLAGS,
+  SEASON_CALENDAR_FLAGS,
+  type ParentSurface,
 } from "@/lib/tokens";
+import type { FlagKey, FlaggableProgram } from "@/lib/flags";
 
 describe("mint / hash", () => {
   test("generateToken yields a URL-safe raw token and its sha256-hex hash", () => {
@@ -131,6 +139,168 @@ describe("share resource → parent table (cross-program guard)", () => {
     ] as const) {
       expect(["competitions", "seasons"]).toContain(shareResourceTable(resource));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-A — one share link, two very different documents.
+//
+// Publishing an itinerary auto-mints a BROADCAST share link and tells the
+// director they shared the times. The packet route accepted that same
+// `resource='itinerary'` token and served the parent packet PDF, which prints
+// bus and hotel-ROOM assignments student by student plus chaperone and
+// volunteer names. A director pasting the "itinerary" link into a public
+// booster post published a rooming list for minors.
+//
+// The capability was narrowed to match the promise. These tests pin the table
+// that decides it: flip packet_pdf back to accepting "share" and they fail.
+describe("which token kinds may open which document (Constitution III)", () => {
+  test("the packet PDF is GUARDIAN-ONLY — no broadcast link reaches it", () => {
+    expect([...DOCUMENT_TOKEN_KINDS.packet_pdf]).toEqual(["guardian"]);
+    expect(documentAllowsToken("packet_pdf", "guardian")).toBe(true);
+    expect(documentAllowsToken("packet_pdf", "share")).toBe(false);
+  });
+
+  test("the documents that carry only TIMES stay shareable", () => {
+    // The itinerary page and its .ics name no person, so the broadcast link the
+    // director was promised still works — narrowing the packet did not quietly
+    // take away the thing they meant to share.
+    expect(documentAllowsToken("itinerary_page", "share")).toBe(true);
+    expect(documentAllowsToken("itinerary_ics", "share")).toBe(true);
+    expect(documentAllowsToken("itinerary_page", "guardian")).toBe(true);
+    expect(documentAllowsToken("itinerary_ics", "guardian")).toBe(true);
+  });
+
+  test("the season feed is addressed by a season, so share links only", () => {
+    expect([...DOCUMENT_TOKEN_KINDS.season_feed]).toEqual(["share"]);
+    expect(documentAllowsToken("season_feed", "guardian")).toBe(false);
+  });
+
+  test("every document names at least one kind and no unknown kind", () => {
+    for (const kinds of Object.values(DOCUMENT_TOKEN_KINDS)) {
+      expect(kinds.length).toBeGreaterThan(0);
+      for (const k of kinds) expect(["guardian", "share"]).toContain(k);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-B — the parent surface evaluated no feature flags at all. Turning `shifts`
+// off left families still claiming volunteer slots that no staff surface could
+// show or manage. The rule (lib/tokens) is: a parent surface is available only
+// when every flag its STAFF half requires is on, in the same combinations.
+describe("feature flags on the anonymous parent surface (Constitution VIII)", () => {
+  // A program with every flag explicitly set, so a test says what it means
+  // rather than leaning on a tier baseline.
+  function program(overrides: Partial<Record<FlagKey, boolean>>): FlaggableProgram {
+    return {
+      tier: "program",
+      feature_overrides: overrides as Record<string, boolean>,
+    };
+  }
+
+  test("the surface → flags map is EXACTLY the documented set", () => {
+    // Adding a parent route means adding a line here. That is the point: the
+    // finding was a whole surface with no entries at all.
+    expect(
+      Object.fromEntries(
+        (Object.keys(PARENT_SURFACE_FLAGS) as ParentSurface[])
+          .sort()
+          .map((k) => [k, [...PARENT_SURFACE_FLAGS[k]].sort()]),
+      ),
+    ).toEqual({
+      absence: ["competitions"],
+      costumes: ["costumes"],
+      itinerary: ["competitions"],
+      packet: ["competitions"],
+      signup: ["comms", "shifts"],
+      unsubscribe: [],
+      welcome: ["guide"],
+    });
+  });
+
+  test("volunteer signup needs BOTH comms and shifts, like /comms/shifts does", () => {
+    expect(
+      parentSurfaceAvailable(program({ comms: true, shifts: true }), "signup"),
+    ).toBe(true);
+    // Either one off closes it — this is the exact case in the finding: shifts
+    // off, families still signing up.
+    expect(
+      parentSurfaceAvailable(program({ comms: true, shifts: false }), "signup"),
+    ).toBe(false);
+    expect(
+      parentSurfaceAvailable(program({ comms: false, shifts: true }), "signup"),
+    ).toBe(false);
+  });
+
+  test("competitions off closes the itinerary, the packet and absences", () => {
+    const off = program({ competitions: false });
+    expect(parentSurfaceAvailable(off, "itinerary")).toBe(false);
+    expect(parentSurfaceAvailable(off, "packet")).toBe(false);
+    expect(parentSurfaceAvailable(off, "absence")).toBe(false);
+
+    const on = program({ competitions: true });
+    expect(parentSurfaceAvailable(on, "itinerary")).toBe(true);
+    expect(parentSurfaceAvailable(on, "packet")).toBe(true);
+    expect(parentSurfaceAvailable(on, "absence")).toBe(true);
+  });
+
+  test("costumes and the welcome card follow their own flags", () => {
+    expect(parentSurfaceAvailable(program({ costumes: false }), "costumes")).toBe(
+      false,
+    );
+    // flagRegistry's `guide` description names the "parent welcome card" in as
+    // many words, and nothing on this surface evaluated it.
+    expect(parentSurfaceAvailable(program({ guide: false }), "welcome")).toBe(
+      false,
+    );
+  });
+
+  test("unsubscribe is available with EVERY flag off (CAN-SPAM / RFC 8058)", () => {
+    const allOff = program(
+      Object.fromEntries(
+        (
+          [
+            "costumes",
+            "competitions",
+            "travel",
+            "treasury",
+            "comms",
+            "digest",
+            "announcements",
+            "shifts",
+            "events",
+            "archive",
+            "guide",
+          ] as FlagKey[]
+        ).map((k) => [k, false]),
+      ) as Partial<Record<FlagKey, boolean>>,
+    );
+    expect(parentSurfaceAvailable(allOff, "unsubscribe")).toBe(true);
+    // …and it is the ONLY unconditional one.
+    for (const surface of Object.keys(PARENT_SURFACE_FLAGS) as ParentSurface[]) {
+      if (surface === "unsubscribe") continue;
+      expect(parentSurfaceAvailable(allOff, surface)).toBe(false);
+    }
+  });
+
+  test("the season feed is ANY-OF, mirroring the Season page that mints it", () => {
+    expect([...SEASON_CALENDAR_FLAGS].sort()).toEqual([
+      "competitions",
+      "events",
+      "travel",
+    ]);
+    // One of the three is enough — the feed still has something to carry.
+    expect(
+      seasonCalendarAvailable(
+        program({ competitions: false, events: true, travel: false }),
+      ),
+    ).toBe(true);
+    expect(
+      seasonCalendarAvailable(
+        program({ competitions: false, events: false, travel: false }),
+      ),
+    ).toBe(false);
   });
 });
 

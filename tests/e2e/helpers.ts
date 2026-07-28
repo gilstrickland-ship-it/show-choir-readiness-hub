@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -169,6 +169,77 @@ export async function cleanupFounderPrograms(): Promise<void> {
   await admin.from("seasons").delete().in("program_id", list);
   await admin.from("program_members").delete().in("program_id", list);
   await admin.from("programs").delete().in("id", list);
+}
+
+// Mint a BROADCAST share link straight into the database and hand back the raw
+// token — the same hash-only shape global-setup uses for the guardian token, and
+// the only way a spec can hold a raw share token (the app shows one exactly once,
+// on the redirect after minting). Idempotent per resource: prior links for the
+// same resource are revoked first, so a re-run never leaves two live.
+export async function mintShareToken(args: {
+  resource: "itinerary" | "signup_page" | "season_calendar";
+  resourceId: string;
+}): Promise<string> {
+  const admin = adminClient();
+  const raw = randomBytes(32).toString("base64url");
+  await admin
+    .from("share_links")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("program_id", DEMO.programId)
+    .eq("resource", args.resource)
+    .eq("resource_id", args.resourceId)
+    .is("revoked_at", null);
+  const { error } = await admin.from("share_links").insert({
+    program_id: DEMO.programId,
+    resource: args.resource,
+    resource_id: args.resourceId,
+    token_hash: sha256Hex(raw),
+  });
+  if (error) throw new Error(`share_links insert failed: ${error.message}`);
+  return raw;
+}
+
+// Revoke every live share link the demo program has, so a spec that minted one
+// leaves the tenant as it found it.
+export async function revokeAllDemoShareLinks(): Promise<void> {
+  const admin = adminClient();
+  await admin
+    .from("share_links")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("program_id", DEMO.programId)
+    .is("revoked_at", null);
+}
+
+// What supabase/seed.sql gives the demo program. Anything that changes flags has
+// to put THIS back, not `{}`: two of the demo's features are on by override, and
+// restoring an empty object would silently turn the AI surfaces off for every
+// spec that runs afterwards in this single-worker suite.
+export const DEMO_FEATURE_OVERRIDES: Record<string, boolean> = {
+  packet_parse: true,
+  digest: true,
+};
+
+// Set the demo program's per-program feature overrides, on top of the seeded
+// baseline. The parent surface evaluates the OWNING program's flags, so this is
+// how a spec proves a flag-off surface actually refuses. Always pair it with
+// resetDemoFeatureOverrides() in an afterAll.
+export async function setDemoFeatureOverrides(
+  overrides: Record<string, boolean>,
+): Promise<void> {
+  const admin = adminClient();
+  const { error } = await admin
+    .from("programs")
+    .update({
+      feature_overrides: { ...DEMO_FEATURE_OVERRIDES, ...overrides },
+    })
+    .eq("id", DEMO.programId);
+  if (error) {
+    throw new Error(`setDemoFeatureOverrides failed: ${error.message}`);
+  }
+}
+
+export async function resetDemoFeatureOverrides(): Promise<void> {
+  await setDemoFeatureOverrides({});
 }
 
 // Reset the demo program's parent-round-trip state so the F13/F15/F16 journey is
