@@ -618,12 +618,6 @@ export const COMMITMENT_STATUS_LABELS: Record<CommitmentStatus, string> = {
   superseded: "Replaced by a revision",
 };
 
-export function parseCommitmentStatus(raw: string): CommitmentStatus | null {
-  return (COMMITMENT_STATUSES as readonly string[]).includes(raw)
-    ? (raw as CommitmentStatus)
-    : null;
-}
-
 // The two purses (D12). Identity, numbering and tax treatment never mix across
 // them — a booster must never issue, or appear to issue, the district's purchase
 // order. Only the reporting blends.

@@ -8,6 +8,7 @@ import {
   commitmentIsOpen,
   commitmentRefLabel,
   commitmentOverspend,
+  commitmentTotalCents,
   drawdownSentence,
   formatCents,
   formatDateOnly,
@@ -209,9 +210,12 @@ function CommitmentRow({
         </td>
         <td>{c.lineName.get(row.budget_line_id) ?? "—"}</td>
         <td className="right">
-          {draw ? formatCents(draw.totalCents) : formatCents(
-            row.amount_cents + row.shipping_cents + row.tax_cents,
-          )}
+          {/* The committed total is amount + shipping + tax, and it is stated
+              ONCE (lib/treasury commitmentTotalCents) so the row and the SQL
+              cannot come to mean different things by it. `draw` is the SQL's
+              own answer when we have it; the fallback is the same definition
+              over the row already in hand. */}
+          {formatCents(draw ? draw.totalCents : commitmentTotalCents(row))}
         </td>
         <td className="right">
           {/* A remaining balance we could not read is a dash. `?? 0` here would

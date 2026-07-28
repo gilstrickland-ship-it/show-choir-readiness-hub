@@ -47,7 +47,6 @@ import {
   commitmentTotalsFromRow,
   drawdownSentence,
   parseCommitmentKind,
-  parseCommitmentStatus,
   parseFundingSource,
   stillAvailable,
   type CommitmentAction,
@@ -919,19 +918,17 @@ describe("the role relaxation, mirrored from the policy (spec §4)", () => {
 });
 
 describe("parsers reject anything that is not one of the enum's own values", () => {
-  test("kind, funding source and status", () => {
+  test("kind and funding source", () => {
     expect(parseCommitmentKind("spending")).toBe("spending");
     expect(parseCommitmentKind("Spending")).toBeNull();
     expect(parseFundingSource("booster")).toBe("booster");
     expect(parseFundingSource("")).toBeNull();
-    expect(parseCommitmentStatus("partially_received")).toBe("partially_received");
-    expect(parseCommitmentStatus("paid")).toBeNull();
   });
 
   // A form value arriving as "constructor" or "toString" must resolve to
   // nothing rather than reaching a lookup as a prototype key.
   test("a prototype key is not a value", () => {
     expect(parseCommitmentKind("constructor")).toBeNull();
-    expect(parseCommitmentStatus("toString")).toBeNull();
+    expect(parseFundingSource("toString")).toBeNull();
   });
 });
