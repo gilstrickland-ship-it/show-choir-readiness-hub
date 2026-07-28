@@ -566,6 +566,64 @@ export type CommitmentKind = (typeof COMMITMENT_KINDS)[number];
 export const COMMITMENT_FUNDING_SOURCES = ["district", "booster"] as const;
 export type CommitmentFundingSource = (typeof COMMITMENT_FUNDING_SOURCES)[number];
 
+// THE DELIBERATE ROLE RELAXATION (spec §4), mirrored from
+// private.commitment_may_create so the form and the policy cannot drift. A
+// director or admin may RAISE a request; only the treasurer approves, issues,
+// receives and closes it (TREASURY_WRITE_ROLES above). Widening create is what
+// makes requester ≠ approver possible at all — a treasurer-only model would
+// force her to approve the requests she herself raised, which is the exact
+// failure mode the database forbids with a CHECK.
+export const COMMITMENT_CREATE_ROLES: readonly Role[] = [
+  "director",
+  "admin",
+  "treasurer",
+];
+
+// The subtypes, in the words a director uses. Never a direction toggle: an
+// inbound purchase order is not a real accounting object (D4), so these name two
+// different promises rather than two signs of one number.
+export const COMMITMENT_KIND_LABELS: Record<CommitmentKind, string> = {
+  spending: "Money we have promised to pay",
+  expected: "Money someone has promised us",
+};
+
+// The plural heading each subtype gets its own section under.
+export const COMMITMENT_KIND_HEADINGS: Record<CommitmentKind, string> = {
+  spending: "Money we have promised",
+  expected: "Money promised to us",
+};
+
+export const COMMITMENT_STATUSES = [
+  "requested",
+  "approved",
+  "issued",
+  "partially_received",
+  "received",
+  "closed",
+  "cancelled",
+  "superseded",
+] as const;
+export type CommitmentStatus = (typeof COMMITMENT_STATUSES)[number];
+
+// Plain words for the lifecycle. "Superseded" is the one a bookkeeper would ask
+// about, so it says what happened rather than naming the column.
+export const COMMITMENT_STATUS_LABELS: Record<CommitmentStatus, string> = {
+  requested: "Requested",
+  approved: "Approved",
+  issued: "Issued",
+  partially_received: "Partly received",
+  received: "Received",
+  closed: "Closed",
+  cancelled: "Cancelled",
+  superseded: "Replaced by a revision",
+};
+
+export function parseCommitmentStatus(raw: string): CommitmentStatus | null {
+  return (COMMITMENT_STATUSES as readonly string[]).includes(raw)
+    ? (raw as CommitmentStatus)
+    : null;
+}
+
 // The two purses (D12). Identity, numbering and tax treatment never mix across
 // them — a booster must never issue, or appear to issue, the district's purchase
 // order. Only the reporting blends.
@@ -599,6 +657,138 @@ export function commitmentRefLabel(
       ? `PO ${numberValue}`
       : `Approved spending #${numberValue}`;
   return revision > 0 ? `${base} · rev ${revision}` : base;
+}
+
+// ---------------------------------------------------------------------------
+// The lifecycle — one definition, shared by the buttons and the writes
+// ---------------------------------------------------------------------------
+// request → approve → issue → partially received → received → closed, plus
+// cancel and revise from any open state.
+//
+// THE DATABASE DOES NOT ENFORCE THIS ORDER and deliberately so: 0021 constrains
+// the STAMPS (set once, never cleared, never inconsistent with the status) and
+// gates WHO may move them (treasurer, by RLS). What order the moves come in is a
+// workflow question, not a fiduciary one, so it lives here — in one pure
+// function that the row's buttons and the server action both ask, rather than in
+// an `if` beside each button and a second `if` inside each action, which is how
+// a control that is hidden becomes a control that still works when posted.
+
+export const COMMITMENT_ACTIONS = [
+  "approve",
+  "issue",
+  "receive_partial",
+  "receive_full",
+  "close",
+  "cancel",
+  "revise",
+] as const;
+export type CommitmentAction = (typeof COMMITMENT_ACTIONS)[number];
+
+export function parseCommitmentAction(raw: string): CommitmentAction | null {
+  return (COMMITMENT_ACTIONS as readonly string[]).includes(raw)
+    ? (raw as CommitmentAction)
+    : null;
+}
+
+// A document still stands when it has not been cancelled and has not been
+// replaced by its own revision; it is still OPEN when it also has not been
+// closed. Closing is what releases the remainder, so a closed commitment is
+// still a fact about the season and is no longer committing anything — the same
+// split the SQL aggregates make (`is_standing` / `is_open`).
+export interface CommitmentState {
+  status: string;
+  closed_at: string | null;
+  cancelled_at: string | null;
+  superseded_at: string | null;
+}
+
+export function commitmentIsStanding(row: CommitmentState): boolean {
+  return row.cancelled_at === null && row.superseded_at === null;
+}
+
+export function commitmentIsOpen(row: CommitmentState): boolean {
+  return commitmentIsStanding(row) && row.closed_at === null;
+}
+
+// Which moves this document can make next. An action not listed here is refused
+// by the server action too, with the same answer, because both call this.
+export function commitmentAllows(
+  row: CommitmentState,
+  action: CommitmentAction,
+): boolean {
+  if (!commitmentIsOpen(row)) return false;
+  switch (action) {
+    case "approve":
+      return row.status === "requested";
+    case "issue":
+      return row.status === "approved";
+    case "receive_partial":
+      return row.status === "issued";
+    case "receive_full":
+      return row.status === "issued" || row.status === "partially_received";
+    // Closing, cancelling and revising are available for as long as the
+    // document is open. A request that was never approved still has to be able
+    // to go away, and a real purchase order gets revised before it is issued far
+    // more often than after.
+    case "close":
+    case "cancel":
+    case "revise":
+      return true;
+  }
+}
+
+// What a lifecycle move writes. Kept beside `commitmentAllows` so the transition
+// and its stamps are read together: a status and its stamp are the same fact
+// said twice (0021's CHECK constraints), and setting one without the other is
+// rejected by the engine.
+export const COMMITMENT_ACTION_STATUS: Record<
+  Exclude<CommitmentAction, "revise">,
+  CommitmentStatus
+> = {
+  approve: "approved",
+  issue: "issued",
+  receive_partial: "partially_received",
+  receive_full: "received",
+  close: "closed",
+  cancel: "cancelled",
+};
+
+// ---------------------------------------------------------------------------
+// The drawdown, in one sentence (R3)
+// ---------------------------------------------------------------------------
+// "committed $3,200 · paid $3,050 · $150 still committed" — and the same shape
+// for the inbound subtype, which is received rather than paid and expected
+// rather than committed. Overspend is APPENDED, never substituted: R5 says an
+// overrun warns and never blocks, so the sentence still reports what was
+// promised and what has moved, and then says by how much reality went past it.
+
+export function commitmentTotalCents(row: {
+  amount_cents: number;
+  shipping_cents: number;
+  tax_cents: number;
+}): number {
+  return row.amount_cents + row.shipping_cents + row.tax_cents;
+}
+
+export function commitmentRemaining(total: number, drawn: number): number {
+  return Math.max(total - drawn, 0);
+}
+
+export function commitmentOverspend(total: number, drawn: number): number {
+  return Math.max(drawn - total, 0);
+}
+
+export function drawdownSentence(
+  kind: CommitmentKind,
+  total: number,
+  drawn: number,
+): string {
+  const moved = kind === "spending" ? "paid" : "received";
+  const held = kind === "spending" ? "still committed" : "still expected";
+  const promised = kind === "spending" ? "committed" : "expected";
+  const over = commitmentOverspend(total, drawn);
+  const base = `${promised} ${formatCents(total)} · ${moved} ${formatCents(drawn)} · ${formatCents(commitmentRemaining(total, drawn))} ${held}`;
+  return over > 0 ? `${base} · ${formatCents(over)} over` : base;
 }
 
 // One row of public.commitment_totals.
@@ -665,6 +855,54 @@ export function commitmentLineTotalsFromRows(rows: unknown): Map<string, LineCom
     out.set(r.budget_line_id, {
       openCommittedCents: toNum(r.open_committed_cents),
       openExpectedCents: toNum(r.open_expected_cents),
+    });
+  }
+  return out;
+}
+
+// One row of public.commitment_drawdown_rows (0022) — what is left on ONE
+// document. The definitions are 0021's `private.commitment_drawdown`; nothing is
+// recomputed here.
+export interface CommitmentDrawdown {
+  totalCents: number;
+  drawnCents: number;
+  remainingCents: number;
+  isOpen: boolean;
+  isStanding: boolean;
+}
+
+// Keyed by commitment id. A row that is ABSENT is absent on purpose: the caller
+// renders "—" for it rather than a zero, the same rule the ledger's running
+// balance follows, because "$0.00 still committed" is a sentence a treasurer
+// would act on and a dash is not.
+export function commitmentDrawdownFromRows(
+  rows: unknown,
+): Map<string, CommitmentDrawdown> {
+  const out = new Map<string, CommitmentDrawdown>();
+  if (!Array.isArray(rows)) return out;
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.commitment_id !== "string") continue;
+    const num = (key: string): number | null => {
+      const v = r[key];
+      const n = typeof v === "string" ? Number(v) : v;
+      return typeof n === "number" && Number.isFinite(n) ? n : null;
+    };
+    const totalCents = num("total_cents");
+    const drawnCents = num("drawn_cents");
+    const remainingCents = num("remaining_cents");
+    // A row that will not read as three finite numbers is a broken read, not a
+    // commitment with nothing on it — drop it, and let the caller print a dash.
+    if (totalCents === null || drawnCents === null || remainingCents === null) {
+      continue;
+    }
+    out.set(r.commitment_id, {
+      totalCents,
+      drawnCents,
+      remainingCents,
+      isOpen: r.is_open === true,
+      isStanding: r.is_standing === true,
     });
   }
   return out;

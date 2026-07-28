@@ -906,6 +906,168 @@ describe.skipIf(rlsSkipped())('commitment_totals — what it counts', () => {
 });
 
 // ============================================================================
+// What is left on ONE document (0022, T173/T174)
+// ----------------------------------------------------------------------------
+// The season roll-up above answers "how much is committed". The LIST answers
+// "how much is left on this one", once per row, and that is a money total too —
+// so it is a SQL aggregate as well, asked for exactly the ids being rendered
+// (the shape ledger_running_balance established) rather than summed over
+// whatever ledger rows a fetch happened to return.
+// ============================================================================
+
+describe.skipIf(rlsSkipped())('commitment_drawdown_rows — gate and exposure', () => {
+  const rows = `select * from public.commitment_drawdown_rows($1, $2, null)`;
+
+  test('the treasury readers read it; costume_manager does not', async () => {
+    expect(await treasurer().count(rows, [A.program, A.seasonActive])).toBeGreaterThan(0);
+    expect(await board().count(rows, [A.program, A.seasonActive])).toBeGreaterThan(0);
+    const err = await costume().expectDenied(rows, [A.program, A.seasonActive]);
+    expect(err.code).toBe(RLS_DENIED);
+  });
+
+  test("another program's treasurer, and anon, are refused", async () => {
+    expect((await otherTreasurer().expectDenied(rows, [A.program, A.seasonActive])).code).toBe(RLS_DENIED);
+    expect((await asAnon().expectDenied(rows, [A.program, A.seasonActive])).code).toBe(RLS_DENIED);
+  });
+
+  test('it keeps exactly the exposure the other money aggregates have', async () => {
+    const sig = 'public.commitment_drawdown_rows(uuid, uuid, uuid[])';
+    const res = await raw<{ anon: boolean; pub: boolean; auth: boolean }>(
+      `select has_function_privilege('anon', $1, 'EXECUTE') as anon,
+              has_function_privilege('public', $1, 'EXECUTE') as pub,
+              has_function_privilege('authenticated', $1, 'EXECUTE') as auth`,
+      [sig],
+    );
+    expect(res.rows[0].anon).toBe(false);
+    expect(res.rows[0].pub).toBe(false);
+    expect(res.rows[0].auth).toBe(true);
+  });
+});
+
+describe.skipIf(rlsSkipped())('commitment_drawdown_rows — what it says about one row', () => {
+  interface DrawRow {
+    commitment_id: string;
+    total_cents: string;
+    drawn_cents: string;
+    remaining_cents: string;
+    is_open: boolean;
+    is_standing: boolean;
+  }
+  const forIds = `select * from public.commitment_drawdown_rows($1, $2, $3)`;
+
+  test('THE SENTENCE: committed $3,200 · paid $3,050 · $150 still committed, and still open', async () => {
+    // The seeded purchase order is 3000.00 + 150.00 shipping + 50.00 tax =
+    // $3,200. Pay $3,050 against it and $150 is still committed — and the
+    // document stays OPEN, which is the half of R3 that a "mark it paid" model
+    // would get wrong: the remaining $150 is still held out of the budget line.
+    const out = await treasurer().tx(async (c) => {
+      await c.query(
+        `select public.add_ledger_entry($1, $2, current_date, 'out', 305000, $3, null, null, 'part payment', 'Costume Co', null, $4)`,
+        [A.program, A.seasonActive, A.budgetLine, A.commitment],
+      );
+      const res = await c.query<DrawRow>(forIds, [A.program, A.seasonActive, [A.commitment]]);
+      return res.rows[0];
+    });
+    expect(Number(out.total_cents)).toBe(320000);
+    expect(Number(out.drawn_cents)).toBe(305000);
+    expect(Number(out.remaining_cents)).toBe(15000);
+    expect(out.is_open).toBe(true);
+    expect(out.is_standing).toBe(true);
+  });
+
+  test('overspending is reported, never clamped away — remaining floors at zero', async () => {
+    // R5: an overrun WARNS. The remaining balance cannot go negative (a negative
+    // encumbrance would ADD to still-available), so the overspend shows as zero
+    // remaining plus drawn > total, which is what the row's warning reads.
+    const out = await treasurer().tx(async (c) => {
+      await c.query(
+        `select public.add_ledger_entry($1, $2, current_date, 'out', 400000, $3, null, null, null, null, null, $4)`,
+        [A.program, A.seasonActive, A.budgetLine, A.commitment],
+      );
+      return (await c.query<DrawRow>(forIds, [A.program, A.seasonActive, [A.commitment]])).rows[0];
+    });
+    expect(Number(out.remaining_cents)).toBe(0);
+    expect(Number(out.drawn_cents)).toBeGreaterThan(Number(out.total_cents));
+  });
+
+  test('a payment OUT never draws down expected money, and a receipt IN never draws down a purchase order', async () => {
+    // A misdirected entry must not decrement a commitment it does not belong to
+    // — the same rule actualForDirection applies to a budget line.
+    const out = await treasurer().tx(async (c) => {
+      await c.query(
+        `select public.add_ledger_entry($1, $2, current_date, 'out', 25000, $3, null, null, null, null, null, $4)`,
+        [A.program, A.seasonActive, A.budgetLine, A.commitmentExpected],
+      );
+      await c.query(
+        `select public.add_ledger_entry($1, $2, current_date, 'in', 25000, $3, null, null, null, null, null, $4)`,
+        [A.program, A.seasonActive, A.budgetLine, A.commitment],
+      );
+      const res = await c.query<DrawRow>(forIds, [
+        A.program,
+        A.seasonActive,
+        [A.commitment, A.commitmentExpected],
+      ]);
+      return new Map(res.rows.map((r) => [r.commitment_id, r]));
+    });
+    expect(Number(out.get(A.commitment)!.drawn_cents)).toBe(0);
+    expect(Number(out.get(A.commitmentExpected)!.drawn_cents)).toBe(0);
+  });
+
+  test('it answers about the ids it was given and no others', async () => {
+    // The bound that makes this safe: a page renders N rows and asks about N
+    // commitments, so no row cap can reach it however large the season grows.
+    const res = await treasurer().query<DrawRow>(forIds, [
+      A.program,
+      A.seasonActive,
+      [A.commitment],
+    ]);
+    expect(res.rowCount).toBe(1);
+    expect(res.rows[0].commitment_id).toBe(A.commitment);
+  });
+
+  test("another program's commitment id yields nothing rather than its numbers", async () => {
+    const res = await treasurer().query<DrawRow>(forIds, [
+      A.program,
+      A.seasonActive,
+      [B.commitment],
+    ]);
+    expect(res.rowCount).toBe(0);
+  });
+
+  test('a closed commitment is no longer open, and stops holding its remainder', async () => {
+    // R4: closing releases the remainder. `is_open` false is what takes it out
+    // of commitment_totals, which is what puts the money back into still
+    // available — explicitly, never on its own.
+    const out = await treasurer().tx(async (c) => {
+      const before = Number(
+        (await c.query<{ open_committed_cents: string }>(
+          `select open_committed_cents from public.commitment_totals($1, $2)`,
+          [A.program, A.seasonActive],
+        )).rows[0].open_committed_cents,
+      );
+      await c.query(
+        `update commitments
+            set status = 'closed', closed_at = now(), close_reason = 'delivered',
+                released_cents = 320000
+          where id = $1`,
+        [A.commitment],
+      );
+      const row = (await c.query<DrawRow>(forIds, [A.program, A.seasonActive, [A.commitment]])).rows[0];
+      const after = Number(
+        (await c.query<{ open_committed_cents: string }>(
+          `select open_committed_cents from public.commitment_totals($1, $2)`,
+          [A.program, A.seasonActive],
+        )).rows[0].open_committed_cents,
+      );
+      return { before, after, row };
+    });
+    expect(out.row.is_open).toBe(false);
+    expect(out.row.is_standing).toBe(true);
+    expect(out.before - out.after).toBe(320000);
+  });
+});
+
+// ============================================================================
 // The drawdown link on the ledger (T173 / R3)
 // ============================================================================
 

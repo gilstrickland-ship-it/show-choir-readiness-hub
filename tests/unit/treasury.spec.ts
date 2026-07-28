@@ -27,6 +27,31 @@ import {
   reconciledThroughMonth,
   LEDGER_PAGE_SIZE,
   UNCATEGORIZED_KEY,
+  // Commitments (spec 006) — the layer between planned and spent.
+  COMMITMENT_CREATE_ROLES,
+  COMMITMENT_KIND_LABELS,
+  COMMITMENT_KIND_HEADINGS,
+  COMMITMENT_STATUS_LABELS,
+  COMMITMENT_STATUSES,
+  FUNDING_SOURCE_LABELS,
+  TREASURY_WRITE_ROLES,
+  commitmentAllows,
+  commitmentDrawdownFromRows,
+  commitmentIsOpen,
+  commitmentIsStanding,
+  commitmentLineTotalsFromRows,
+  commitmentOverspend,
+  commitmentRefLabel,
+  commitmentRemaining,
+  commitmentTotalCents,
+  commitmentTotalsFromRow,
+  drawdownSentence,
+  parseCommitmentKind,
+  parseCommitmentStatus,
+  parseFundingSource,
+  stillAvailable,
+  type CommitmentAction,
+  type CommitmentState,
 } from "@/lib/treasury";
 
 describe("parseDollarsToCents", () => {
@@ -542,5 +567,371 @@ describe("ledgerSearchTerm", () => {
 
   test("caps the length — a search is a payee, not an expression", () => {
     expect(ledgerSearchTerm("x".repeat(200))).toBe("x".repeat(60));
+  });
+});
+
+// ============================================================================
+// Commitments — Planned → Committed → Spent → Still available (spec 006)
+// ----------------------------------------------------------------------------
+// The ledger records money that HAS MOVED and a budget records what was PLANNED.
+// These helpers are the middle layer: what has been PROMISED. Every one of them
+// is pure, and each locks down a rule that a screen would otherwise be free to
+// state differently from the SQL — the arithmetic, the words, and what a figure
+// we could not read is allowed to look like.
+// ============================================================================
+
+describe("stillAvailable — the headline number", () => {
+  test("committed money is subtracted, not merely displayed", () => {
+    // $4,000 planned, $800 spent, $3,200 already promised to a vendor. The
+    // budget alone reads $3,200 available; the truth is nothing.
+    expect(stillAvailable(400000, 80000, 320000)).toBe(0);
+  });
+
+  test("with nothing committed it is the old planned-minus-spent figure", () => {
+    expect(stillAvailable(400000, 80000, 0)).toBe(320000);
+  });
+
+  test("it goes negative rather than clamping — an overrun is a fact", () => {
+    expect(stillAvailable(400000, 380000, 50000)).toBe(-30000);
+  });
+
+  // The asymmetry (spec §2, decision D4): expected money is NOT an argument.
+  // There is no way to pass it in, which is the point — you may not spend money
+  // you have merely been promised.
+  test("takes exactly three numbers, so expected money cannot leak into it", () => {
+    expect(stillAvailable.length).toBe(3);
+  });
+});
+
+describe("commitment totals and what is left on one", () => {
+  test("the total is the amount plus shipping plus tax", () => {
+    // Shipping and tax are separate columns because omitting them is the
+    // documented top cause of an invoice arriving bigger than the PO — but the
+    // committed total is all three.
+    expect(
+      commitmentTotalCents({
+        amount_cents: 300000,
+        shipping_cents: 15000,
+        tax_cents: 5000,
+      }),
+    ).toBe(320000);
+  });
+
+  test("remaining floors at zero — a negative encumbrance would ADD to available", () => {
+    expect(commitmentRemaining(320000, 305000)).toBe(15000);
+    expect(commitmentRemaining(320000, 400000)).toBe(0);
+  });
+
+  test("the overspend is reported separately rather than hidden by that floor", () => {
+    expect(commitmentOverspend(320000, 400000)).toBe(80000);
+    expect(commitmentOverspend(320000, 305000)).toBe(0);
+  });
+});
+
+describe("drawdownSentence — R3, said the same way everywhere", () => {
+  test("a spending commitment reads committed / paid / still committed", () => {
+    expect(drawdownSentence("spending", 320000, 305000)).toBe(
+      "committed $3,200.00 · paid $3,050.00 · $150.00 still committed",
+    );
+  });
+
+  test("expected money reads expected / received / still expected", () => {
+    expect(drawdownSentence("expected", 50000, 20000)).toBe(
+      "expected $500.00 · received $200.00 · $300.00 still expected",
+    );
+  });
+
+  // R5: an overrun WARNS. The sentence still reports what was promised and what
+  // moved, then says by how much reality went past it — it never rewrites the
+  // promise to match the payment.
+  test("an overrun is appended, never substituted", () => {
+    expect(drawdownSentence("spending", 320000, 400000)).toBe(
+      "committed $3,200.00 · paid $4,000.00 · $0.00 still committed · $800.00 over",
+    );
+  });
+
+  test("nothing paid yet still reads as a whole sentence", () => {
+    expect(drawdownSentence("spending", 320000, 0)).toBe(
+      "committed $3,200.00 · paid $0.00 · $3,200.00 still committed",
+    );
+  });
+});
+
+describe("the lifecycle — one definition for the buttons and the writes", () => {
+  const at = (
+    status: string,
+    stamps: Partial<CommitmentState> = {},
+  ): CommitmentState => ({
+    status,
+    closed_at: null,
+    cancelled_at: null,
+    superseded_at: null,
+    ...stamps,
+  });
+
+  const allowed = (row: CommitmentState): CommitmentAction[] =>
+    (
+      [
+        "approve",
+        "issue",
+        "receive_partial",
+        "receive_full",
+        "close",
+        "cancel",
+        "revise",
+      ] as CommitmentAction[]
+    ).filter((a) => commitmentAllows(row, a));
+
+  test("a fresh request can be approved, closed, cancelled or restated", () => {
+    expect(allowed(at("requested"))).toEqual([
+      "approve",
+      "close",
+      "cancel",
+      "revise",
+    ]);
+  });
+
+  test("approval is offered once and only from 'requested'", () => {
+    for (const s of ["approved", "issued", "partially_received", "received"]) {
+      expect(commitmentAllows(at(s), "approve")).toBe(false);
+    }
+  });
+
+  test("issuing follows approval; receiving follows issuing", () => {
+    expect(commitmentAllows(at("approved"), "issue")).toBe(true);
+    expect(commitmentAllows(at("requested"), "issue")).toBe(false);
+    expect(commitmentAllows(at("issued"), "receive_partial")).toBe(true);
+    expect(commitmentAllows(at("approved"), "receive_partial")).toBe(false);
+  });
+
+  test("a part delivery can still be completed later", () => {
+    expect(commitmentAllows(at("partially_received"), "receive_full")).toBe(true);
+    // …but not partly received twice: it is already in that state.
+    expect(commitmentAllows(at("partially_received"), "receive_partial")).toBe(
+      false,
+    );
+  });
+
+  // R4: closing is the explicit act that releases the remainder, so it must stay
+  // available for as long as the document holds money — including a received one
+  // that came in under its amount.
+  test("closing and cancelling stay available all the way to 'received'", () => {
+    for (const s of COMMITMENT_STATUSES.filter(
+      (x) => !["closed", "cancelled", "superseded"].includes(x),
+    )) {
+      expect(commitmentAllows(at(s), "close"), s).toBe(true);
+      expect(commitmentAllows(at(s), "cancel"), s).toBe(true);
+    }
+  });
+
+  test("a closed, cancelled or superseded document makes no further moves", () => {
+    expect(allowed(at("closed", { closed_at: "2026-07-01T00:00:00Z" }))).toEqual([]);
+    expect(allowed(at("cancelled", { cancelled_at: "2026-07-01T00:00:00Z" }))).toEqual(
+      [],
+    );
+    expect(
+      allowed(at("superseded", { superseded_at: "2026-07-01T00:00:00Z" })),
+    ).toEqual([]);
+  });
+
+  test("open and standing are the split the SQL aggregates make", () => {
+    // A CLOSED document is still a fact about the season (standing) but is no
+    // longer committing anything (not open). A SUPERSEDED one has been replaced
+    // by its revision, and counting both would double the committed total.
+    const closed = at("closed", { closed_at: "2026-07-01T00:00:00Z" });
+    expect(commitmentIsStanding(closed)).toBe(true);
+    expect(commitmentIsOpen(closed)).toBe(false);
+
+    const superseded = at("superseded", { superseded_at: "2026-07-01T00:00:00Z" });
+    expect(commitmentIsStanding(superseded)).toBe(false);
+    expect(commitmentIsOpen(superseded)).toBe(false);
+  });
+});
+
+describe("commitmentTotalsFromRow — a failed read is blank, never zero", () => {
+  const full = {
+    open_committed_cents: "320000",
+    open_expected_cents: "50000",
+    committed_gross_cents: "320000",
+    drawn_cents: "0",
+    open_count: "2",
+    expected_count: "1",
+    stale_count: "0",
+    overspent_count: "0",
+    after_the_fact_count: "1",
+  };
+
+  test("bigints arrive as strings from node-postgres and as numbers from PostgREST", () => {
+    expect(commitmentTotalsFromRow(full)?.openCommittedCents).toBe(320000);
+    expect(
+      commitmentTotalsFromRow({ ...full, open_committed_cents: 320000 })
+        ?.openCommittedCents,
+    ).toBe(320000);
+  });
+
+  // The rule this codebase has now had to restate five times: "$0.00 committed"
+  // is a number a director would act on, and a blank is not.
+  test("one missing field makes the whole row null rather than a partial answer", () => {
+    for (const key of Object.keys(full)) {
+      const partial: Record<string, unknown> = { ...full };
+      delete partial[key];
+      expect(commitmentTotalsFromRow(partial), key).toBeNull();
+    }
+  });
+
+  test("null, a non-object, and a garbage figure are all null", () => {
+    expect(commitmentTotalsFromRow(null)).toBeNull();
+    expect(commitmentTotalsFromRow("nope")).toBeNull();
+    expect(commitmentTotalsFromRow({ ...full, drawn_cents: "abc" })).toBeNull();
+  });
+});
+
+describe("commitmentLineTotalsFromRows / commitmentDrawdownFromRows", () => {
+  test("per-line totals key by budget line", () => {
+    const map = commitmentLineTotalsFromRows([
+      {
+        budget_line_id: "line-1",
+        open_committed_cents: "320000",
+        open_expected_cents: "0",
+      },
+    ]);
+    expect(map.get("line-1")).toEqual({
+      openCommittedCents: 320000,
+      openExpectedCents: 0,
+    });
+  });
+
+  // Unlike the ledger's line actuals there is no uncategorized bucket: a
+  // commitment without a budget line cannot exist, so a row without one is a
+  // broken read rather than a bucket.
+  test("a per-line row with no budget line is dropped, not bucketed", () => {
+    expect(
+      commitmentLineTotalsFromRows([
+        { budget_line_id: null, open_committed_cents: "1", open_expected_cents: "1" },
+      ]).size,
+    ).toBe(0);
+  });
+
+  test("per-commitment rows carry total, drawn, remaining and both flags", () => {
+    const map = commitmentDrawdownFromRows([
+      {
+        commitment_id: "c-1",
+        total_cents: "320000",
+        drawn_cents: "305000",
+        remaining_cents: "15000",
+        is_open: true,
+        is_standing: true,
+      },
+    ]);
+    expect(map.get("c-1")).toEqual({
+      totalCents: 320000,
+      drawnCents: 305000,
+      remainingCents: 15000,
+      isOpen: true,
+      isStanding: true,
+    });
+  });
+
+  // An id the map does NOT carry is what makes the row render "—". If a broken
+  // row were kept with zeros, a live purchase order would print "$0.00 still
+  // committed".
+  test("a row whose figures will not read is left out entirely", () => {
+    const map = commitmentDrawdownFromRows([
+      {
+        commitment_id: "c-1",
+        total_cents: "abc",
+        drawn_cents: "0",
+        remaining_cents: "0",
+      },
+      { total_cents: "1", drawn_cents: "0", remaining_cents: "1" },
+      null,
+    ]);
+    expect(map.size).toBe(0);
+  });
+
+  test("a failed rpc (not an array) is an empty map, not a throw", () => {
+    expect(commitmentDrawdownFromRows(null).size).toBe(0);
+    expect(commitmentLineTotalsFromRows(undefined).size).toBe(0);
+  });
+});
+
+describe("vocabulary (R9) — a non-technical audience reads these", () => {
+  // "Encumbrance" is the accounting word and it is banned from every screen.
+  // These are the strings the screens are built from, so this is where the ban
+  // is enforceable.
+  test("the word 'encumbrance' appears in no label the UI renders", () => {
+    const strings = [
+      ...Object.values(COMMITMENT_KIND_LABELS),
+      ...Object.values(COMMITMENT_KIND_HEADINGS),
+      ...Object.values(COMMITMENT_STATUS_LABELS),
+      ...Object.values(FUNDING_SOURCE_LABELS),
+      commitmentRefLabel("district", 1042),
+      commitmentRefLabel("booster", 7),
+      drawdownSentence("spending", 100, 50),
+      drawdownSentence("expected", 100, 50),
+    ];
+    for (const s of strings) {
+      expect(s.toLowerCase()).not.toContain("encumbr");
+    }
+  });
+
+  test("a district commitment is a purchase order; a booster one is approved spending", () => {
+    expect(FUNDING_SOURCE_LABELS.district).toBe("Purchase order");
+    expect(FUNDING_SOURCE_LABELS.booster).toBe("Approved spending");
+    expect(commitmentRefLabel("district", 1042)).toBe("PO 1042");
+    expect(commitmentRefLabel("booster", 7)).toBe("Approved spending #7");
+  });
+
+  // A revision keeps the original's NUMBER — it is the same document restated,
+  // which is what makes "PO 1042 · rev 2" readable to a bookkeeper who has 1042
+  // in the district's own system.
+  test("a revision keeps the number and says which version it is", () => {
+    expect(commitmentRefLabel("district", 1042, 2)).toBe("PO 1042 · rev 2");
+    expect(commitmentRefLabel("district", 1042, 0)).toBe("PO 1042");
+  });
+
+  test("every status has a plain-words label", () => {
+    for (const s of COMMITMENT_STATUSES) {
+      expect(COMMITMENT_STATUS_LABELS[s]).toBeTruthy();
+    }
+    expect(COMMITMENT_STATUS_LABELS.superseded).toBe("Replaced by a revision");
+  });
+});
+
+describe("the role relaxation, mirrored from the policy (spec §4)", () => {
+  // Creating a commitment is deliberately wider than every other money write,
+  // because the anti-fraud value of the feature is requester ≠ approver — which
+  // a treasurer-only model would DEFEAT by forcing the treasurer to raise the
+  // requests she then approves.
+  test("a director or admin may raise a request; only the treasurer moves one", () => {
+    expect([...COMMITMENT_CREATE_ROLES].sort()).toEqual([
+      "admin",
+      "director",
+      "treasurer",
+    ]);
+    expect([...TREASURY_WRITE_ROLES]).toEqual(["treasurer"]);
+  });
+
+  test("the read-only seats are not in it", () => {
+    expect(COMMITMENT_CREATE_ROLES).not.toContain("board_member");
+    expect(COMMITMENT_CREATE_ROLES).not.toContain("costume_manager");
+  });
+});
+
+describe("parsers reject anything that is not one of the enum's own values", () => {
+  test("kind, funding source and status", () => {
+    expect(parseCommitmentKind("spending")).toBe("spending");
+    expect(parseCommitmentKind("Spending")).toBeNull();
+    expect(parseFundingSource("booster")).toBe("booster");
+    expect(parseFundingSource("")).toBeNull();
+    expect(parseCommitmentStatus("partially_received")).toBe("partially_received");
+    expect(parseCommitmentStatus("paid")).toBeNull();
+  });
+
+  // A form value arriving as "constructor" or "toString" must resolve to
+  // nothing rather than reaching a lookup as a prototype key.
+  test("a prototype key is not a value", () => {
+    expect(parseCommitmentKind("constructor")).toBeNull();
+    expect(parseCommitmentStatus("toString")).toBeNull();
   });
 });
