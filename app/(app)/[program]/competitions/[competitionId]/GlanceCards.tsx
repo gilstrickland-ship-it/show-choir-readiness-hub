@@ -59,12 +59,22 @@ export function buildGlanceCards({
   const cards: GlanceCard[] = [];
 
   // ---- Attendance ----------------------------------------------------------
-  const seeded = readiness.expected + readiness.absent > 0;
+  // Three statuses, three numbers. Folding partial into expected made a comp with
+  // half-day students read as fully expected, and put the partial count out of
+  // reach of the hub entirely. Partial shows only when there IS one — a standing
+  // "0 partial" would be noise on every other competition.
+  const seeded = readiness.attending + readiness.absent > 0;
   cards.push({
     key: "attendance",
     title: "Attendance",
     status: seeded
-      ? `${readiness.expected} expected · ${readiness.absent} absent`
+      ? [
+          `${readiness.expected} expected`,
+          readiness.partial > 0 ? `${readiness.partial} partial` : null,
+          `${readiness.absent} absent`,
+        ]
+          .filter(Boolean)
+          .join(" · ")
       : "Nobody on the list yet",
     tone: seeded ? "ok" : "warn",
     href: `${compBase}/attendance`,
@@ -93,17 +103,19 @@ export function buildGlanceCards({
     key: "meals",
     title: "Meals",
     status:
-      readiness.expected > 0
-        ? `${readiness.expected} meals needed`
+      readiness.attending > 0
+        ? `${readiness.attending} meals needed`
         : "Waiting on attendance",
-    tone: readiness.expected > 0 ? "ok" : "warn",
+    tone: readiness.attending > 0 ? "ok" : "warn",
     href: `${compBase}/meals`,
   });
 
   // ---- Host packet ---------------------------------------------------------
   // The readiness pass only builds a packet check when the packet flag is on, so
-  // its presence IS the gate — no second copy of the rule here.
-  if (readiness.checks.some((c) => c.href.endsWith("/packet"))) {
+  // its presence IS the gate — no second copy of the rule here. Found by the
+  // check's own key: matching a route suffix would silently stop finding it the
+  // day the packet screen moves.
+  if (readiness.checks.some((c) => c.key === "packet")) {
     const state = readiness.packetStatus
       ? Object.hasOwn(PACKET_STATE, readiness.packetStatus)
         ? PACKET_STATE[readiness.packetStatus]
@@ -122,7 +134,7 @@ export function buildGlanceCards({
   // Same story: shifts need the shifts AND comms flags plus a role that can read
   // them, and the readiness check already carries that verdict — plus whether any
   // shift exists at all (a neutral, non-counting row when none do).
-  const shiftCheck = readiness.checks.find((c) => c.href.endsWith("/comms/shifts"));
+  const shiftCheck = readiness.checks.find((c) => c.key === "shifts");
   if (shiftCheck) {
     const filled = readiness.openSlots === 0;
     cards.push({

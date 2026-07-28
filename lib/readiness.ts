@@ -16,7 +16,19 @@ import { SHIFT_WRITE_ROLES } from "@/lib/shifts";
 
 export type ReadinessTone = "ok" | "warn" | "alert" | "neutral";
 
+// Which job a check is about. Callers that need to find one (the hub's glance
+// cards ask "was a packet check built?") match on THIS, never on the href —
+// a link is a destination, and matching a destination by string suffix breaks
+// silently the day the route moves.
+export type ReadinessKey =
+  | "itinerary"
+  | "attendance"
+  | "shifts"
+  | "meals"
+  | "packet";
+
 export interface ReadinessCheck {
+  key: ReadinessKey;
   ok: boolean;
   tone: ReadinessTone;
   label: string;
@@ -49,8 +61,15 @@ export interface CompReadiness {
   // Raw state (the hero/feature row uses these for countdown + meta).
   itinPublished: boolean | null;
   firstStart: string | null;
+  // Attendance is THREE states, and they are three different facts. `expected`
+  // used to carry expected+partial under the name of one of them, so a comp with
+  // partial attendees read as fully expected and the partial number could not be
+  // reached from the hub at all. They are counted separately now; `attending` is
+  // the derived expected+partial figure meals are built on.
   expected: number;
+  partial: number;
   absent: number;
+  attending: number;
   openSlots: number;
   packetStatus: string | null;
   // UI-ready rows + how many are green.
@@ -95,23 +114,38 @@ export async function loadCompReadiness(
   }
   const itinPublished = itinRow ? itinRow.status === "published" : null;
 
-  // ---- Attendance (expected/partial vs absent) ------------------------------
-  const [{ count: expectedCount }, { count: absentCount }] = await Promise.all([
-    supabase
-      .from("attendance")
-      .select("id", { count: "exact", head: true })
-      .eq("program_id", programId)
-      .eq("competition_id", comp.id)
-      .in("status", ["expected", "partial"]),
-    supabase
-      .from("attendance")
-      .select("id", { count: "exact", head: true })
-      .eq("program_id", programId)
-      .eq("competition_id", comp.id)
-      .eq("status", "absent"),
-  ]);
+  // ---- Attendance: one count per status -------------------------------------
+  // Three head-counts rather than two. They run in the same Promise.all, so the
+  // third costs no wall-clock time — and it buys back a number the hub could not
+  // otherwise show, because "partial" folded into "expected" is unrecoverable
+  // once counted.
+  const [{ count: expectedCount }, { count: partialCount }, { count: absentCount }] =
+    await Promise.all([
+      supabase
+        .from("attendance")
+        .select("id", { count: "exact", head: true })
+        .eq("program_id", programId)
+        .eq("competition_id", comp.id)
+        .eq("status", "expected"),
+      supabase
+        .from("attendance")
+        .select("id", { count: "exact", head: true })
+        .eq("program_id", programId)
+        .eq("competition_id", comp.id)
+        .eq("status", "partial"),
+      supabase
+        .from("attendance")
+        .select("id", { count: "exact", head: true })
+        .eq("program_id", programId)
+        .eq("competition_id", comp.id)
+        .eq("status", "absent"),
+    ]);
   const expected = expectedCount ?? 0;
+  const partial = partialCount ?? 0;
   const absent = absentCount ?? 0;
+  // Meals count everyone who will be there to eat: a student present for part of
+  // the day still eats (same rule as loadMealData). Only absent is excluded.
+  const attending = expected + partial;
 
   // ---- Volunteer shifts: open = needed − confirmed --------------------------
   let openSlots = 0;
@@ -163,6 +197,7 @@ export async function loadCompReadiness(
   const checks: ReadinessCheck[] = [];
 
   checks.push({
+    key: "itinerary",
     ok: itinPublished === true,
     tone: itinPublished ? "ok" : "warn",
     label:
@@ -175,12 +210,15 @@ export async function loadCompReadiness(
     action: itinPublished ? "View" : "Fix",
   });
 
-  const attendanceSeeded = expected + absent > 0;
+  // Partial appears only when there IS one: a standing ", 0 partial" is noise on
+  // every comp, and its absence is not a claim about anything.
+  const attendanceSeeded = attending + absent > 0;
   checks.push({
+    key: "attendance",
     ok: attendanceSeeded,
     tone: attendanceSeeded ? "ok" : "warn",
     label: attendanceSeeded
-      ? `Attendance · ${expected} expected, ${absent} absent`
+      ? `Attendance · ${expected} expected${partial > 0 ? `, ${partial} partial` : ""}, ${absent} absent`
       : "Attendance not seeded yet",
     href: `${compBase}/attendance`,
     action: "Edit",
@@ -192,6 +230,7 @@ export async function loadCompReadiness(
       // "covered" (the section below says none exist). Show a neutral, non-
       // counting row: not-applicable-yet, neither credited nor penalised.
       checks.push({
+        key: "shifts",
         ok: false,
         tone: "neutral",
         label: "No volunteer shifts planned",
@@ -201,6 +240,7 @@ export async function loadCompReadiness(
       });
     } else {
       checks.push({
+        key: "shifts",
         ok: openSlots === 0,
         tone: openSlots === 0 ? "ok" : "warn",
         label:
@@ -214,13 +254,14 @@ export async function loadCompReadiness(
   }
 
   checks.push({
+    key: "meals",
     // Meals = attendance expected + partial (same rule as loadMealData); only
     // absent students are excluded.
-    ok: expected > 0,
-    tone: expected > 0 ? "ok" : "warn",
+    ok: attending > 0,
+    tone: attending > 0 ? "ok" : "warn",
     label:
-      expected > 0
-        ? `Meal count · ${expected} meals needed (expected + partial)`
+      attending > 0
+        ? `Meal count · ${attending} meals needed (expected + partial)`
         : "Meal count · no attendance yet",
     href: `${compBase}/meals`,
     action: "View",
@@ -236,6 +277,7 @@ export async function loadCompReadiness(
     };
     const p = packetStatus ? packet[packetStatus] : null;
     checks.push({
+      key: "packet",
       ok: packetStatus === "accepted",
       tone: p?.tone ?? "warn",
       label: p?.label ?? "No host packet uploaded",
@@ -251,7 +293,9 @@ export async function loadCompReadiness(
     itinPublished,
     firstStart,
     expected,
+    partial,
     absent,
+    attending,
     openSlots,
     packetStatus,
     checks,
