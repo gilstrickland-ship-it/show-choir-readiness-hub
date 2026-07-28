@@ -102,7 +102,7 @@ interface LinkGate {
   flagsAny?: readonly FlagKey[];
 }
 
-export function gatePasses(
+function gatePasses(
   gate: LinkGate,
   flags: Record<FlagKey, boolean>,
 ): boolean {
