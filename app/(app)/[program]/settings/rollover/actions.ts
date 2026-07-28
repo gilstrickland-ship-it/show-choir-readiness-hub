@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { returnPath, programPath, programRoot } from "@/lib/return-path";
+import type { RolloverScreen } from "@/lib/seasons";
+import { rolloverErrorAnchor, type RolloverErrorKey } from "./shared";
 
 // Season rollover wizard actions (§3, §9.4, T028). Every step is a director/admin
 // server action that re-checks the role (Constitution I) and is idempotent /
@@ -34,8 +36,23 @@ function shellPath(slug: string): string {
   return programRoot(slug) ?? "/";
 }
 
-function wizardPath(slug: string, step: string, newSeasonId: string): string {
-  return `${rolloverPath(slug)}?step=${step}&newSeason=${newSeasonId}`;
+// Where the wizard goes next. `step` is a RolloverScreen, so a screen this file
+// invents but lib/seasons doesn't know about — the shape the step indicator
+// counts — is a compile error rather than a page that silently restarts at step
+// one (spec 005 T165).
+function wizardPath(
+  slug: string,
+  step: RolloverScreen,
+  newSeasonId: string,
+): string {
+  return `${rolloverPath(slug)}?step=${step}&newSeason=${encodeURIComponent(newSeasonId)}`;
+}
+
+// Where a refusal goes is the MAP's answer, not this file's (./shared): the
+// anchor a redirect scrolls to and the block that renders the message are read
+// from the same place, so they cannot drift.
+function fail(slug: string, key: RolloverErrorKey): string {
+  return `${rolloverPath(slug)}?error=${key}#${rolloverErrorAnchor(key)}`;
 }
 
 // Insert a season, or reuse the same-label one that is already there (which is
@@ -215,7 +232,7 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
 
   const label = String(formData.get("label") ?? "").trim();
   if (!label) {
-    redirect(`${rolloverPath(slug)}?error=label`);
+    redirect(fail(slug, "label"));
   }
 
   const supabase = await createClient();
@@ -226,7 +243,7 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
     endsOn: String(formData.get("ends_on") ?? "").trim() || null,
   });
   if (!newSeasonId) {
-    redirect(`${rolloverPath(slug)}?error=create`);
+    redirect(fail(slug, "create"));
   }
 
   // Nothing to carry over? Then the ensembles / returning-students / costume
@@ -269,7 +286,7 @@ export async function rolloverStudents(formData: FormData): Promise<void> {
   const supabase = await createClient();
 
   if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
-    redirect(`${rolloverPath(slug)}?error=season`);
+    redirect(fail(slug, "season"));
   }
 
   const returning: { student_id: string; ensemble_id: string }[] = [];
@@ -357,7 +374,7 @@ export async function repointCostumeSets(formData: FormData): Promise<void> {
     // The reads below are already program-scoped; the INSERT stamps the posted
     // newSeasonId, so that one needs resolving too.
     if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
-      redirect(`${rolloverPath(slug)}?error=season`);
+      redirect(fail(slug, "season"));
     }
     const { data: oldSets } = await supabase
       .from("costume_sets")
@@ -408,15 +425,17 @@ export async function activateNewSeason(formData: FormData): Promise<void> {
   // makeSeasonActive is program-scoped, so a season that isn't ours would match
   // nothing and still report success — check first and say what's wrong.
   if (!(await seasonInProgram(supabase, programId, newSeasonId))) {
-    redirect(`${rolloverPath(slug)}?error=season`);
+    redirect(fail(slug, "season"));
   }
   const activated = await makeSeasonActive(supabase, programId, newSeasonId);
   if (!activated) {
+    // Back to the step that refused, with the new season still in hand, so the
+    // director retries the one thing that failed rather than restarting.
     redirect(
-      `${rolloverPath(slug)}?step=activate&newSeason=${newSeasonId}&error=activate`,
+      `${wizardPath(slug, "activate", newSeasonId)}&error=activate#${rolloverErrorAnchor("activate")}`,
     );
   }
 
   revalidatePath(shellPath(slug), "layout");
-  redirect(wizardPath(slug, "archive", newSeasonId));
+  redirect(wizardPath(slug, "done", newSeasonId));
 }
