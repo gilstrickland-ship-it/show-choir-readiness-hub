@@ -7,6 +7,7 @@ import { requireRole } from "@/lib/auth";
 import { ATTENDANCE_WRITE_ROLES } from "@/lib/competitions";
 import { notifyAbsenceOutcome } from "@/lib/comms-send";
 import { programPath } from "@/lib/return-path";
+import type { AbsenceErrorKey, AbsenceOkKey } from "./shared";
 
 // Staff review queue for parent-submitted absence requests (§5, §8a). Confirm
 // flips the student's attendance row to 'absent' and stamps the request
@@ -27,6 +28,17 @@ function queuePath(slug: string): string {
   return programPath(slug, "competitions/absences") ?? "/";
 }
 
+// The queue's one message contract (./shared). Typed by the same key unions the
+// page reads, so a code no map defines is a compile error here rather than a
+// blank banner there.
+function queueOk(slug: string, key: AbsenceOkKey): string {
+  return `${queuePath(slug)}?ok=${key}`;
+}
+
+function queueFail(slug: string, key: AbsenceErrorKey): string {
+  return `${queuePath(slug)}?error=${key}`;
+}
+
 export async function confirmAbsence(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -45,7 +57,7 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
   const req = reqData as
     | { id: string; competition_id: string; student_id: string; status: string }
     | null;
-  if (!req || req.status !== "pending") redirect(`${queuePath(slug)}?error=gone`);
+  if (!req || req.status !== "pending") redirect(queueFail(slug, "gone"));
 
   // The request row is ours, but the two ids ON it are references into other
   // program-scoped tables and were written by the parent-facing request flow.
@@ -66,7 +78,7 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
       .eq("program_id", programId)
       .maybeSingle(),
   ]);
-  if (!comp || !student) redirect(`${queuePath(slug)}?error=failed`);
+  if (!comp || !student) redirect(queueFail(slug, "failed"));
 
   // Flip the attendance row to absent (idempotent upsert on the unique key).
   const { error: attErr } = await supabase.from("attendance").upsert(
@@ -80,7 +92,7 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
   );
   if (attErr) {
     console.error("confirmAbsence attendance upsert failed", attErr);
-    redirect(`${queuePath(slug)}?error=failed`);
+    redirect(queueFail(slug, "failed"));
   }
 
   const { error: updErr } = await supabase
@@ -94,14 +106,14 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
     .eq("program_id", programId);
   if (updErr) {
     console.error("confirmAbsence request update failed", updErr);
-    redirect(`${queuePath(slug)}?error=failed`);
+    redirect(queueFail(slug, "failed"));
   }
 
   // Let the reporting guardian know the outcome (best-effort; never blocks).
   await notifyAbsenceOutcome({ programId, requestId: req.id, outcome: "confirmed" });
 
   revalidatePath(queuePath(slug));
-  redirect(`${queuePath(slug)}?done=confirmed`);
+  redirect(queueOk(slug, "confirmed"));
 }
 
 export async function dismissAbsence(formData: FormData): Promise<void> {
@@ -124,7 +136,7 @@ export async function dismissAbsence(formData: FormData): Promise<void> {
     .select("id");
   if (disErr) {
     console.error("dismissAbsence request update failed", disErr);
-    redirect(`${queuePath(slug)}?error=failed`);
+    redirect(queueFail(slug, "failed"));
   }
 
   // Only notify when this call actually transitioned the request (not a re-submit
@@ -134,5 +146,5 @@ export async function dismissAbsence(formData: FormData): Promise<void> {
   }
 
   revalidatePath(queuePath(slug));
-  redirect(`${queuePath(slug)}?done=dismissed`);
+  redirect(queueOk(slug, "dismissed"));
 }

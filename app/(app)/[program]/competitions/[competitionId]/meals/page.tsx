@@ -5,6 +5,7 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateInTz } from "@/lib/datetime";
+import { flashFrom, oneParam } from "@/lib/flash";
 import { loadMealData } from "@/lib/pdf/queries";
 import { SubTabs } from "../../../SubTabs";
 import { competitionTabs } from "@/lib/subnav";
@@ -16,20 +17,31 @@ import { saveMealNote } from "./actions";
 // and only absent students are excluded. A NON-health logistics note (vendor,
 // serving time) is editable by director/admin and prints on the meal PDF. The
 // same loadMealData feeds this screen and the `meal` PDF, so they never diverge.
+//
+// Spec 005 T157 gave it the page head and the message convention every other
+// surface has; the counts, the rule behind them and the PDF are unchanged.
+
+// One section here — the page has a single message area — but the lookup is the
+// app's shared one, because the code rides in the URL: `?ok=constructor` would
+// otherwise walk up Object.prototype and hand React a function to render, and
+// `?ok=a&ok=b` arrives as an ARRAY (spec 005 T143a).
+const OK = {
+  saved: { section: "page", message: "Note saved." },
+} as const;
 
 export default async function MealsPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string }>;
-  searchParams: Promise<{ saved?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, competitionId } = await params;
   const { program, role } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const tz = program.timezone;
-  const sp = await searchParams;
+  const ok = flashFrom(OK, oneParam(await searchParams, "ok"));
 
   const supabase = await createClient();
   // Confirm the competition exists in this program (RLS-scoped) → clean 404.
@@ -45,37 +57,54 @@ export default async function MealsPage({
   const data = await loadMealData(supabase, competitionId);
   if (!data) notFound();
 
+  const eyebrow = [
+    comp.name,
+    data.date ? formatDateInTz(`${data.date}T12:00:00Z`, tz) : "no date set",
+  ].join(" · ");
+
   return (
     <section className="stack">
       <SubTabs strip={competitionTabs(slug, competitionId, "meals")} />
-      <h1>Meal count</h1>
 
-      {sp.saved && <p className="alert-ok">Saved.</p>}
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">{eyebrow}</p>
+          <h1 className="page-h1">Meal count</h1>
+        </div>
+        <div className="page-head-actions">
+          <a
+            href={`/api/pdf/meal?competition=${competitionId}`}
+            className="button-link"
+          >
+            Meal count (PDF)
+          </a>
+        </div>
+      </div>
 
-      <p className="muted">
-        {data.date ? formatDateInTz(`${data.date}T12:00:00Z`, tz) : "No date set"} ·{" "}
-        <strong>{data.totalAttending}</strong> meals needed · {data.totalAbsent}{" "}
-        absent ·{" "}
-        <a href={`/api/pdf/meal?competition=${competitionId}`}>Download meal count (PDF)</a>
+      {ok && <p className="alert-ok">{ok.message}</p>}
+
+      <p>
+        <strong>{data.totalAttending}</strong> meals needed ·{" "}
+        {data.totalAbsent} not coming
       </p>
       <p className="muted">
         A meal is counted for every student marked <strong>expected</strong> or{" "}
-        <strong>partial</strong> — a student there for only part of the day still
-        eats. Only <strong>absent</strong> students are excluded. Set attendance on
-        the{" "}
+        <strong>part of the day</strong> — a student there for only part of the
+        day still eats. Only students marked <strong>absent</strong> are left
+        out. Change who is going on the{" "}
         <Link href={`/${slug}/competitions/${competitionId}/attendance`}>
           Attendance tab
         </Link>
         .
       </p>
 
-      <h2>Headcount by ensemble</h2>
+      <h2>By ensemble</h2>
       <table className="members">
         <thead>
           <tr>
             <th>Ensemble</th>
             <th>Meals</th>
-            <th>Absent</th>
+            <th>Not coming</th>
           </tr>
         </thead>
         <tbody>
@@ -91,7 +120,8 @@ export default async function MealsPage({
           {data.ensembles.length === 0 && (
             <tr>
               <td colSpan={3} className="muted">
-                No attendance recorded yet. Seed attendance from the competition page.
+                Nobody is on the list yet. Say which ensembles are going on the
+                competition page.
               </td>
             </tr>
           )}
@@ -107,7 +137,7 @@ export default async function MealsPage({
         </tbody>
       </table>
 
-      <h2>Logistics note</h2>
+      <h2>Note for the caterer</h2>
       <p className="muted">
         Vendor, serving time, pickup location — logistics only. Do not enter
         health, dietary, or medical information; that lives outside this system.
@@ -120,7 +150,7 @@ export default async function MealsPage({
           <input type="hidden" name="competitionId" value={competitionId} />
           <textarea
             name="meal_note"
-            aria-label="Meal note for families"
+            aria-label="Note for the caterer"
             rows={3}
             defaultValue={data.mealNote ?? ""}
             placeholder="e.g. Boxed lunches from Jimmy's — served in cafeteria at 12:30, pick up at north door."
@@ -130,12 +160,12 @@ export default async function MealsPage({
       ) : data.mealNote ? (
         <p>{data.mealNote}</p>
       ) : (
-        <p className="muted">No logistics note yet.</p>
+        <p className="muted">No note yet.</p>
       )}
 
-      <h2>Absent ({data.absentNames.length})</h2>
+      <h2>Not coming ({data.absentNames.length})</h2>
       {data.absentNames.length === 0 ? (
-        <p className="muted">No absences recorded.</p>
+        <p className="muted">Everyone is expected.</p>
       ) : (
         <ul>
           {data.absentNames.map((n, i) => (

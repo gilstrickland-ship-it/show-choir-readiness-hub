@@ -36,5 +36,6 @@ export async function saveMealNote(formData: FormData): Promise<void> {
 // validates the slug shape and fails closed to "/" (spec 005 T143a).
   const path = programPath(slug, `competitions/${competitionId}/meals`) ?? "/";
   revalidatePath(path);
-  redirect(`${path}?saved=1`);
+  // The app's one after-a-write message contract: `?ok=<key>` (lib/flash).
+  redirect(`${path}?ok=saved`);
 }

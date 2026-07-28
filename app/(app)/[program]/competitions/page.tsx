@@ -4,23 +4,36 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import {
   COMPETITION_WRITE_ROLES,
+  COMPETITION_STATUS_LABELS,
   ATTENDANCE_WRITE_ROLES,
   competitionEnsembleMap,
+  type CompetitionStatus,
 } from "@/lib/competitions";
 import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
+import { Flash } from "../Flash";
+import { readFlash } from "@/lib/flash";
+import { COMP_LIST_FLASH_MAPS, type CompListSection } from "./shared";
 import { createCompetition, attachPacket } from "./actions";
 
 // Competitions list + create (§5, T012). All roles read (the flag is the gate);
 // director/admin create. Dates render in the program timezone (Constitution VII).
 // A competition can include one OR MORE ensembles (Feature 004) — participation
 // lives in the competition_ensembles junction.
+//
+// Spec 005 T157 left this page its two distinct jobs and moved the third one
+// off it. Adding a competition is Season's job now (Wave 1 made the "+ Add"
+// drawer the place you add things), so the page head sends you there and the
+// every-field form stays at `#add` as the drawer's "More options →" target —
+// the same shape Events and Travel already have. What no other surface owns
+// stays: attaching an emailed host packet to a competition, and the nudge to a
+// waiting absence queue.
 
 interface CompRow {
   id: string;
   name: string;
   host_school: string | null;
   date: string | null;
-  status: "planned" | "confirmed" | "done";
+  status: CompetitionStatus;
 }
 
 interface EnsembleRow {
@@ -28,24 +41,28 @@ interface EnsembleRow {
   name: string;
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  planned: "Planned",
-  confirmed: "Confirmed",
-  done: "Done",
-};
+interface UnattachedDoc {
+  id: string;
+  storage_path: string;
+  created_at: string;
+}
 
 export default async function CompetitionsPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ error?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?error=a&error=b), so the
+  // read goes through lib/flash — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
-  const { error } = await searchParams;
+  const tz = program.timezone;
+  const sp = await searchParams;
+  const flash = readFlash<CompListSection>(sp, COMP_LIST_FLASH_MAPS);
 
   const supabase = await createClient();
   const { data: compData } = await supabase
@@ -55,14 +72,13 @@ export default async function CompetitionsPage({
     .order("date", { ascending: true, nullsFirst: false });
   const competitions = (compData as CompRow[] | null) ?? [];
 
-  const ensembleName = new Map<string, string>();
   const { data: ensData } = await supabase
     .from("ensembles")
     .select("id, name")
     .eq("program_id", program.id)
     .order("sort_order", { ascending: true });
   const ensembles = (ensData as EnsembleRow[] | null) ?? [];
-  for (const e of ensembles) ensembleName.set(e.id, e.name);
+  const ensembleName = new Map(ensembles.map((e) => [e.id, e.name]));
 
   // Participating ensembles per competition (junction, one batched read).
   const compEnsembles = await competitionEnsembleMap(
@@ -87,11 +103,6 @@ export default async function CompetitionsPage({
   // Unattached inbound packets (§14.3, T026): host-packet documents forwarded by
   // email that landed without a competition. A director attaches each to a
   // competition, which then runs the parse pipeline.
-  interface UnattachedDoc {
-    id: string;
-    storage_path: string;
-    created_at: string;
-  }
   let unattached: UnattachedDoc[] = [];
   if (canWrite) {
     const { data: docData } = await supabase
@@ -104,30 +115,70 @@ export default async function CompetitionsPage({
     unattached = (docData as UnattachedDoc[] | null) ?? [];
   }
 
+  const eyebrow = [
+    `${competitions.length} competition${competitions.length === 1 ? "" : "s"}`,
+    season ? season.label : "No active season",
+  ].join(" · ");
+
+  // Both message sections are conditional — the attach box only exists while a
+  // packet is waiting, the create form only for a writer with a season and an
+  // ensemble. A message addressed to a block that isn't on the page would render
+  // nowhere at all, so it falls back to a banner (the shifts-page contract).
+  const showAdd = canWrite && !!season && ensembles.length > 0;
+  const showPackets = canWrite && unattached.length > 0;
+  const stranded =
+    (flash.error?.section === "add" && !showAdd) ||
+    (flash.error?.section === "packets" && !showPackets);
+
   return (
     <section className="stack">
-      <h1>Competitions</h1>
+      <div className="page-head">
+        <div className="page-head-titles">
+          <p className="eyebrow">{eyebrow}</p>
+          <h1 className="page-h1">Competitions</h1>
+        </div>
+        {canWrite && (
+          <div className="page-head-actions">
+            <Link
+              href={`/${slug}/season?add=comp`}
+              className="button-link accent"
+            >
+              + Add a competition
+            </Link>
+          </div>
+        )}
+      </div>
 
-      {canReviewAbsences && (
+      {stranded && <p className="alert-error">{flash.error!.message}</p>}
+
+      {canReviewAbsences && pendingAbsences > 0 && (
         <p>
           <Link href={`/${slug}/competitions/absences`}>
-            Absence requests
-            {pendingAbsences > 0 && (
-              <span className="badge" style={{ marginLeft: "0.4rem" }}>
-                {pendingAbsences} pending
-              </span>
-            )}
+            {pendingAbsences} absence request
+            {pendingAbsences === 1 ? "" : "s"} waiting for you →
           </Link>
         </p>
       )}
+      {canReviewAbsences && pendingAbsences === 0 && (
+        <p className="muted">
+          <Link href={`/${slug}/competitions/absences`}>
+            Absence requests
+          </Link>{" "}
+          — nothing waiting.
+        </p>
+      )}
 
-      {canWrite && unattached.length > 0 && (
-        <div className="stack confirm-box" style={{ width: "100%" }}>
-          <h2>Unattached packets</h2>
+      {/* A host packet somebody emailed in, with no competition on it yet. Only
+          a director sees this, and only while one is actually waiting. */}
+      {showPackets && (
+        <div className="stack confirm-box" id="packets">
+          <h2>Packets that arrived by email</h2>
           <p className="muted">
             {unattached.length} host packet{unattached.length === 1 ? "" : "s"}{" "}
-            arrived by email forward. Attach each to a competition to parse it.
+            {unattached.length === 1 ? "was" : "were"} forwarded in. Say which
+            competition each one belongs to and we&apos;ll read it for you.
           </p>
+          <Flash flash={flash} section="packets" />
           {unattached.map((doc) => (
             <form key={doc.id} action={attachPacket} className="row-inline">
               <input type="hidden" name="programId" value={program.id} />
@@ -135,9 +186,14 @@ export default async function CompetitionsPage({
               <input type="hidden" name="documentId" value={doc.id} />
               <span className="muted">
                 {doc.storage_path.split("/").pop()} ·{" "}
-                {formatDateTimeInTz(doc.created_at, program.timezone)}
+                {formatDateTimeInTz(doc.created_at, tz)}
               </span>
-              <select name="competitionId" defaultValue="" required aria-label="Attach to competition">
+              <select
+                name="competitionId"
+                defaultValue=""
+                required
+                aria-label="Attach to competition"
+              >
                 <option value="">— choose competition —</option>
                 {competitions.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -146,28 +202,17 @@ export default async function CompetitionsPage({
                 ))}
               </select>
               <button type="submit" className="secondary">
-                Attach &amp; parse
+                Attach &amp; read it
               </button>
             </form>
           ))}
         </div>
       )}
 
-      {error === "attach" && (
-        <p className="alert-error">Couldn&apos;t attach the packet. Pick a competition and try again.</p>
-      )}
-      {error === "name" && <p className="alert-error">A competition needs a name.</p>}
-      {error === "ensemble" && (
-        <p className="alert-error">Pick at least one ensemble for the competition.</p>
-      )}
-      {error === "season" && (
-        <p className="alert-error">Activate a season before adding competitions.</p>
-      )}
-      {error === "save" && <p className="alert-error">Couldn&apos;t save. Try again.</p>}
-
       {!season && (
         <p className="muted">
-          No active season — competitions are season-scoped and can&apos;t be added yet.
+          No active season, so nothing can be added yet — competitions belong to
+          a season.
         </p>
       )}
 
@@ -177,7 +222,7 @@ export default async function CompetitionsPage({
             <th>Name</th>
             <th>Date</th>
             <th>Host</th>
-            <th>Ensembles</th>
+            <th>Who is going</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -187,11 +232,13 @@ export default async function CompetitionsPage({
               <td>
                 <Link href={`/${slug}/competitions/${c.id}`}>{c.name}</Link>
               </td>
-              <td>{c.date ? formatDateInTz(`${c.date}T12:00:00Z`, program.timezone) : "—"}</td>
+              <td>
+                {c.date ? formatDateInTz(`${c.date}T12:00:00Z`, tz) : "—"}
+              </td>
               <td>{c.host_school ?? "—"}</td>
               <td>
                 {(compEnsembles.get(c.id) ?? []).length > 0 ? (
-                  <span className="row-inline" style={{ gap: "0.3rem", flexWrap: "wrap" }}>
+                  <span className="row-inline">
                     {(compEnsembles.get(c.id) ?? []).map((eid) => (
                       <span className="chip" key={eid}>
                         {ensembleName.get(eid) ?? "?"}
@@ -203,7 +250,9 @@ export default async function CompetitionsPage({
                 )}
               </td>
               <td>
-                <span className="badge">{STATUS_LABEL[c.status]}</span>
+                <span className="badge">
+                  {COMPETITION_STATUS_LABELS[c.status]}
+                </span>
               </td>
             </tr>
           ))}
@@ -217,20 +266,34 @@ export default async function CompetitionsPage({
         </tbody>
       </table>
 
+      {/* The every-field form. The quick way to add a competition is the "+ Add"
+          drawer on Season (two fields); this is what its "More options →" link
+          opens, so `#add` has to keep working. */}
       {canWrite && season && ensembles.length === 0 && (
         <div className="stack">
           <h2 id="add">Add a competition</h2>
           <p className="muted">
-            A competition attaches to an ensemble so it can seed attendance, meals,
-            and checkout.{" "}
-            <Link href={`/${slug}/roster/ensembles`}>Create an ensemble first</Link>.
+            A competition attaches to an ensemble so it can seed attendance,
+            meals, and checkout.{" "}
+            <Link href={`/${slug}/roster/ensembles`}>
+              Create an ensemble first
+            </Link>
+            .
           </p>
         </div>
       )}
 
-      {canWrite && season && ensembles.length > 0 && (
-        <>
+      {showAdd && (
+        <div className="stack">
           <h2 id="add">Add a competition</h2>
+          <p className="muted">
+            Every field, for when you already have the host&apos;s details. Just
+            a name and a date?{" "}
+            <Link href={`/${slug}/season?add=comp`}>
+              Add it from Season in two fields →
+            </Link>
+          </p>
+          <Flash flash={flash} section="add" />
           <form action={createCompetition} className="stack">
             <input type="hidden" name="programId" value={program.id} />
             <input type="hidden" name="slug" value={slug} />
@@ -238,7 +301,12 @@ export default async function CompetitionsPage({
             <div className="row-inline">
               <label>
                 Name
-                <input type="text" name="name" required placeholder="Show Choir Nationals" />
+                <input
+                  type="text"
+                  name="name"
+                  required
+                  placeholder="Show Choir Nationals"
+                />
               </label>
               <label>
                 Date
@@ -254,10 +322,10 @@ export default async function CompetitionsPage({
               </label>
             </div>
             <fieldset className="stack">
-              <legend>Ensembles</legend>
-              <div className="row-inline" style={{ flexWrap: "wrap" }}>
+              <legend>Who is going</legend>
+              <div className="row-inline">
                 {ensembles.map((e) => (
-                  <label key={e.id} className="row-inline">
+                  <label key={e.id} className="checkbox-inline">
                     <input type="checkbox" name="ensemble_ids" value={e.id} />
                     {e.name}
                   </label>
@@ -279,18 +347,13 @@ export default async function CompetitionsPage({
               </label>
             </div>
             <p className="muted">
-              Sending more than one group? Select every ensemble attending — one
+              Sending more than one group? Tick every ensemble attending — one
               competition covers them all, and attendance, meals, and travel span
-              the whole roster.
-            </p>
-            <p className="muted">
-              Creating a competition seeds attendance (everyone expected) for every
-              member of every selected ensemble; a student in two of them is counted
-              once.
+              the whole roster. A student in two of them is counted once.
             </p>
             <button type="submit">Add competition</button>
           </form>
-        </>
+        </div>
       )}
     </section>
   );

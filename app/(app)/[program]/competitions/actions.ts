@@ -22,6 +22,7 @@ import { flag, type FlaggableProgram } from "@/lib/flags";
 import { returnPath, programPath } from "@/lib/return-path";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { runPacketParse } from "@/lib/ai/packet-parse";
+import { compListErrorAnchor, type CompListErrorKey } from "./shared";
 
 // Competitions CRUD + attendance seed + results (§5, T012). Writes are
 // director/admin (§2 "Competitions / itineraries"); every action re-checks the
@@ -97,10 +98,15 @@ export async function createCompetition(formData: FormData): Promise<void> {
 
   // Quick-add from the Season page comes back to Season with the drawer's
   // competition section reopened on the same error message it always used.
+  // A refusal from the LIST's own form comes back on the section that owns the
+  // message, with that section's anchor — asked of the map, not repeated here,
+  // so the block that scrolls and the block that renders can't drift (./shared).
   const back = seasonReturn(formData, slug);
   const listPath = competitionsHref(slug);
-  const fail = (code: string): string =>
-    back ? `${back}?error=${code}&add=comp` : `${listPath}?error=${code}`;
+  const fail = (code: CompListErrorKey): string =>
+    back
+      ? `${back}?error=${code}&add=comp`
+      : `${listPath}?error=${code}#${compListErrorAnchor(code)}`;
 
   const name = str(formData, "name");
   if (!name) redirect(fail("name"));
@@ -499,7 +505,8 @@ export async function attachPacket(formData: FormData): Promise<void> {
   const competitionId = str(formData, "competitionId");
   await requireRole(programId, COMPETITION_WRITE_ROLES);
   const listPath = competitionsHref(slug);
-  if (!competitionId) redirect(`${listPath}?error=attach`);
+  const attachFail = `${listPath}?error=attach#${compListErrorAnchor("attach")}`;
+  if (!competitionId) redirect(attachFail);
 
   const supabase = await createClient();
 
@@ -513,9 +520,9 @@ export async function attachPacket(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .maybeSingle();
   const doc = docData as { id: string; competition_id: string | null } | null;
-  if (!doc) redirect(`${listPath}?error=attach`);
+  if (!doc) redirect(attachFail);
   if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
-    redirect(`${listPath}?error=attach`);
+    redirect(attachFail);
   }
 
   await supabase
