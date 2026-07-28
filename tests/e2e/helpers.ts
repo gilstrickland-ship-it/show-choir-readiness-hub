@@ -23,7 +23,10 @@ export const DEMO = {
   slug: "demo",
   seasonId: "d0000000-0000-4000-8000-000000000002",
   directorMembershipId: "d0000000-0000-4000-8000-000000006001",
+  costumeMembershipId: "d0000000-0000-4000-8000-000000006003",
   boardMembershipId: "d0000000-0000-4000-8000-000000006004",
+  varsityEnsembleId: "d0000000-0000-4000-8000-000000000010", // Varsity Mixed
+  openerSetId: "d0000000-0000-4000-8000-000000000030", // the "Opener" costume set
   guardianId: "d0000000-0000-4000-8000-000000000201", // Diane Bennett
   avaStudentId: "d0000000-0000-4000-8000-000000000101", // Ava Bennett
   liamStudentId: "d0000000-0000-4000-8000-000000000102", // Liam Carter
