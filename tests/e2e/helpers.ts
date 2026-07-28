@@ -242,6 +242,45 @@ export async function resetDemoFeatureOverrides(): Promise<void> {
   await setDemoFeatureOverrides({});
 }
 
+// Clear every commitment the demo program has, and any ledger entry booked
+// against one, so the commitments journey starts from an empty list on every
+// run. Children before parents: the audit rows and the drawdown links both carry
+// a foreign key to the commitment.
+//
+// Deleting is a SERVICE-ROLE act and deliberately not something the app can do —
+// a commitment is closed or cancelled, never removed (0021 has no delete policy,
+// exactly like the ledger). This is fixture teardown, not a feature.
+export async function resetDemoCommitments(): Promise<void> {
+  const admin = adminClient();
+  await admin
+    .from("ledger_entries")
+    .delete()
+    .eq("program_id", DEMO.programId)
+    .not("commitment_id", "is", null);
+  await admin.from("commitment_audit").delete().eq("program_id", DEMO.programId);
+  await admin.from("commitments").delete().eq("program_id", DEMO.programId);
+}
+
+// The three spending rules (spec 006 D6). A spec that turns one on has to put
+// the shipped defaults back, or the next spec in this single-worker suite runs
+// against a program whose policy it never chose.
+export async function setDemoSpendingRules(rules: {
+  secondApproverCents?: number;
+  boardApprovalCents?: number;
+  threeQuotesCents?: number;
+}): Promise<void> {
+  const admin = adminClient();
+  const { error } = await admin
+    .from("programs")
+    .update({
+      commitment_second_approver_cents: rules.secondApproverCents ?? 25000,
+      commitment_board_approval_cents: rules.boardApprovalCents ?? 100000,
+      commitment_three_quotes_cents: rules.threeQuotesCents ?? 50000,
+    })
+    .eq("id", DEMO.programId);
+  if (error) throw new Error(`setDemoSpendingRules failed: ${error.message}`);
+}
+
 // Reset the demo program's parent-round-trip state so the F13/F15/F16 journey is
 // deterministic: no stale absence requests / signups, and Ava back to expected.
 export async function resetDemoParentState(): Promise<void> {

@@ -34,7 +34,16 @@ import { randomUUID } from 'node:crypto';
 import { describe, test, expect } from 'vitest';
 import type { PoolClient } from 'pg';
 import { A, B, SUPPORT_USER } from './fixtures';
-import { asUser, asAnon, asService, raw, rlsSkipped, RLS_DENIED, type RlsError } from './harness';
+import {
+  asUser,
+  asAnon,
+  asService,
+  raw,
+  rlsSkipped,
+  JWT_SUB_GUC,
+  RLS_DENIED,
+  type RlsError,
+} from './harness';
 import {
   summarizeCommitments,
   summarizeSeasonLedger,
@@ -1267,5 +1276,398 @@ describe.skipIf(rlsSkipped())('summarizeCommitments equals the SQL aggregates', 
     // committed, which is the number a director reads as "still available".
     const truncated = summarizeCommitments(out.commitments.slice(0, CAP), byCommitment, out.today);
     expect(truncated.totals.openCommittedCents).not.toBe(js.totals.openCommittedCents);
+  });
+});
+
+// ============================================================================
+// The three numbers a program sets (spec 006 D6 / T177, migration 0023)
+// ----------------------------------------------------------------------------
+// 0021 built the document. This is the POLICY a district or a booster board
+// actually writes down: how big a purchase has to be before one signature stops
+// being enough. Three numbers per program — a second approver, board approval,
+// and a three-quotes reminder — and the only interesting thing about them is
+// which of the three can STOP a write:
+//
+//   second approver  BLOCKS the approval.
+//   board approval   BLOCKS the issue.
+//   three quotes     blocks nothing, ever. It is a nudge, and a nudge that
+//                    blocked would push the purchase somewhere this app cannot
+//                    see it at all (R5's lesson, restated).
+//
+// WHERE THE SECOND APPROVAL LIVES. In `commitment_audit`, not in a new column:
+// a first approval changes nothing about what was promised, and an audit row is
+// exactly the record of an act. So the chain reads
+//
+//   requested_by → commitment_audit(action='approve') → approved_by
+//
+// and every test below reads it from there.
+//
+// A THRESHOLD IS NOT A CONSTRAINT, deliberately. It is mutable policy — a board
+// raises it in September — so it is enforced at the MOMENT OF THE ACT by a
+// trigger reading the number as it stands, and documents approved under the old
+// number stay valid. That is why these tests set the number inside the same
+// transaction as the act it governs.
+// ============================================================================
+
+// Switch WHO is acting inside one transaction. The role stays `authenticated`;
+// only the JWT subject moves, which is what every policy and every trigger in
+// this schema actually reads. (Not `rollback; begin` — that would lose the role
+// and the GUC together and silently continue as a superuser.)
+async function be(c: PoolClient, userId: string): Promise<void> {
+  await c.query(`select set_config('${JWT_SUB_GUC}', $1, true)`, [userId]);
+}
+
+async function setThreshold(
+  c: PoolClient,
+  column: 'second_approver' | 'board_approval' | 'three_quotes',
+  cents: number,
+): Promise<void> {
+  await be(c, A.director); // director/admin own programs_write
+  await c.query(
+    `update programs set commitment_${column}_cents = $2 where id = $1`,
+    [A.program, cents],
+  );
+}
+
+const APPROVE_RPC = `select public.record_commitment_approval($1, $2) as answer`;
+const APPROVE_RAW = `update commitments set status = 'approved', approved_by = $2, approved_at = now() where id = $1`;
+const ISSUE_RAW = `update commitments set status = 'issued', issued_at = now() where id = $1`;
+
+describe.skipIf(rlsSkipped())('the three numbers exist on every program already', () => {
+  // The columns carry defaults, so every program that existed before this
+  // migration is governed by them the moment it runs — no data migration, and no
+  // nullable "not set yet" state in which a threshold reads as no rule at all.
+  test('defaults are $250 / $1,000 / $500, with no backfill step', async () => {
+    // A program created saying NOTHING about spending rules is governed by them
+    // anyway — which is what "the defaults apply to existing programs without a
+    // data migration" means, tested the only way it can be.
+    const row = await asService().tx(async (c) => {
+      const id = randomUUID();
+      await c.query(
+        `insert into programs (id, name, slug, timezone) values ($1, 'Fresh', $2, 'America/Chicago')`,
+        [id, `fresh-${id}`],
+      );
+      const r = await c.query<{ s: string; b: string; q: string }>(
+        `select commitment_second_approver_cents as s,
+                commitment_board_approval_cents  as b,
+                commitment_three_quotes_cents    as q
+           from programs where id = $1`,
+        [id],
+      );
+      return r.rows[0];
+    });
+    expect(Number(row.s)).toBe(25000);
+    expect(Number(row.b)).toBe(100000);
+    expect(Number(row.q)).toBe(50000);
+  });
+
+  test('a negative amount is not a threshold', async () => {
+    const code = await asService().tx(async (c) =>
+      probe(c, `update programs set commitment_board_approval_cents = -1 where id = $1`, [A.program]),
+    );
+    expect(code).toBe(CHECK_VIOLATION);
+  });
+
+  test('a treasurer cannot raise the amount she is held to', async () => {
+    const res = await treasurer().query(
+      `update programs set commitment_second_approver_cents = 99999999 where id = $1`,
+      [A.program],
+    );
+    expect(res.rowCount).toBe(0);
+  });
+});
+
+describe.skipIf(rlsSkipped())('one approval, or two above the amount', () => {
+  test('under the amount the treasurer approves on her own', async () => {
+    const out = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 25000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 20000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      const r = await c.query<{ answer: string }>(APPROVE_RPC, [A.program, id]);
+      const row = await c.query<{ status: string; approved_by: string }>(
+        `select status, approved_by from commitments where id = $1`,
+        [id],
+      );
+      return { answer: r.rows[0].answer, ...row.rows[0] };
+    });
+    expect(out.answer).toBe('approved');
+    expect(out.status).toBe('approved');
+    expect(out.approved_by).toBe(A.treasurer);
+  });
+
+  // THE ONE THAT MATTERS. Over the amount, the treasurer's approval is not
+  // enough by itself — and it is refused rather than quietly recorded as the
+  // first of two, because an audit row cannot be taken back and spending her
+  // signature on the first slot would strand the document forever.
+  test('over the amount the treasurer alone is refused, and nothing moves', async () => {
+    const out = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 25000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      const code = await probe(c, APPROVE_RPC, [A.program, id]);
+      const row = await c.query<{ status: string; approved_at: string | null }>(
+        `select status, approved_at from commitments where id = $1`,
+        [id],
+      );
+      return { code, ...row.rows[0] };
+    });
+    expect(out.code).toBe('OC028');
+    expect(out.status).toBe('requested');
+    expect(out.approved_at).toBeNull();
+  });
+
+  test('the first approval is recorded in the audit trail and the thing is still a request', async () => {
+    const out = await admin().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 25000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000, requestedBy: A.director }));
+      await be(c, A.admin);
+      const first = await c.query<{ answer: string }>(APPROVE_RPC, [A.program, id]);
+      const mid = await c.query<{ status: string; approved_at: string | null }>(
+        `select status, approved_at from commitments where id = $1`,
+        [id],
+      );
+      const trail = await c.query<{ actor: string; diff: Record<string, unknown> }>(
+        `select actor, diff from commitment_audit where commitment_id = $1 and action = 'approve'`,
+        [id],
+      );
+      await be(c, A.treasurer);
+      const second = await c.query<{ answer: string }>(APPROVE_RPC, [A.program, id]);
+      const end = await c.query<{ status: string; approved_by: string }>(
+        `select status, approved_by from commitments where id = $1`,
+        [id],
+      );
+      return {
+        first: first.rows[0].answer,
+        midStatus: mid.rows[0].status,
+        midApproved: mid.rows[0].approved_at,
+        trail: trail.rows,
+        second: second.rows[0].answer,
+        ...end.rows[0],
+      };
+    });
+
+    expect(out.first).toBe('recorded');
+    // Recorded is not approved, and the row says so.
+    expect(out.midStatus).toBe('requested');
+    expect(out.midApproved).toBeNull();
+    // The chain: one audit row, naming who signed and the amount it was over.
+    expect(out.trail).toHaveLength(1);
+    expect(out.trail[0].actor).toBe(A.admin);
+    expect(out.trail[0].diff.approval).toBe('first');
+    expect(Number(out.trail[0].diff.threshold_cents)).toBe(25000);
+    // …then the treasurer's, which is the one that approves it.
+    expect(out.second).toBe('approved');
+    expect(out.status).toBe('approved');
+    expect(out.approved_by).toBe(A.treasurer);
+  });
+
+  test('one person cannot be both of the two approvals', async () => {
+    const code = await admin().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 25000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000, requestedBy: A.director }));
+      await be(c, A.admin);
+      await c.query(APPROVE_RPC, [A.program, id]);
+      return probe(c, APPROVE_RPC, [A.program, id]);
+    });
+    expect(code).toBe('OC030');
+  });
+
+  test('the requester cannot give the first approval either', async () => {
+    const code = await director().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 25000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000, requestedBy: A.director }));
+      return probe(c, APPROVE_RPC, [A.program, id]);
+    });
+    expect(code).toBe('OC023');
+  });
+
+  // THE SECOND STATED RELAXATION. A board member — read-only in every other
+  // corner of this app — may give the FIRST of two approvals, because in a
+  // booster program the second signature IS the board. It is never enough on its
+  // own: the completing approval is still the treasurer's.
+  test('a board member may give the first approval, and only the first', async () => {
+    const out = await board().tx(async (c) => {
+      const big = randomUUID();
+      const small = randomUUID();
+      await setThreshold(c, 'second_approver', 25000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id: big, cents: 500000, requestedBy: A.director }));
+      await c.query(REQUEST_SQL, requestArgs({ id: small, cents: 20000, requestedBy: A.director }));
+      await be(c, A.board);
+      const first = await c.query<{ answer: string }>(APPROVE_RPC, [A.program, big]);
+      // …but the one that would APPROVE a document is refused outright.
+      const alone = await probe(c, APPROVE_RPC, [A.program, small]);
+      return { first: first.rows[0].answer, alone };
+    });
+    expect(out.first).toBe('recorded');
+    expect(out.alone).toBe(RLS_DENIED);
+  });
+
+  test('a costume manager reaches none of it', async () => {
+    const code = await costume().tx(async (c) => probe(c, APPROVE_RPC, [A.program, A.commitment]));
+    expect(code).toBe(RLS_DENIED);
+  });
+
+  test('a commitment that is not this program’s, and one that is not waiting', async () => {
+    const out = await treasurer().tx(async (c) => {
+      const cross = await probe(c, APPROVE_RPC, [A.program, B.commitment]);
+      const id = randomUUID();
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 1000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      await c.query(APPROVE_RPC, [A.program, id]);
+      const twice = await probe(c, APPROVE_RPC, [A.program, id]);
+      return { cross, twice };
+    });
+    expect(out.cross).toBe('OC016');
+    expect(out.twice).toBe('OC031');
+  });
+
+  // THE BACKSTOP. The server action calls the function; a treasurer with the
+  // REST API calls whatever she likes. The rule is a trigger, so the direct
+  // UPDATE is refused too — which is what makes this a control rather than a
+  // form.
+  test('the rule survives a treasurer going straight at the table', async () => {
+    const code = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 25000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      return probe(c, APPROVE_RAW, [id, A.treasurer]);
+    });
+    expect(code).toBe('OC028');
+  });
+
+  // Zero is OFF, and it has to be off all the way down: a program that turned
+  // the rule off must not be stopped by a trigger that still believes in it.
+  test('zero turns it off', async () => {
+    const answer = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 0);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      const r = await c.query<{ answer: string }>(APPROVE_RPC, [A.program, id]);
+      return r.rows[0].answer;
+    });
+    expect(answer).toBe('approved');
+  });
+
+  test('the function is not reachable unauthenticated', async () => {
+    const err = await asAnon().expectDenied(APPROVE_RPC, [A.program, A.commitment]);
+    expect(err.code).toBe(RLS_DENIED);
+  });
+});
+
+describe.skipIf(rlsSkipped())('board approval blocks the issue, not the request', () => {
+  test('over the amount, issuing without the minutes is refused', async () => {
+    const out = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 0); // isolate the rule under test
+      await setThreshold(c, 'board_approval', 100000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      await c.query(APPROVE_RPC, [A.program, id]);
+      const refused = await probe(c, ISSUE_RAW, [id]);
+      // …and it is the MINUTES that unblock it, not time or persistence.
+      await c.query(
+        `update commitments set board_minutes_ref = 'Minutes of 12 Mar 2026, item 7' where id = $1`,
+        [id],
+      );
+      const allowed = await probe(c, ISSUE_RAW, [id]);
+      return { refused, allowed };
+    });
+    expect(out.refused).toBe('OC029');
+    expect(out.allowed).toBe('');
+  });
+
+  test('whitespace is not a board minute', async () => {
+    const code = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 0);
+      await setThreshold(c, 'board_approval', 100000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 500000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      await c.query(APPROVE_RPC, [A.program, id]);
+      await c.query(`update commitments set board_minutes_ref = '   ' where id = $1`, [id]);
+      return probe(c, ISSUE_RAW, [id]);
+    });
+    expect(code).toBe('OC029');
+  });
+
+  // Shipping and tax are part of what was promised — and omitting them is the
+  // documented top cause of an invoice coming in over its purchase order — so
+  // they are part of what a threshold measures.
+  test('shipping and tax count toward the amount', async () => {
+    const code = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 0);
+      await setThreshold(c, 'board_approval', 100000);
+      await be(c, A.director);
+      // $980 + $30 shipping + $5 tax = $1,015. Under the amount on the line the
+      // form calls "amount", over it on what the program actually promised —
+      // which is the whole reason shipping and tax are their own columns.
+      await c.query(
+        `insert into commitments
+           (id, program_id, season_id, kind, funding_source, vendor, purpose,
+            amount_cents, shipping_cents, tax_cents, budget_line_id, requested_by)
+         values ($1, $2, $3, 'spending', 'district', 'Vendor', 'Purpose',
+                 98000, 3000, 500, $4, $5)`,
+        [id, A.program, A.seasonActive, A.budgetLine, A.director],
+      );
+      await be(c, A.treasurer);
+      await c.query(APPROVE_RPC, [A.program, id]);
+      return probe(c, ISSUE_RAW, [id]);
+    });
+    expect(code).toBe('OC029');
+  });
+
+  test('under the amount, no minutes are needed', async () => {
+    const code = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 0);
+      await setThreshold(c, 'board_approval', 100000);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 50000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      await c.query(APPROVE_RPC, [A.program, id]);
+      return probe(c, ISSUE_RAW, [id]);
+    });
+    expect(code).toBe('');
+  });
+});
+
+describe.skipIf(rlsSkipped())('the three-quotes number blocks nothing', () => {
+  // The whole difference between the two rules that block and the one that does
+  // not. If this ever starts refusing a write, the nudge has become a rule and
+  // the purchase moves to a chequebook this app never sees.
+  test('a commitment far over the quotes amount approves and issues untouched', async () => {
+    const out = await treasurer().tx(async (c) => {
+      const id = randomUUID();
+      await setThreshold(c, 'second_approver', 0);
+      await setThreshold(c, 'board_approval', 0);
+      await setThreshold(c, 'three_quotes', 1);
+      await be(c, A.director);
+      await c.query(REQUEST_SQL, requestArgs({ id, cents: 900000, requestedBy: A.director }));
+      await be(c, A.treasurer);
+      const approved = await probe(c, APPROVE_RPC, [A.program, id]);
+      const issued = await probe(c, ISSUE_RAW, [id]);
+      return { approved, issued };
+    });
+    expect(out.approved).toBe('');
+    expect(out.issued).toBe('');
   });
 });

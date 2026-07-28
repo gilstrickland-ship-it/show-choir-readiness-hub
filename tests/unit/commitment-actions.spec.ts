@@ -37,6 +37,14 @@ const h = vi.hoisted(() => ({
   writeError: null as { code?: string } | null,
   // What commitment_drawdown_rows answers with.
   drawResult: { data: null as unknown, error: null as { code?: string } | null },
+  // What record_commitment_approval answers with (0023): 'approved' when this
+  // press approved the document, 'recorded' when it was the first of two.
+  approvalResult: {
+    data: "approved" as unknown,
+    error: null as { code?: string } | null,
+  },
+  // The program row the action reads its three spending rules from.
+  program: null as Record<string, unknown> | null,
   updates: [] as Record<string, unknown>[],
   inserts: [] as Record<string, unknown>[],
   rpcCalls: [] as { fn: string; args: Record<string, unknown> }[],
@@ -96,6 +104,9 @@ vi.mock("@/lib/supabase/server", () => {
       if (table === "budget_categories") {
         return Promise.resolve({ data: { budget_id: "bud" } }).then(onOk);
       }
+      if (table === "programs") {
+        return Promise.resolve({ data: h.program }).then(onOk);
+      }
       return Promise.resolve({ data: { id: filters.id ?? "x" } }).then(onOk);
     };
     return builder;
@@ -106,7 +117,12 @@ vi.mock("@/lib/supabase/server", () => {
       from: (table: string) => builderFor(table),
       rpc: async (fn: string, args: Record<string, unknown>) => {
         h.rpcCalls.push({ fn, args });
-        return h.drawResult;
+        // Approving does not take the generic UPDATE path since 0023 — the
+        // database decides whether a press is the first of two or the one that
+        // approves the document, and answers with which it was.
+        return fn === "record_commitment_approval"
+          ? h.approvalResult
+          : h.drawResult;
       },
     }),
   };
@@ -150,6 +166,11 @@ function at(
     status,
     requested_by: SOMEONE_ELSE,
     budget_line_id: LINE,
+    // Under every threshold the defaults set, unless a test says otherwise.
+    amount_cents: 10_000,
+    shipping_cents: 0,
+    tax_cents: 0,
+    board_minutes_ref: null,
     closed_at: null,
     cancelled_at: null,
     superseded_at: null,
@@ -163,6 +184,13 @@ beforeEach(() => {
   h.commitment = at("requested");
   h.writeError = null;
   h.drawResult = { data: null, error: null };
+  h.approvalResult = { data: "approved", error: null };
+  // 0023's own defaults: $250 / $1,000 / $500.
+  h.program = {
+    commitment_second_approver_cents: 25_000,
+    commitment_board_approval_cents: 100_000,
+    commitment_three_quotes_cents: 50_000,
+  };
   h.updates = [];
   h.inserts = [];
   h.rpcCalls = [];
@@ -170,15 +198,31 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------
 describe("the self-approval refusal — the reason the feature exists", () => {
-  test("approving somebody else's request writes the approval and stamps it", async () => {
+  // Since 0023 the approval is the DATABASE's to write: one function decides
+  // whether this press is the first of two or the one that approves the
+  // document, and stamps who and when. The action's job is to ask it, and to
+  // turn its answer into a sentence — so what is under test here is that it
+  // asks, with this program's id and this commitment's, and writes nothing
+  // itself.
+  test("approving somebody else's request goes through the database function", async () => {
     const url = await run(moveCommitment, { ...MOVE, act: "approve" });
     expect(url).toBe("/westfield/treasury/commitments?ok=approved");
-    expect(h.updates).toHaveLength(1);
-    expect(h.updates[0].status).toBe("approved");
-    // A status and its stamp are the same fact said twice (0021's CHECKs);
-    // writing one without the other is rejected by the engine.
-    expect(h.updates[0].approved_by).toBe(ME);
-    expect(h.updates[0].approved_at).toBeTruthy();
+    expect(h.rpcCalls).toEqual([
+      {
+        fn: "record_commitment_approval",
+        args: { p_program_id: PROGRAM, p_commitment_id: COMMITMENT },
+      },
+    ]);
+    expect(h.updates).toHaveLength(0);
+  });
+
+  // The first of two, above the program's second-approver amount. It must NOT
+  // say "Approved." — the commitment is still a request, and a treasurer who
+  // read otherwise would stop looking for the second signature.
+  test("the first of two approvals says so, and does not claim the thing is approved", async () => {
+    h.approvalResult = { data: "recorded", error: null };
+    const url = await run(moveCommitment, { ...MOVE, act: "approve" });
+    expect(paramOf(url, "ok")).toBe("approval_recorded");
   });
 
   // THE ONE THAT MATTERS. It is refused before any write, and the message is
@@ -200,16 +244,97 @@ describe("the self-approval refusal — the reason the feature exists", () => {
   // Defence in depth: if the pre-check were ever removed, the CHECK constraint
   // still fires — and its plain check_violation must still read as the feature.
   test("a check_violation coming back from the database says the same thing", async () => {
-    h.writeError = { code: "23514" };
+    h.approvalResult = { data: null, error: { code: "23514" } };
     const url = await run(moveCommitment, { ...MOVE, act: "approve" });
     expect(paramOf(url, "error")).toBe("act_self");
   });
 
   test("OC023 — the same refusal raised by name — says it too", async () => {
-    h.writeError = { code: "OC023" };
+    h.approvalResult = { data: null, error: { code: "OC023" } };
     expect(
       paramOf(await run(moveCommitment, { ...MOVE, act: "approve" }), "error"),
     ).toBe("act_self");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two thresholds that BLOCK (spec 006 D6 / T177, migration 0023)
+// ---------------------------------------------------------------------------
+// A program sets three numbers. Two of them stop a write and one only nudges,
+// and the difference is the whole design: a nudge that blocked would push the
+// purchase somewhere this app cannot see (R5's lesson), and a block that only
+// nudged would be a control in name.
+describe("the amounts a program says need more than one signature", () => {
+  test("over the second-approver amount, one approval is refused by name", async () => {
+    h.approvalResult = { data: null, error: { code: "OC028" } };
+    const url = await run(moveCommitment, { ...MOVE, act: "approve" });
+    expect(paramOf(url, "error")).toBe("act_second");
+    expect(h.updates).toHaveLength(0);
+  });
+
+  test("one person cannot be both of the two approvals", async () => {
+    h.approvalResult = { data: null, error: { code: "OC030" } };
+    expect(
+      paramOf(await run(moveCommitment, { ...MOVE, act: "approve" }), "error"),
+    ).toBe("act_twice");
+  });
+
+  // The board rule is re-checked HERE, in front of the write, so the treasurer
+  // is told which field to fill in rather than handed a SQLSTATE. 0023's trigger
+  // is the control; this is the sentence.
+  test("over the board amount, issuing without the minutes is refused before the write", async () => {
+    h.commitment = at("approved", { amount_cents: 150_000 });
+    const url = await run(moveCommitment, { ...MOVE, act: "issue" });
+    expect(paramOf(url, "error")).toBe("act_board");
+    expect(h.updates).toHaveLength(0);
+  });
+
+  test("…and goes through once the minutes are on it", async () => {
+    h.commitment = at("approved", {
+      amount_cents: 150_000,
+      board_minutes_ref: "Minutes of 12 Mar 2026, item 7",
+    });
+    const url = await run(moveCommitment, { ...MOVE, act: "issue" });
+    expect(paramOf(url, "ok")).toBe("issued");
+    expect(h.updates[0].issued_at).toBeTruthy();
+  });
+
+  // Shipping and tax are part of what was promised, so they are part of what a
+  // threshold measures — a $980 order with $40 shipping is over $1,000.
+  test("shipping and tax count toward the threshold", async () => {
+    h.commitment = at("approved", {
+      amount_cents: 98_000,
+      shipping_cents: 3_000,
+      tax_cents: 500,
+    });
+    expect(
+      paramOf(await run(moveCommitment, { ...MOVE, act: "issue" }), "error"),
+    ).toBe("act_board");
+  });
+
+  // Zero means OFF, and it has to mean off all the way through: a program that
+  // turned the board rule off must not be blocked by it.
+  test("a threshold set to zero blocks nothing", async () => {
+    h.program = {
+      commitment_second_approver_cents: 0,
+      commitment_board_approval_cents: 0,
+      commitment_three_quotes_cents: 0,
+    };
+    h.commitment = at("approved", { amount_cents: 5_000_000 });
+    expect(
+      paramOf(await run(moveCommitment, { ...MOVE, act: "issue" }), "ok"),
+    ).toBe("issued");
+  });
+
+  // A program row that could not be read must fall back to the PROTECTIVE
+  // numbers, never to zero: a threshold that silently reads as "off" is the one
+  // failure this feature must not have.
+  test("an unreadable program row falls back to the defaults, not to off", async () => {
+    h.program = null;
+    h.commitment = at("approved", { amount_cents: 150_000 });
+    expect(
+      paramOf(await run(moveCommitment, { ...MOVE, act: "issue" }), "error"),
+    ).toBe("act_board");
   });
 });
 

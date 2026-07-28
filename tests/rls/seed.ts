@@ -36,6 +36,19 @@ on conflict (id) do update set full_name = excluded.full_name;
 insert into programs (id, name, slug, timezone) values
   ('${p.program}', '${prefix} Program', '${prefix}-program', 'America/Chicago');
 
+-- The three spending rules (0023) are OFF on the fixture programs, and that is a
+-- fixture decision rather than a claim about defaults. Every commitment seeded
+-- below is over the $250 / $1,000 shipped defaults, so leaving them on would
+-- mean the specs for 0021's rules — self-approval, append-only, the lifecycle —
+-- were all really testing 0023's. The threshold specs turn each number on inside
+-- the transaction that exercises it, and the defaults themselves are proved on a
+-- program created without saying anything.
+update programs
+   set commitment_second_approver_cents = 0,
+       commitment_board_approval_cents  = 0,
+       commitment_three_quotes_cents    = 0
+ where id = '${p.program}';
+
 insert into seasons (id, program_id, label, is_active) values
   ('${p.seasonActive}', '${p.program}', '2026-27', true);
 

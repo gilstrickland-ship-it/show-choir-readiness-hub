@@ -28,7 +28,13 @@ import {
   LEDGER_PAGE_SIZE,
   UNCATEGORIZED_KEY,
   // Commitments (spec 006) — the layer between planned and spent.
+  COMMITMENT_APPROVE_ROLES,
   COMMITMENT_CREATE_ROLES,
+  COMMITMENT_THRESHOLD_DEFAULTS,
+  approvalActorsFromRows,
+  commitmentRules,
+  commitmentThresholds,
+  overThreshold,
   COMMITMENT_KIND_LABELS,
   COMMITMENT_KIND_HEADINGS,
   COMMITMENT_STATUS_LABELS,
@@ -930,5 +936,157 @@ describe("parsers reject anything that is not one of the enum's own values", () 
   test("a prototype key is not a value", () => {
     expect(parseCommitmentKind("constructor")).toBeNull();
     expect(parseFundingSource("toString")).toBeNull();
+  });
+});
+
+// ============================================================================
+// The three numbers a program sets (spec 006 D6 / T177, migration 0023)
+// ----------------------------------------------------------------------------
+// Two block and one nudges. What these lock is the arithmetic underneath all
+// three — the boundary (above, never at), what counts toward it, and what a
+// number that could not be read falls back to. Every one of them has a way of
+// being wrong that reads as "no rule at all", which is the failure this feature
+// cannot have.
+// ============================================================================
+
+describe("spending thresholds", () => {
+  const T = COMMITMENT_THRESHOLD_DEFAULTS;
+
+  test("the defaults are the ones the spec names: $250 · $1,000 · $500", () => {
+    expect(T.secondApproverCents).toBe(25_000);
+    expect(T.boardApprovalCents).toBe(100_000);
+    expect(T.threeQuotesCents).toBe(50_000);
+  });
+
+  // A program that writes "$250" means a $250 order is fine. Mirrors 0023's
+  // `v_total > v_second` exactly — an off-by-one here would refuse a purchase
+  // the program's own policy allows.
+  test("a threshold is crossed by going ABOVE it, never by meeting it", () => {
+    expect(overThreshold(25_000, 25_000)).toBe(false);
+    expect(overThreshold(25_001, 25_000)).toBe(true);
+    expect(overThreshold(0, 25_000)).toBe(false);
+  });
+
+  // Zero is OFF, spelled as a number the program chose. Read as a threshold it
+  // would mean "every purchase needs a second approver" — the opposite.
+  test("zero means off, at every amount", () => {
+    expect(overThreshold(1, 0)).toBe(false);
+    expect(overThreshold(50_000_000, 0)).toBe(false);
+  });
+
+  test("commitmentRules answers all three at once", () => {
+    expect(commitmentRules(20_000, T)).toEqual({
+      needsSecondApproval: false,
+      needsBoardMinutes: false,
+      nudgeThreeQuotes: false,
+    });
+    expect(commitmentRules(60_000, T)).toEqual({
+      needsSecondApproval: true,
+      needsBoardMinutes: false,
+      nudgeThreeQuotes: true,
+    });
+    expect(commitmentRules(150_000, T)).toEqual({
+      needsSecondApproval: true,
+      needsBoardMinutes: true,
+      nudgeThreeQuotes: true,
+    });
+  });
+
+  test("a program row carries its own numbers", () => {
+    expect(
+      commitmentThresholds({
+        commitment_second_approver_cents: 50_000,
+        commitment_board_approval_cents: 250_000,
+        commitment_three_quotes_cents: 0,
+      }),
+    ).toEqual({
+      secondApproverCents: 50_000,
+      boardApprovalCents: 250_000,
+      threeQuotesCents: 0,
+    });
+  });
+
+  // bigint columns come back from PostgREST as STRINGS. A threshold read as NaN
+  // and coerced to 0 would turn every rule off silently.
+  test("a bigint arriving as a string is still a number", () => {
+    expect(
+      commitmentThresholds({
+        commitment_second_approver_cents: "12345",
+      }).secondApproverCents,
+    ).toBe(12_345);
+  });
+
+  // THE ONE THAT MATTERS. A missing or unreadable value falls back to the
+  // PROTECTIVE default, never to zero — an unread threshold must not read as
+  // "no approval needed".
+  test("an unreadable number falls back to the default, not to off", () => {
+    expect(commitmentThresholds(null)).toEqual(T);
+    expect(commitmentThresholds({})).toEqual(T);
+    expect(
+      commitmentThresholds({
+        commitment_second_approver_cents: "not a number",
+        commitment_board_approval_cents: -1,
+        commitment_three_quotes_cents: null,
+      }),
+    ).toEqual(T);
+  });
+});
+
+describe("the approval chain, read from the audit trail", () => {
+  // A first approval changes no column on the commitment (0023), so
+  // commitment_audit is where it lives. This is the reduction the panel reads to
+  // say who has signed and who is still owed.
+  test("one row per person, in the order they signed", () => {
+    const chain = approvalActorsFromRows([
+      { commitment_id: "c1", actor: "u1" },
+      { commitment_id: "c1", actor: "u2" },
+      { commitment_id: "c2", actor: "u3" },
+    ]);
+    expect(chain.get("c1")).toEqual(["u1", "u2"]);
+    expect(chain.get("c2")).toEqual(["u3"]);
+    expect(chain.get("c3")).toBeUndefined();
+  });
+
+  test("the same person twice is still one signature", () => {
+    expect(
+      approvalActorsFromRows([
+        { commitment_id: "c1", actor: "u1" },
+        { commitment_id: "c1", actor: "u1" },
+      ]).get("c1"),
+    ).toEqual(["u1"]);
+  });
+
+  // A service-role write has no auth.uid() and so no actor. It is not a person
+  // and must never count toward a signature.
+  test("a row with no actor is not a signature", () => {
+    expect(
+      approvalActorsFromRows([
+        { commitment_id: "c1", actor: null },
+        { commitment_id: "c1" },
+      ]).size,
+    ).toBe(0);
+  });
+
+  test("a failed read is an empty chain, not a crash", () => {
+    expect(approvalActorsFromRows(null).size).toBe(0);
+    expect(approvalActorsFromRows("nope").size).toBe(0);
+    expect(approvalActorsFromRows([null, 7, "x"]).size).toBe(0);
+  });
+});
+
+describe("who may give which approval", () => {
+  // The SECOND stated relaxation: a board member — read-only everywhere else —
+  // may give the FIRST of two approvals, because in a booster program the second
+  // signature IS the board. It can never approve anything on its own: the
+  // completing approval is still the treasurer's.
+  test("the first of two admits the board; the one that finishes it does not", () => {
+    expect([...COMMITMENT_APPROVE_ROLES].sort()).toEqual([
+      "admin",
+      "board_member",
+      "director",
+      "treasurer",
+    ]);
+    expect([...TREASURY_WRITE_ROLES]).toEqual(["treasurer"]);
+    expect(COMMITMENT_APPROVE_ROLES).not.toContain("costume_manager");
   });
 });
