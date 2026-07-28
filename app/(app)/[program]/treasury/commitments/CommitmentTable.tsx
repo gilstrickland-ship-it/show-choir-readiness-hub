@@ -8,6 +8,7 @@ import {
   commitmentIsOpen,
   commitmentRefLabel,
   commitmentOverspend,
+  commitmentRules,
   commitmentTotalCents,
   drawdownSentence,
   formatCents,
@@ -15,7 +16,9 @@ import {
   type CommitmentDrawdown,
   type CommitmentFundingSource,
   type CommitmentKind,
+  type CommitmentRules,
   type CommitmentStatus,
+  type CommitmentThresholds,
   type LedgerPageRange,
 } from "@/lib/treasury";
 import { formatDateTimeInTz } from "@/lib/datetime";
@@ -53,6 +56,7 @@ export interface CommitmentListRow {
   status: CommitmentStatus;
   after_the_fact: boolean;
   external_ref: string | null;
+  quote_path: string | null;
   board_minutes_ref: string | null;
   note: string | null;
   requested_by: string;
@@ -92,10 +96,25 @@ interface SectionCommon {
   // no remaining balance to print: it renders "—", never $0.00.
   drawdown: Map<string, CommitmentDrawdown>;
   nameByUser: Map<string, string>;
-  // The treasurer seat: approve, issue, receive, close, cancel, annotate.
+  // This program's three spending rules (0023). They decide which commitments
+  // need two approvals, which need the board minutes before being issued, and
+  // which get the three-quotes nudge.
+  thresholds: CommitmentThresholds;
+  // Who has already approved each commitment, from commitment_audit. THIS IS THE
+  // APPROVAL CHAIN: a first approval changes no column on the row, so the audit
+  // trail is where it is recorded.
+  approvals: Map<string, string[]>;
+  // The reader, so the page never offers them a button the database will refuse
+  // (their own request, or their own second signature). Null on a support view.
+  viewerId: string | null;
+  // The treasurer seat: issue, receive, close, cancel, annotate — and the
+  // approval that completes a commitment.
   canWrite: boolean;
   // Director, admin or treasurer: raise a request, and restate one.
   canCreate: boolean;
+  // Director, admin, treasurer or board member: may record the FIRST of two
+  // approvals above the second-approver amount, and nothing else.
+  canApprove: boolean;
   openId: string | null;
   error: string | null;
   confirmClose: boolean;
@@ -266,6 +285,7 @@ function CommitmentDetail({
   const stale = open && row.need_by !== null && row.need_by < c.today;
   const over = draw ? commitmentOverspend(draw.totalCents, draw.drawnCents) : 0;
   const lineLabel = c.lineName.get(row.budget_line_id) ?? "this budget line";
+  const rules = commitmentRules(commitmentTotalCents(row), c.thresholds);
   const when = (ts: string | null): string =>
     ts ? formatDateTimeInTz(new Date(ts), c.timeZone) : "—";
   const who = (id: string | null): string =>
@@ -313,6 +333,19 @@ function CommitmentDetail({
           {formatDateOnly(row.need_by)}) and still open. An open commitment from
           a date that has passed is money held out of the budget for something
           that may never happen.
+        </p>
+      )}
+      {/* D6's THIRD number, and the only one that never blocks anything. It is a
+          nudge, so it is worded as one, it appears while it can still be acted
+          on (before the money moves), and it goes away the moment the treasurer
+          records where the quotes are filed — a nudge that cannot be satisfied
+          is just noise. */}
+      {rules.nudgeThreeQuotes && open && !row.quote_path && (
+        <p className="muted">
+          Over {formatCents(c.thresholds.threeQuotesCents)} — get three quotes if
+          you can, and record where they are filed under &ldquo;Reference numbers
+          and notes&rdquo; below. This is a reminder, not a rule: nothing here is
+          blocked either way.
         </p>
       )}
       {row.after_the_fact && (
@@ -403,6 +436,12 @@ function CommitmentDetail({
             <dd>{row.external_ref}</dd>
           </>
         )}
+        {row.quote_path && (
+          <>
+            <dt>Quotes</dt>
+            <dd>{row.quote_path}</dd>
+          </>
+        )}
         {row.board_minutes_ref && (
           <>
             <dt>Board minutes</dt>
@@ -425,12 +464,33 @@ function CommitmentDetail({
         canWrite={c.canWrite}
       />
 
+      {/* Approval is its own block, above the rest of the lifecycle, because
+          since 0023 it is the one move whose seat is not simply "treasurer" —
+          above the second-approver amount the FIRST approval comes from a
+          director, an admin or a board member, and the treasurer's finishes it. */}
+      {commitmentAllows(row, "approve") && (
+        <Approval
+          programId={c.programId}
+          slug={c.slug}
+          row={row}
+          rules={rules}
+          thresholds={c.thresholds}
+          approvals={c.approvals.get(row.id) ?? []}
+          nameByUser={c.nameByUser}
+          viewerId={c.viewerId}
+          canWrite={c.canWrite}
+          canApprove={c.canApprove}
+        />
+      )}
+
       {c.canWrite && open && (
         <Lifecycle
           programId={c.programId}
           slug={c.slug}
           row={row}
           draw={draw}
+          rules={rules}
+          thresholds={c.thresholds}
           lineLabel={lineLabel}
           confirmClose={c.confirmClose}
           closeHref={c.closeHref}
@@ -522,15 +582,108 @@ function LinkedEntries({
   );
 }
 
-// Approve → issue → receive → close, plus cancel. Only the moves this document
-// can actually make are rendered, and `commitmentAllows` is the same function
-// the server action asks — a control that is merely hidden is a control that
-// still works when posted.
+// THE SIGNATURES (spec 006 D6 / 0023). One approval, or two above the program's
+// second-approver amount — and every version of the sentence says who is still
+// owed, because a treasurer looking for a button that is not there needs to know
+// why rather than conclude the page is broken.
+//
+// What is offered is never wider than what the database will accept: the
+// requester is offered nothing, a person who has already approved is offered
+// nothing, and the treasurer's approval is deliberately not offered as the FIRST
+// of two — an audit row cannot be taken back, so spending her signature on the
+// first slot would strand the document (0023 §3 refuses it outright).
+function Approval({
+  programId,
+  slug,
+  row,
+  rules,
+  thresholds,
+  approvals,
+  nameByUser,
+  viewerId,
+  canWrite,
+  canApprove,
+}: {
+  programId: string;
+  slug: string;
+  row: CommitmentListRow;
+  rules: CommitmentRules;
+  thresholds: CommitmentThresholds;
+  approvals: string[];
+  nameByUser: Map<string, string>;
+  viewerId: string | null;
+  canWrite: boolean;
+  canApprove: boolean;
+}) {
+  // The requester's own name never counts as a signature — 0021's CHECK says so
+  // for the completing approval and 0023 says so for the first.
+  const signed = approvals.filter((id) => id !== row.requested_by);
+  const iSigned = !!viewerId && signed.includes(viewerId);
+  const isRequester = !!viewerId && viewerId === row.requested_by;
+  const needsTwo = rules.needsSecondApproval;
+  const firstOfTwo = needsTwo && signed.length === 0;
+
+  // Who may press, right now, for this document.
+  const mayPress =
+    !isRequester &&
+    !iSigned &&
+    (firstOfTwo ? canApprove && !canWrite : canWrite);
+
+  const names = signed.map((id) => nameByUser.get(id) ?? "someone on the staff");
+
+  return (
+    <div className="stack money-fix-form">
+      <h4>Approval</h4>
+      {needsTwo ? (
+        <p className="muted">
+          Over {formatCents(thresholds.secondApproverCents)}, so this one needs
+          two approvals.{" "}
+          {signed.length === 0
+            ? "A director, an admin or a board member approves it first; the treasurer's approval is the one that finishes it."
+            : `Approved so far by ${names.join(", ")}. The treasurer's approval finishes it.`}
+        </p>
+      ) : (
+        <p className="muted">
+          One approval, from the treasurer — and never from whoever raised the
+          request. The database refuses that, not just this page.
+        </p>
+      )}
+      {isRequester && (
+        <p className="muted">
+          You raised this request, so you cannot approve it.
+        </p>
+      )}
+      {iSigned && !isRequester && (
+        <p className="muted">
+          Your approval is recorded. One person cannot be both of its two
+          approvals.
+        </p>
+      )}
+      {mayPress && (
+        <form action={moveCommitment}>
+          <input type="hidden" name="programId" value={programId} />
+          <input type="hidden" name="slug" value={slug} />
+          <input type="hidden" name="commitmentId" value={row.id} />
+          <button type="submit" name="act" value="approve">
+            {firstOfTwo ? "Add my approval" : "Approve it"}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+// Issue → receive → close, plus cancel. Only the moves this document can
+// actually make are rendered, and `commitmentAllows` is the same function the
+// server action asks — a control that is merely hidden is a control that still
+// works when posted. (Approving lives in its own block above.)
 function Lifecycle({
   programId,
   slug,
   row,
   draw,
+  rules,
+  thresholds,
   lineLabel,
   confirmClose,
   closeHref,
@@ -539,10 +692,17 @@ function Lifecycle({
   slug: string;
   row: CommitmentListRow;
   draw: CommitmentDrawdown | undefined;
+  rules: CommitmentRules;
+  thresholds: CommitmentThresholds;
   lineLabel: string;
   confirmClose: boolean;
   closeHref: (id: string) => string;
 }) {
+  // D6's second blocking rule: above the board amount the minutes have to be on
+  // the document before it can be issued. Stated where the Issue button is, and
+  // enforced by the server action and by 0023's trigger underneath it.
+  const boardMissing =
+    rules.needsBoardMinutes && !(row.board_minutes_ref ?? "").trim();
   const hidden = (
     <>
       <input type="hidden" name="programId" value={programId} />
@@ -554,15 +714,7 @@ function Lifecycle({
     <div className="stack money-fix-form">
       <h4>What happens next</h4>
       <div className="row-inline">
-        {commitmentAllows(row, "approve") && (
-          <form action={moveCommitment}>
-            {hidden}
-            <button type="submit" name="act" value="approve">
-              Approve it
-            </button>
-          </form>
-        )}
-        {commitmentAllows(row, "issue") && (
+        {commitmentAllows(row, "issue") && !boardMissing && (
           <form action={moveCommitment}>
             {hidden}
             <button type="submit" name="act" value="issue" className="secondary">
@@ -598,14 +750,15 @@ function Lifecycle({
         )}
       </div>
 
-      {/* Approval is the one move whose absence needs explaining rather than
-          hiding: a treasurer looking for the Approve button on a request she
-          raised herself needs to know why it is not there. */}
-      {row.status === "requested" && (
-        <p className="muted">
-          Whoever raised this request cannot be the one who approves it — the
-          database refuses it, not just this page. If you raised it, someone else
-          on the treasury side approves it.
+      {/* The board rule, said where the missing button was rather than after
+          pressing it. The server action refuses this too (and 0023's trigger
+          under that), so this is the explanation, not the control. */}
+      {commitmentAllows(row, "issue") && boardMissing && (
+        <p className="alert-error">
+          Over {formatCents(thresholds.boardApprovalCents)}, so this cannot be
+          issued until the board minutes are written on it. Add them under
+          &ldquo;Reference numbers and notes&rdquo; below and the button comes
+          back.
         </p>
       )}
 
@@ -786,6 +939,18 @@ function References({
             name="external_ref"
             defaultValue={row.external_ref ?? ""}
             placeholder="e.g. 24-01187"
+          />
+        </label>
+        {/* The three-quotes nudge's anchor (D6). A place, not an upload: this
+            app stores no vendor documents, and "Shared drive → Quotes → 2027
+            risers" is what a treasurer can actually hand an auditor. */}
+        <label>
+          Where the quotes are filed
+          <input
+            type="text"
+            name="quote_path"
+            defaultValue={row.quote_path ?? ""}
+            placeholder="e.g. Shared drive → Quotes → 2027 risers"
           />
         </label>
         <label>

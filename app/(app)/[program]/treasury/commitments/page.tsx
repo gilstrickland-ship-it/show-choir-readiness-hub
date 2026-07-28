@@ -5,10 +5,13 @@ import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { TREASURY_ROLES } from "@/lib/nav";
 import {
+  COMMITMENT_APPROVE_ROLES,
   COMMITMENT_CREATE_ROLES,
   COMMITMENT_KINDS,
   TREASURY_WRITE_ROLES,
+  approvalActorsFromRows,
   commitmentDrawdownFromRows,
+  commitmentThresholds,
   commitmentTotalsFromRow,
   formatCents,
   ledgerPageRange,
@@ -62,7 +65,7 @@ import {
 const LIST_COLUMNS =
   "id, kind, funding_source, number, revision, revision_of_id, vendor, purpose, " +
   "amount_cents, shipping_cents, tax_cents, budget_line_id, need_by, status, " +
-  "after_the_fact, external_ref, board_minutes_ref, note, requested_by, requested_at, " +
+  "after_the_fact, external_ref, quote_path, board_minutes_ref, note, requested_by, requested_at, " +
   "approved_by, approved_at, issued_at, received_at, closed_at, close_reason, " +
   "released_cents, cancelled_at, cancel_reason, superseded_at";
 
@@ -91,7 +94,8 @@ export default async function CommitmentsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season, isSupport } = await getTenantContext(slug);
+  const { program, role, season, isSupport, membership } =
+    await getTenantContext(slug);
   requireFlag(program, "treasury");
   if (!TREASURY_ROLES.includes(role)) {
     return (
@@ -103,6 +107,16 @@ export default async function CommitmentsPage({
   // Raise a request, and restate one — THE DELIBERATE RELAXATION (spec §4). A
   // director may ask; only the treasurer may approve. Support views never write.
   const canCreate = !isSupport && COMMITMENT_CREATE_ROLES.includes(role);
+  // Record the FIRST of two approvals above the second-approver amount — the
+  // seat set that also admits a board member (0023, the second stated
+  // relaxation). Never enough on its own: the treasurer's approval finishes it.
+  const canApprove = !isSupport && COMMITMENT_APPROVE_ROLES.includes(role);
+  // Who is reading. Used only to stop offering a button the database would
+  // refuse (your own request, your own second signature) — never as the gate.
+  const viewerId = isSupport ? null : (membership.user_id ?? null);
+  // This program's three spending rules (0023). One read, on the tenant context
+  // every surface already resolves, so Settings and this page cannot disagree.
+  const thresholds = commitmentThresholds(program);
 
   const sp = await searchParams;
   const one = (key: string): string | null => oneParam(sp, key);
@@ -254,14 +268,36 @@ export default async function CommitmentsPage({
     drawdown = commitmentDrawdownFromRows(data);
   }
 
+  // ---- The approval chain --------------------------------------------------
+  // A FIRST approval above the second-approver amount changes no column on the
+  // commitment (0023), so `commitment_audit` is where it lives — and the
+  // completing approval's own audit row lands there too. Asked for exactly the
+  // ids on this page, so it is bounded by the page size rather than by history.
+  let approvals = new Map<string, string[]>();
+  if (allRows.length > 0) {
+    const { data } = await supabase
+      .from("commitment_audit")
+      .select("commitment_id, actor")
+      .eq("program_id", program.id)
+      .eq("action", "approve")
+      .in(
+        "commitment_id",
+        allRows.map((r) => r.id),
+      );
+    approvals = approvalActorsFromRows(data);
+  }
+
   // ---- Who asked and who approved ------------------------------------------
   const nameByUser = new Map<string, string>();
   const userIds = [
-    ...new Set(
-      allRows.flatMap((r) =>
+    ...new Set([
+      ...allRows.flatMap((r) =>
         [r.requested_by, r.approved_by].filter((v): v is string => !!v),
       ),
-    ),
+      // …and whoever gave a first approval, so "Approved so far by —" names a
+      // person rather than a uuid.
+      ...[...approvals.values()].flat(),
+    ]),
   ];
   if (userIds.length > 0) {
     const { data } = await supabase
@@ -530,8 +566,12 @@ export default async function CommitmentsPage({
             lineName={lineName}
             drawdown={drawdown}
             nameByUser={nameByUser}
+            thresholds={thresholds}
+            approvals={approvals}
+            viewerId={viewerId}
             canWrite={canWrite}
             canCreate={canCreate}
+            canApprove={canApprove}
             openId={openId}
             error={rowError}
             confirmClose={
@@ -544,6 +584,23 @@ export default async function CommitmentsPage({
           />
         );
       })}
+
+      {/* The rules in force, where the people held to them can read them. The
+          treasurer cannot open Settings (director/admin), and a rule you only
+          meet by being refused is a rule you learn to route around. */}
+      <p className="page-foot">
+        This program&apos;s rules:{" "}
+        {thresholds.secondApproverCents > 0
+          ? `over ${formatCents(thresholds.secondApproverCents)} needs two approvals`
+          : "one approval at any amount"}
+        {thresholds.boardApprovalCents > 0
+          ? ` · over ${formatCents(thresholds.boardApprovalCents)} needs the board minutes before it is issued`
+          : ""}
+        {thresholds.threeQuotesCents > 0
+          ? ` · over ${formatCents(thresholds.threeQuotesCents)} you are reminded to get three quotes (never blocked)`
+          : ""}
+        . A director or admin sets these in Settings.
+      </p>
 
       <p className="page-foot">
         A commitment is never edited. Changing the amount records a revision that

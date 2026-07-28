@@ -7,15 +7,21 @@ import { requireRole } from "@/lib/auth";
 import { programPath } from "@/lib/return-path";
 import {
   COMMITMENT_ACTION_STATUS,
+  COMMITMENT_APPROVE_ROLES,
   COMMITMENT_CREATE_ROLES,
   TREASURY_WRITE_ROLES,
   commitmentAllows,
+  commitmentThresholds,
+  commitmentTotalCents,
+  overThreshold,
   parseCommitmentAction,
   parseCommitmentKind,
   parseDollarsToCents,
   parseFundingSource,
   type CommitmentAction,
   type CommitmentState,
+  type CommitmentThresholds,
+  type ThresholdColumns,
 } from "@/lib/treasury";
 import {
   commitmentAnchor,
@@ -90,6 +96,12 @@ const OC = {
   budgetLine: "OC025",
   reviseTarget: "OC026",
   reviseShape: "OC027",
+  // 0023's three, plus the archived-season code it borrows from 0019.
+  secondApprover: "OC028",
+  boardMinutes: "OC029",
+  alreadyApproved: "OC030",
+  notAwaiting: "OC031",
+  archived: "OC011",
   // The CHECK constraint behind self-approval fires as a plain check_violation,
   // because a constraint is the one layer no writer can route around — including
   // this one. Both codes therefore mean the same thing to a reader.
@@ -163,6 +175,10 @@ interface CommitmentRowState extends CommitmentState {
   season_id: string;
   requested_by: string;
   budget_line_id: string;
+  amount_cents: number;
+  shipping_cents: number;
+  tax_cents: number;
+  board_minutes_ref: string | null;
 }
 
 async function readCommitment(
@@ -173,12 +189,33 @@ async function readCommitment(
   const { data } = await supabase
     .from("commitments")
     .select(
-      "id, season_id, status, requested_by, budget_line_id, closed_at, cancelled_at, superseded_at",
+      "id, season_id, status, requested_by, budget_line_id, amount_cents, " +
+        "shipping_cents, tax_cents, board_minutes_ref, closed_at, cancelled_at, superseded_at",
     )
     .eq("id", id)
     .eq("program_id", programId)
     .maybeSingle();
   return (data as CommitmentRowState | null) ?? null;
+}
+
+// This program's three spending rules (0023). Read from the row every surface
+// reads them from, and falling back to the PROTECTIVE defaults rather than to
+// zero when the read fails — a threshold that quietly reads as "off" is the one
+// failure this feature must not have. The database enforces both blocking rules
+// again in a trigger; this read exists so the refusal is a sentence rather than
+// a SQLSTATE.
+async function programThresholds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  programId: string,
+): Promise<CommitmentThresholds> {
+  const { data } = await supabase
+    .from("programs")
+    .select(
+      "commitment_second_approver_cents, commitment_board_approval_cents, commitment_three_quotes_cents",
+    )
+    .eq("id", programId)
+    .maybeSingle();
+  return commitmentThresholds(data as ThresholdColumns | null);
 }
 
 // ---------------------------------------------------------------------------
@@ -289,8 +326,13 @@ export async function createCommitment(formData: FormData): Promise<void> {
 // stamp together (0021's CHECK constraints make those the same fact said twice),
 // and let the engine be the backstop for anything a concurrent press slips past.
 
-const OK_FOR_ACTION: Record<Exclude<CommitmentAction, "revise">, CommitmentOkKey> = {
-  approve: "approved",
+// Approving is not in this map: it does not take the generic UPDATE path at all
+// since 0023 — it goes through `record_commitment_approval`, which answers with
+// WHICH approval it just recorded, and the sentence follows from that answer.
+const OK_FOR_ACTION: Record<
+  Exclude<CommitmentAction, "revise" | "approve">,
+  CommitmentOkKey
+> = {
   issue: "issued",
   receive_partial: "received",
   receive_full: "received",
@@ -302,11 +344,16 @@ export async function moveCommitment(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
   const id = String(formData.get("commitmentId") ?? "");
-  // Treasurer only. Money that has MOVED and money that is PROMISED are gated by
-  // the same seat; only RAISING a request is wider.
-  const actor = await requireRole(programId, TREASURY_WRITE_ROLES);
 
+  // Reading which move this is, is not authorization — it decides WHICH seat to
+  // demand. Every move is treasurer-only except approving, which above a
+  // program's second-approver amount takes a first approval from a wider set
+  // (COMMITMENT_APPROVE_ROLES). The database re-checks both, per branch.
   const action = parseCommitmentAction(String(formData.get("act") ?? ""));
+  const actor = await requireRole(
+    programId,
+    action === "approve" ? COMMITMENT_APPROVE_ROLES : TREASURY_WRITE_ROLES,
+  );
   if (!action || action === "revise" || !id) {
     redirect(fail(slug, "act", id));
   }
@@ -328,6 +375,69 @@ export async function moveCommitment(formData: FormData): Promise<void> {
     redirect(fail(slug, "act_self", id));
   }
 
+  // ---- Approving goes through the database, whichever approval this is ------
+  // 0023's `record_commitment_approval` decides whether this press is the first
+  // of two or the one that approves the document, because the trigger that
+  // enforces the threshold owns that question already and a page that answered
+  // it too would eventually answer differently.
+  if (action === "approve") {
+    const { data, error } = await supabase.rpc("record_commitment_approval", {
+      p_program_id: programId,
+      p_commitment_id: id,
+    });
+    if (error) {
+      redirect(
+        fail(
+          slug,
+          codeMessage<CommitmentErrorKey>(
+            {
+              [OC.secondApprover]: "act_second",
+              [OC.alreadyApproved]: "act_twice",
+              [OC.selfApproval]: "act_self",
+              [OC.checkViolation]: "act_self",
+              [OC.notAwaiting]: "act_state",
+              [OC.notInSeason]: "act_missing",
+              [OC.archived]: "act_archived",
+              [OC.denied]: "act_denied",
+            },
+            error,
+            "act",
+          ),
+          id,
+        ),
+      );
+    }
+    revalidatePath(commitmentsPath(slug));
+    // 'recorded' — the first of two. 'approved' — it is approved. Anything else
+    // is a version of the function this build does not know, and saying
+    // "Approved." about it would be a claim nobody checked.
+    redirect(
+      done(
+        slug,
+        data === "approved"
+          ? "approved"
+          : data === "recorded"
+            ? "approval_recorded"
+            : "saved",
+      ),
+    );
+  }
+
+  // ---- Issuing above the board amount needs the minutes on the document ----
+  // The database refuses it too (0023 §2). This exists so the treasurer is told
+  // which field to fill in rather than being handed a SQLSTATE, and it is a
+  // re-check on the server — the button is never merely hidden.
+  if (action === "issue") {
+    const t = await programThresholds(supabase, programId);
+    const total = commitmentTotalCents(row);
+    if (
+      overThreshold(total, t.boardApprovalCents) &&
+      !(row.board_minutes_ref ?? "").trim()
+    ) {
+      redirect(fail(slug, "act_board", id));
+    }
+  }
+
   const reason = textOrNull(formData.get("reason"));
   if ((action === "close" || action === "cancel") && !reason) {
     redirect(fail(slug, "act_reason", id));
@@ -337,10 +447,7 @@ export async function moveCommitment(formData: FormData): Promise<void> {
   const patch: Record<string, unknown> = {
     status: COMMITMENT_ACTION_STATUS[action],
   };
-  if (action === "approve") {
-    patch.approved_by = actor.user.id;
-    patch.approved_at = now;
-  } else if (action === "issue") {
+  if (action === "issue") {
     patch.issued_at = now;
   } else if (action === "receive_full") {
     patch.received_by = actor.user.id;
@@ -388,6 +495,10 @@ export async function moveCommitment(formData: FormData): Promise<void> {
             [OC.denied]: "act_denied",
             [OC.stampRewrite]: "act_state",
             [OC.frozenColumn]: "act_state",
+            // 0023 §2's backstop: the board-minutes rule is re-checked above
+            // with a friendlier sentence, so reaching it here means a
+            // concurrent edit cleared the reference between the two.
+            [OC.boardMinutes]: "act_board",
           },
           error,
           "act",
@@ -533,6 +644,11 @@ export async function noteCommitment(formData: FormData): Promise<void> {
     .from("commitments")
     .update({
       external_ref: textOrNull(formData.get("external_ref")),
+      // Where the quotes are filed — the anchor for the three-quotes nudge
+      // (D6). A TEXT reference, not an upload: this app stores no vendor
+      // documents, and "Shared drive → Quotes → 2027 risers" is what a
+      // treasurer can actually produce for an auditor.
+      quote_path: textOrNull(formData.get("quote_path")),
       board_minutes_ref: textOrNull(formData.get("board_minutes_ref")),
       note: textOrNull(formData.get("note")),
     })

@@ -20,6 +20,7 @@ export type CommitmentSection = "page" | "row";
 export type CommitmentOkKey =
   | "created"
   | "approved"
+  | "approval_recorded"
   | "issued"
   | "received"
   | "closed"
@@ -42,6 +43,9 @@ export type CommitmentErrorKey =
   | "act_archived"
   | "act_missing"
   | "act_reason"
+  | "act_second"
+  | "act_twice"
+  | "act_board"
   // Restating one
   | "revise"
   | "revise_amount"
@@ -56,6 +60,13 @@ const COMMITMENT_OK: FlashMap<CommitmentOkKey, CommitmentSection> = {
       "Request raised. It is committed against its budget line from now, before any money moves — the treasurer approves it next.",
   },
   approved: { section: "page", message: "Approved." },
+  // The first of two. It says what has happened and what has not, because "your
+  // approval is recorded" on its own would read as "this is approved".
+  approval_recorded: {
+    section: "page",
+    message:
+      "Your approval is recorded. This one is over the amount your program allows on a single approval, so it is still a request until the treasurer approves it too.",
+  },
   issued: { section: "page", message: "Marked as issued." },
   received: { section: "page", message: "Receipt recorded." },
   closed: {
@@ -135,6 +146,24 @@ const COMMITMENT_ERROR: FlashMap<CommitmentErrorKey, CommitmentSection> = {
   act_reason: {
     section: "row",
     message: "Closing or cancelling needs a reason. Nothing changed.",
+  },
+  // The two thresholds that BLOCK (spec 006 D6). Both name the rule rather than
+  // the mechanism, and both say where the number is set — a refusal a volunteer
+  // cannot act on is a refusal she will find a way around.
+  act_second: {
+    section: "row",
+    message:
+      "This is over the amount your program allows on one approval, so it needs two. Somebody else — a director, an admin or a board member — approves it first, then the treasurer. Your director can change the amount in Settings → Spending rules. Nothing changed.",
+  },
+  act_twice: {
+    section: "row",
+    message:
+      "You have already approved this one, and one person cannot be both of its two approvals. Nothing changed.",
+  },
+  act_board: {
+    section: "row",
+    message:
+      "This is over the amount your program sends to the board, so the board minutes have to be on it before it is issued. Add them under “Reference numbers and notes” below. Nothing changed.",
   },
 
   revise: {
