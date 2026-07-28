@@ -23,10 +23,16 @@ import {
   discardDigest,
 } from "./actions";
 
-// Comms — Digest tab (§8, T025, Constitution IV). Weekly AI-drafted parent digest:
-// gather → Claude draft → director review/edit/approve → send with per-family
-// token links. NEVER auto-sends. Director/admin manage; other comms roles read.
-// The AI-drafting controls appear only when the `digest` flag is on.
+// Comms — Digest workspace (§8, T025, Constitution IV). Weekly AI-drafted parent
+// digest: gather → Claude draft → director review/edit/approve → send with
+// per-family token links. NEVER auto-sends. Director/admin manage; other comms
+// roles read. The AI-drafting controls appear only when the `digest` flag is on.
+//
+// Spec 005 US9-1: this page is the digest's ONE home. Draft, edit, approve,
+// discard, send and history exist here and nowhere else — the Comms landing
+// carries a status card that links in. Approve and send stay two separate
+// presses on a page that shows the whole body, which is the point of
+// Constitution IV: a human reads what an AI wrote before a parent does.
 
 interface DigestRow {
   id: string;
@@ -158,7 +164,12 @@ export default async function DigestPage({
         />
       )}
 
-      <CommsTabs slug={slug} active="digest" shiftsEnabled={flags.shifts} />
+      <CommsTabs
+        slug={slug}
+        active="digest"
+        digestEnabled={digestEnabled}
+        shiftsEnabled={flags.shifts}
+      />
 
       <p className="muted">
         An AI-drafted weekly summary a director reviews and approves before it

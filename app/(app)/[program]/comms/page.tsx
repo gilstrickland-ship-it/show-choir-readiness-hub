@@ -11,27 +11,25 @@ import {
 } from "@/lib/comms";
 import { emailConfigured } from "@/lib/email";
 import { formatDateInTz } from "@/lib/datetime";
+import { activeShareLinks } from "@/lib/tokens";
 import { CommsTabs } from "./CommsTabs";
-import { regenerateSignupShareLink } from "./shifts/actions";
-import { approveDigest, discardDigest, sendDigest } from "./digest/actions";
+import { DigestStatus, type DigestState } from "./DigestStatus";
 
-// Comms landing — the Digest surface (§7 redesign). The AI-drafted weekly digest
-// awaiting a director's approval is the focal card (Constitution IV: nothing
-// sends to parents until a human approves — the Approve/Discard here are the
-// existing draft→approved / draft-delete actions, never an auto-send). Alongside
-// it: a "recently sent" announcement log and staffing / deliverability /
-// broadcast-link asides. The full digest workspace (draft-now, all weeks, inline
-// edit) lives at /comms/digest; Announcements composing lives at
-// /comms/announcements. Comms is hidden from board_member; flagged-off or
-// role-forbidden → 404.
+// Comms landing (§7 redesign, reshaped by spec 005 US9-1). This page answers
+// "what needs my attention?" and hands every job to the route that owns it:
+//
+//   • the weekly digest → a STATUS card (DigestStatus) linking to the workspace
+//     at /comms/digest, which owns draft/edit/approve/discard/send/history
+//     exclusively. No digest action lives here; the approve→send gate is a
+//     deliberate two-step act taken with the whole draft on screen
+//     (Constitution IV).
+//   • announcements → /comms/announcements composes and keeps the full history;
+//     this page shows only what has recently gone out.
+//   • shifts → /comms/shifts fills them and owns the signup link; the asides
+//     here report staffing, deliverability, and whether a signup link is live.
+//
+// Comms is hidden from board_member; flagged-off or role-forbidden → 404.
 
-interface DigestRow {
-  id: string;
-  week_of: string | null;
-  status: "draft" | "approved" | "sent";
-  subject: string | null;
-  body_md: string | null;
-}
 interface AnnouncementRow {
   id: string;
   subject: string | null;
@@ -45,33 +43,10 @@ interface ShiftRow {
   needed_count: number;
 }
 
-// A short plain-text preview of a markdown body for the draft card (headings /
-// emphasis / links stripped to their text). Never rendered as HTML.
-function previewText(md: string, max = 280): string {
-  const plain = md
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\*\*|__|[*_`>#]/g, "")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
-  return plain.length > max ? `${plain.slice(0, max).trimEnd()}…` : plain;
-}
-
 export default async function CommsPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{
-    approved?: string;
-    discarded?: string;
-    done?: string;
-    queued?: string;
-    sent?: string;
-    skipped?: string;
-    failed?: string;
-    error?: string;
-  }>;
 }) {
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
@@ -85,7 +60,6 @@ export default async function CommsPage({
   const canAnnounce = ANNOUNCEMENT_WRITE_ROLES.includes(role);
   const canShare = SETTINGS_ROLES.includes(role); // director/admin (share_links RLS)
   const tz = program.timezone;
-  const sp = await searchParams;
 
   const supabase = await createClient();
 
@@ -98,19 +72,25 @@ export default async function CommsPage({
     })
   ).length;
 
-  // The digest awaiting attention: newest unapproved draft first, else an
-  // approved-but-unsent digest ready to go.
-  const { data: digestData } = await supabase
-    .from("digests")
-    .select("id, week_of, status, subject, body_md")
-    .eq("program_id", program.id)
-    .in("status", ["draft", "approved"])
-    .order("week_of", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .limit(10);
-  const openDigests = (digestData as DigestRow[] | null) ?? [];
-  const draft = openDigests.find((d) => d.status === "draft") ?? null;
-  const approved = draft ? null : openDigests.find((d) => d.status === "approved") ?? null;
+  // The digest's state, and only its state: a draft waiting on a human beats an
+  // approved-but-unsent one. Nothing else about the digest is read here, because
+  // nothing else is rendered — the workspace loads the subject and body.
+  let digestState: DigestState = "clear";
+  if (!flags.digest) {
+    digestState = "off";
+  } else {
+    const { data: digestData } = await supabase
+      .from("digests")
+      .select("status")
+      .eq("program_id", program.id)
+      .in("status", ["draft", "approved"])
+      .order("week_of", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(10);
+    const open = (digestData as { status: string }[] | null) ?? [];
+    if (open.some((d) => d.status === "draft")) digestState = "draft";
+    else if (open.length > 0) digestState = "approved";
+  }
 
   // Recently-sent announcements + per-send delivery rollup.
   const { data: annData } = await supabase
@@ -187,6 +167,17 @@ export default async function CommsPage({
     }
   }
 
+  // Is a parent-facing signup link live for this season? Reporting it is this
+  // aside's job; minting and rotating it belong to /comms/shifts, where the
+  // one-time URL is actually shown — a "make a new link" button here would
+  // silently retire the live link and print the replacement on another page.
+  const signupLinkLive =
+    flags.shifts && canShare && season
+      ? (await activeShareLinks(supabase, program.id)).some(
+          (l) => l.resource === "signup_page" && l.resource_id === season.id,
+        )
+      : false;
+
   return (
     <section className="stack">
       <div className="page-head">
@@ -209,25 +200,9 @@ export default async function CommsPage({
       <CommsTabs
         slug={slug}
         active="digest"
-        shiftsEnabled={flags.shifts}
         digestEnabled={flags.digest}
+        shiftsEnabled={flags.shifts}
       />
-
-      {sp.approved && <p className="alert-ok">Approved. You can send it now.</p>}
-      {sp.discarded && <p className="alert-ok">Draft discarded.</p>}
-      {sp.done && sp.queued && (
-        <p className="alert-ok">The digest is sending in the background.</p>
-      )}
-      {sp.done && !sp.queued && (
-        <p className="alert-ok">
-          Digest sent to {sp.sent ?? 0}
-          {Number(sp.skipped ?? 0) > 0 && `, skipped ${sp.skipped}`}
-          {Number(sp.failed ?? 0) > 0 && `, failed ${sp.failed}`}.
-        </p>
-      )}
-      {sp.error === "notapproved" && (
-        <p className="alert-error">Only an approved digest can be sent.</p>
-      )}
 
       {!emailConfigured() && (
         <p className="alert-error">
@@ -240,116 +215,12 @@ export default async function CommsPage({
 
       <div className="comms-body">
         <section className="comms-main">
-          {/* Digest off (program tier prep): the workspace cards are replaced by a
-              compact not-enabled card that points at announcements as the sending
-              tool. Comms is a soft gate — existing drafts stay reviewable in the
-              workspace — so we don't 404, we just stop advertising the draft flow. */}
-          {!flags.digest && (
-            <div className="digest-card empty">
-              <h2>Weekly digest</h2>
-              <p className="muted">
-                The weekly digest isn&apos;t enabled for this program. To reach
-                families now, send an announcement — it goes out immediately.
-              </p>
-              {canAnnounce && (
-                <Link
-                  href={`/${slug}/comms/announcements`}
-                  className="button-link secondary"
-                >
-                  + New announcement
-                </Link>
-              )}
-            </div>
-          )}
-
-          {/* Digest draft card — the approval gate (Constitution IV). Only a draft
-              renders it; the Approve/Discard forms are the existing actions. */}
-          {flags.digest && draft && (
-            <div className="digest-card">
-              <div className="digest-card-head">
-                <h2>Weekly digest — draft</h2>
-                <span className="chip warn">Awaiting your approval</span>
-              </div>
-              <p className="muted">
-                AI-drafted from this week&apos;s events, itinerary, and open shifts.
-                Nothing sends to parents until you approve — edit freely first.
-              </p>
-              <div className="digest-preview">
-                <strong>Subject: {draft.subject ?? "—"}</strong>
-                <p>{draft.body_md ? previewText(draft.body_md) : "No content yet."}</p>
-              </div>
-              {canManageDigest && (
-                <div className="digest-actions">
-                  <form action={approveDigest}>
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="digestId" value={draft.id} />
-                    <input type="hidden" name="backTo" value="comms" />
-                    <button type="submit" className="accent">
-                      Approve &amp; send to {everyoneCount}
-                    </button>
-                  </form>
-                  <Link href={`/${slug}/comms/digest`} className="button-link secondary">
-                    Edit draft
-                  </Link>
-                  <form action={discardDigest}>
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="digestId" value={draft.id} />
-                    <input type="hidden" name="backTo" value="comms" />
-                    <button type="submit" className="discard">
-                      Discard
-                    </button>
-                  </form>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Approved but not yet sent — the send gate. */}
-          {flags.digest && approved && (
-            <div className="digest-card">
-              <div className="digest-card-head">
-                <h2>Weekly digest — approved</h2>
-                <span className="chip">Ready to send</span>
-              </div>
-              <div className="digest-preview">
-                <strong>Subject: {approved.subject ?? "—"}</strong>
-              </div>
-              {canManageDigest && (
-                <div className="digest-actions">
-                  <form action={sendDigest}>
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="digestId" value={approved.id} />
-                    <input type="hidden" name="seasonId" value={season?.id ?? ""} />
-                    <input type="hidden" name="backTo" value="comms" />
-                    <button type="submit" className="accent">
-                      Send to {everyoneCount} families now
-                    </button>
-                  </form>
-                  <Link href={`/${slug}/comms/digest`} className="button-link secondary">
-                    Review in workspace
-                  </Link>
-                </div>
-              )}
-            </div>
-          )}
-
-          {flags.digest && !draft && !approved && (
-            <div className="digest-card empty">
-              <h2>Weekly digest</h2>
-              <p className="muted">
-                No digest awaiting approval. The weekly digest is AI-drafted for a
-                director to review and approve — it never auto-sends.
-              </p>
-              {canManageDigest && (
-                <Link href={`/${slug}/comms/digest`} className="button-link secondary">
-                  Open the digest workspace
-                </Link>
-              )}
-            </div>
-          )}
+          <DigestStatus
+            slug={slug}
+            state={digestState}
+            canManage={canManageDigest}
+            canCompose={canAnnounce}
+          />
 
           <h2 className="comms-section-h">Recently sent</h2>
           {announcements.length === 0 ? (
@@ -426,20 +297,15 @@ export default async function CommsPage({
 
           {flags.shifts && canShare && season && (
             <div className="aside-card">
-              <h3>Broadcast signup link</h3>
+              <h3>Open shifts anyone can browse</h3>
               <p className="aside-note">
-                A read-only link anyone can open to browse this season&apos;s open
-                shifts. Parents claim shifts from their own family link. The URL is
-                shown once when you generate it.
+                {signupLinkLive
+                  ? `A link to this season's open shifts is live. Parents claim shifts from their own family link.`
+                  : `No link yet. You can share one page of this season's open shifts with anyone — a booster newsletter, a class group.`}
               </p>
-              <form action={regenerateSignupShareLink}>
-                <input type="hidden" name="programId" value={program.id} />
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="seasonId" value={season.id} />
-                <button type="submit" className="linklike">
-                  Regenerate signup link →
-                </button>
-              </form>
+              <Link href={`/${slug}/comms/shifts`} className="aside-more">
+                {signupLinkLive ? "Manage the link →" : "Make the link →"}
+              </Link>
             </div>
           )}
         </aside>

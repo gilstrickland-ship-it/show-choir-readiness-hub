@@ -17,15 +17,12 @@ function str(fd: FormData, key: string): string {
   return String(fd.get(key) ?? "").trim();
 }
 
+// The digest workspace is the ONE home for the digest lifecycle (spec 005
+// US9-1): draft, edit, approve, discard, send, history. The Comms landing shows
+// the state and links here, so every action below returns to this page and the
+// `backTo` fork these redirects used to carry is gone with the landing's forms.
 function digestPath(slug: string): string {
   return `/${slug}/comms/digest`;
-}
-
-// The digest lifecycle is reachable from two surfaces: the digest-first Comms
-// landing (/comms) and the full digest workspace (/comms/digest). `backTo=comms`
-// returns to the landing; anything else returns to the workspace.
-function backTarget(slug: string, backTo: string): string {
-  return backTo === "comms" ? `/${slug}/comms` : digestPath(slug);
 }
 
 // "Draft now" fallback (mirrors the packet-parse inline path). Runs the gather →
@@ -83,13 +80,11 @@ export async function saveDigest(formData: FormData): Promise<void> {
 // Draft-only: the `.eq("status", "draft")` guard means an already-approved or
 // sent digest can NEVER be discarded here, so this never destroys an approved or
 // sent parent-facing record (Constitution IV — nothing that reached parents is
-// touched). A discarded week simply re-drafts on the next run. `backTo` lets the
-// digest-first Comms landing and the digest workspace each return to themselves.
+// touched). A discarded week simply re-drafts on the next run.
 export async function discardDigest(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const digestId = str(formData, "digestId");
-  const backTo = str(formData, "backTo");
   await requireRole(programId, DIGEST_WRITE_ROLES);
 
   const supabase = await createClient();
@@ -100,16 +95,17 @@ export async function discardDigest(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .eq("status", "draft");
 
-  const dest = backTarget(slug, backTo);
-  revalidatePath(dest);
-  redirect(`${dest}?discarded=1`);
+  revalidatePath(digestPath(slug));
+  redirect(`${digestPath(slug)}?discarded=1`);
 }
 
+// The human half of Constitution IV. An AI-written digest becomes sendable ONLY
+// here, and only from status 'draft' — a director who has the whole body on
+// screen presses Approve, and sending is a second, separate press.
 export async function approveDigest(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const digestId = str(formData, "digestId");
-  const backTo = str(formData, "backTo");
   const { user } = await requireRole(programId, DIGEST_WRITE_ROLES);
 
   const supabase = await createClient();
@@ -120,9 +116,8 @@ export async function approveDigest(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .eq("status", "draft");
 
-  const dest = backTarget(slug, backTo);
-  revalidatePath(dest);
-  redirect(`${dest}?approved=1`);
+  revalidatePath(digestPath(slug));
+  redirect(`${digestPath(slug)}?approved=1`);
 }
 
 // Send an APPROVED digest (§8, T038). Recipients = guardians with email_status
@@ -137,9 +132,8 @@ export async function sendDigest(formData: FormData): Promise<void> {
   const slug = str(formData, "slug");
   const digestId = str(formData, "digestId");
   const seasonId = str(formData, "seasonId") || null;
-  const backTo = str(formData, "backTo");
   await requireRole(programId, DIGEST_WRITE_ROLES);
-  const dest = backTarget(slug, backTo);
+  const dest = digestPath(slug);
 
   const supabase = await createClient();
 

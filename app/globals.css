@@ -3353,8 +3353,11 @@
     letter-spacing: 0.02em;
   }
 
-  /* Digest draft card — the approval focal point. Warn top rule + shadow-2 lift
-     it above the recently-sent log. */
+  /* Digest status card — the landing's report on where this week's digest
+     stands (spec 005 US9-1). Warn top rule + shadow-2 lift it above the
+     recently-sent log. It holds no controls beyond the one link into the
+     workspace, so the preview block and the action row it used to carry are
+     gone with them. */
   .digest-card {
     border: 1px solid var(--line);
     border-top: 4px solid var(--warn);
@@ -3373,6 +3376,14 @@
     box-shadow: var(--shadow-1);
   }
 
+  /* The card is a flex column, so its one action would otherwise stretch the
+     full width and shout louder than the state line it belongs to. Compound
+     selector — a bare rule here would outrank the base-layer link styles it
+     sits beside (the T061/T066 cascade trap). */
+  .digest-card > .button-link {
+    align-self: flex-start;
+  }
+
   .digest-card-head {
     display: flex;
     align-items: center;
@@ -3386,37 +3397,6 @@
     font-size: 1.35rem;
     text-transform: uppercase;
     letter-spacing: 0.01em;
-  }
-
-  .digest-preview {
-    border: 1px solid var(--line);
-    border-radius: var(--radius-s);
-    background: var(--surface);
-    padding: 0.9rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-  }
-
-  .digest-preview strong {
-    font-weight: 650;
-  }
-
-  .digest-preview p {
-    margin: 0;
-    color: var(--ink-2);
-  }
-
-  .digest-actions {
-    display: flex;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .digest-actions form {
-    margin: 0;
   }
 
   /* Recently-sent announcement log. */
@@ -4608,10 +4588,10 @@
       gap: 1.5rem;
     }
 
-    .digest-actions .accent,
-    .digest-actions .discard,
-    .digest-actions .button-link {
-      flex: 1;
+    /* On a phone the digest card's one action spans the card so it stays an
+       easy tap target. */
+    .digest-card > .button-link {
+      align-self: stretch;
       text-align: center;
     }
 
