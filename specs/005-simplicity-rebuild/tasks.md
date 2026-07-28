@@ -70,9 +70,9 @@
 
 ## Phase 10 — Wave 10: Comp-week children (runs after Wave 8)
 
-- [ ] T156 Itinerary editor to the standard idioms: per-item row-local `<details>` edit (expanding), one "Add an item" drawer, section-local errors; publish→confirm gate and living-itinerary semantics untouched (parents never see unpublished times).
-- [ ] T157 Absences + list + thin children: `competitions/absences` renders `<Restricted>` instead of bare `notFound()` for disallowed roles (app-wide convention); outcome emails unchanged; `competitions` list keeps packet-attach + absence nudge while deferring create to the Season drawer; attendance/meals plain-language headers + shared flash convention.
-- [ ] T158 Wave-10 verification: full gate + e2e + visual pass.
+- [X] T156 Itinerary editor to the standard idioms: per-item row-local `<details>` edit (expanding), one "Add an item" drawer, section-local errors; publish→confirm gate and living-itinerary semantics untouched (parents never see unpublished times).
+- [X] T157 Absences + list + thin children: `competitions/absences` renders `<Restricted>` instead of bare `notFound()` for disallowed roles (app-wide convention); outcome emails unchanged; `competitions` list keeps packet-attach + absence nudge while deferring create to the Season drawer; attendance/meals plain-language headers + shared flash convention.
+- [X] T158 Wave-10 verification: full gate + e2e + visual pass.
 
 ## Phase 11 — Wave 11: Calendar & records
 
@@ -82,6 +82,7 @@
 
 ## Phase 12 — Wave 12: Money reporting
 
+- [ ] T143c Row Edit triggers measure 38px, not 44px (Wave-10 residual): the shared `.comp-disclosure` min-height cannot apply to an inline `<a>`, so eight call sites across five surfaces (itinerary, ledger, budget, ensembles, inventory/assignments) sit under the touch target the rest of the app holds. One-selector fix + re-measure all five.
 - [ ] T162 `budget-vs-actual` + `reports` adopt Wave-4 vocabulary and the collapsed-filter idiom; board-snapshot PDF and "reconciled through" line unchanged (fiduciary controls stay as designed).
 - [ ] T163 Wave-12 verification: full gate + e2e + visual pass.
 
