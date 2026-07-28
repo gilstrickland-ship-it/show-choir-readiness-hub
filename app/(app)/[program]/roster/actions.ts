@@ -2,19 +2,62 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
 import { ROSTER_WRITE_ROLES } from "@/lib/nav";
+import { programPath } from "@/lib/return-path";
 import { rotateGuardianToken } from "@/lib/tokens";
 import { sendGuardianLinksEmail } from "@/lib/comms-send";
 import { computeRecipients } from "@/lib/comms";
+import {
+  STUDENT_STATUSES,
+  guardianAnchor,
+  isStudentSection,
+  type StudentStatus,
+} from "@/lib/roster/students";
 
 // Roster mutations (students + guardians + size-field config). Writes are
 // director/admin per §2 "Roster CRUD" — every action re-checks the role via
 // requireRole (Constitution I, defense in depth) even though RLS also gates it.
+// costume_manager and treasurer have no roster seat at all, read or write.
+//
+// CROSS-PROGRAM REFERENCES (Constitution I). studentId and guardianId arrive as
+// form fields, and requireRole only proves the caller runs THIS program — not
+// that the row they posted belongs to it. Anyone can self-serve a program at
+// /launch, so every id is resolved inside programId before anything is written,
+// and an unresolved id fails closed to the surface's error convention instead of
+// reporting a save that never happened.
 
-const STUDENT_STATUSES = ["active", "inactive", "graduated"] as const;
-type StudentStatus = (typeof STUDENT_STATUSES)[number];
+// Fail closed on the slug: it arrives as a form field, and a value like
+// "/evil.com" interpolated into a path makes a protocol-relative URL the browser
+// follows off-site (lib/return-path). Anything that isn't a program slug lands
+// on "/" rather than building a target out of it.
+function rosterPath(slug: string, sub?: string): string {
+  return programPath(slug, sub ? `roster/${sub}` : "roster") ?? "/";
+}
+
+function str(fd: FormData, key: string): string {
+  return String(fd.get(key) ?? "").trim();
+}
+
+function nullable(fd: FormData, key: string): string | null {
+  return str(fd, key) || null;
+}
+
+// A section-local edit posts ONLY the fields it shows, plus `sparse=1`. Absent
+// means "leave it alone" — correcting a size must not clear a grad year, and
+// deactivating from the Status group must not rewrite the name.
+function isSparse(fd: FormData): boolean {
+  return str(fd, "sparse") === "1";
+}
+
+// Which group of the student page posted, so a save (or a refusal) lands back on
+// it. Allow-listed — the value rides into a URL fragment.
+function sectionHash(fd: FormData): string {
+  const section = str(fd, "section");
+  return isStudentSection(section) ? `#${section}` : "";
+}
 
 // Read the program's configured size keys so `sizes` jsonb only ever holds keys
 // the program defined (architecture-spec §3).
@@ -46,19 +89,53 @@ function parseGradYear(raw: string): number | null {
   return Number.isInteger(n) ? n : null;
 }
 
+// ---- Cross-program resolvers -----------------------------------------------
+
+async function studentInProgram(
+  supabase: SupabaseClient,
+  programId: string,
+  studentId: string,
+): Promise<boolean> {
+  if (!studentId) return false;
+  const { data } = await supabase
+    .from("students")
+    .select("id")
+    .eq("id", studentId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+// The guardian row when it belongs to this program, null otherwise. Returns the
+// email too, because the send path needs it and one read is enough.
+async function guardianInProgram(
+  supabase: SupabaseClient,
+  programId: string,
+  guardianId: string,
+): Promise<{ id: string; email: string | null } | null> {
+  if (!guardianId) return null;
+  const { data } = await supabase
+    .from("guardians")
+    .select("id, email")
+    .eq("id", guardianId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as { id: string; email: string | null } | null) ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Students
 // ---------------------------------------------------------------------------
 
 export async function addStudent(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
-  const first = String(formData.get("first_name") ?? "").trim();
-  const last = String(formData.get("last_name") ?? "").trim();
+  const first = str(formData, "first_name");
+  const last = str(formData, "last_name");
   if (!first || !last) {
-    redirect(`/${slug}/roster?error=missing_name`);
+    redirect(`${rosterPath(slug)}?error=missing_name`);
   }
 
   const supabase = await createClient();
@@ -68,51 +145,65 @@ export async function addStudent(formData: FormData): Promise<void> {
       program_id: programId,
       first_name: first,
       last_name: last,
-      grad_year: parseGradYear(String(formData.get("grad_year") ?? "")),
+      grad_year: parseGradYear(str(formData, "grad_year")),
       status: "active",
     })
     .select("id")
     .single();
 
   if (error || !data) {
-    redirect(`/${slug}/roster?error=save`);
+    redirect(`${rosterPath(slug)}?error=save`);
   }
-  revalidatePath(`/${slug}/roster`);
-  redirect(`/${slug}/roster/${data.id}?saved=1`);
+  revalidatePath(rosterPath(slug));
+  redirect(`${rosterPath(slug, String(data.id))}?saved=1`);
 }
 
+// One action behind the student page's three groups (Profile · Sizes · Status).
+// Each group posts only its own fields plus `sparse=1`, so the fields it does
+// not show survive untouched; a save without `sparse` (nothing renders one
+// today) still writes the whole record, exactly as this action always did.
 export async function updateStudent(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
-  const first = String(formData.get("first_name") ?? "").trim();
-  const last = String(formData.get("last_name") ?? "").trim();
-  const status = String(formData.get("status") ?? "active") as StudentStatus;
-  if (!first || !last || !STUDENT_STATUSES.includes(status)) {
-    redirect(`/${slug}/roster/${studentId}?error=missing_name`);
+  const detail = rosterPath(slug, studentId);
+  const hash = sectionHash(formData);
+  const fail = (code: string): string => `${detail}?error=${code}${hash}`;
+
+  const sparse = isSparse(formData);
+  const sends = (key: string): boolean => !sparse || formData.get(key) !== null;
+
+  const first = str(formData, "first_name");
+  const last = str(formData, "last_name");
+  const status = str(formData, "status") as StudentStatus;
+  if (sends("first_name") && !first) redirect(fail("missing_name"));
+  if (sends("last_name") && !last) redirect(fail("missing_name"));
+  if (sends("status") && !STUDENT_STATUSES.includes(status)) redirect(fail("save"));
+
+  const fields: Record<string, unknown> = {};
+  if (sends("first_name")) fields.first_name = first;
+  if (sends("last_name")) fields.last_name = last;
+  if (sends("grad_year")) fields.grad_year = parseGradYear(str(formData, "grad_year"));
+  if (sends("status")) fields.status = status;
+  // The Sizes group posts `sizes=1` plus one input per configured key, and the
+  // whole map is rewritten from those inputs — a key the program has since
+  // dropped must not survive as a stale value nobody can see or clear.
+  if (!sparse || str(formData, "sizes") === "1") {
+    fields.sizes = readSizes(formData, await programSizeKeys(programId));
   }
 
-  const keys = await programSizeKeys(programId);
   const supabase = await createClient();
   const { error } = await supabase
     .from("students")
-    .update({
-      first_name: first,
-      last_name: last,
-      grad_year: parseGradYear(String(formData.get("grad_year") ?? "")),
-      status,
-      sizes: readSizes(formData, keys),
-    })
+    .update(fields)
     .eq("id", studentId)
     .eq("program_id", programId);
 
-  if (error) {
-    redirect(`/${slug}/roster/${studentId}?error=save`);
-  }
-  revalidatePath(`/${slug}/roster/${studentId}`);
-  redirect(`/${slug}/roster/${studentId}?saved=1`);
+  if (error) redirect(fail("save"));
+  revalidatePath(detail);
+  redirect(`${detail}?saved=1${hash}`);
 }
 
 // Soft delete (§9 invariant 1). NEVER hard-delete — ledger memos and archives
@@ -124,11 +215,12 @@ export async function updateStudent(formData: FormData): Promise<void> {
 //     archived-season guard applies.
 //   * attendance flipped to 'absent' for competitions dated today or later.
 export async function deactivateStudent(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
+  const detail = rosterPath(slug, studentId);
   const supabase = await createClient();
 
   // Release costume assignments (current + future seasons; archived rejected by RLS).
@@ -169,19 +261,20 @@ export async function deactivateStudent(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/roster/${studentId}?error=deactivate`);
+    redirect(`${detail}?error=deactivate#status`);
   }
-  revalidatePath(`/${slug}/roster`);
-  redirect(`/${slug}/roster/${studentId}?deactivated=1`);
+  revalidatePath(rosterPath(slug));
+  redirect(`${detail}?deactivated=1#status`);
 }
 
 // Re-activate an inactive student (no cascade — assignments are re-added by hand).
 export async function reactivateStudent(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
+  const detail = rosterPath(slug, studentId);
   const supabase = await createClient();
   const { error } = await supabase
     .from("students")
@@ -190,25 +283,43 @@ export async function reactivateStudent(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/roster/${studentId}?error=save`);
+    redirect(`${detail}?error=save#status`);
   }
-  revalidatePath(`/${slug}/roster/${studentId}`);
-  redirect(`/${slug}/roster/${studentId}?saved=1`);
+  revalidatePath(detail);
+  redirect(`${detail}?saved=1#status`);
 }
 
 // ---------------------------------------------------------------------------
 // Guardians
 // ---------------------------------------------------------------------------
 
+// Everything a guardian action can refuse lands back on the Guardians group;
+// everything that belongs to ONE row also reopens that row's Edit panel, so the
+// message appears inside the panel that produced it.
+function guardiansFail(slug: string, studentId: string, code: string): string {
+  return `${rosterPath(slug, studentId)}?error=${code}#guardians`;
+}
+
+function guardianFail(
+  slug: string,
+  studentId: string,
+  guardianId: string,
+  code: string,
+): string {
+  return `${rosterPath(slug, studentId)}?error=${code}&edit=${encodeURIComponent(
+    guardianId,
+  )}#${guardianAnchor(guardianId)}`;
+}
+
 export async function addGuardian(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
-  const name = String(formData.get("name") ?? "").trim();
+  const name = str(formData, "name");
   if (!name) {
-    redirect(`/${slug}/roster/${studentId}?error=guardian`);
+    redirect(`${guardiansFail(slug, studentId, "guardian")}`);
   }
 
   const supabase = await createClient();
@@ -218,61 +329,59 @@ export async function addGuardian(formData: FormData): Promise<void> {
   // attaching contact details to them (Constitution I). A miss means the student
   // isn't ours; send staff back to the roster rather than to a page that would
   // not render for them either.
-  const { data: student } = await supabase
-    .from("students")
-    .select("id")
-    .eq("id", studentId)
-    .eq("program_id", programId)
-    .maybeSingle();
-  if (!student) {
-    redirect(`/${slug}/roster?error=student`);
+  if (!(await studentInProgram(supabase, programId, studentId))) {
+    redirect(`${rosterPath(slug)}?error=student`);
   }
 
   const { error } = await supabase.from("guardians").insert({
     program_id: programId,
     student_id: studentId,
     name,
-    email: String(formData.get("email") ?? "").trim() || null,
-    phone: String(formData.get("phone") ?? "").trim() || null,
-    relationship: String(formData.get("relationship") ?? "").trim() || null,
+    email: nullable(formData, "email"),
+    phone: nullable(formData, "phone"),
+    relationship: nullable(formData, "relationship"),
   });
 
   if (error) {
-    redirect(`/${slug}/roster/${studentId}?error=guardian`);
+    redirect(guardiansFail(slug, studentId, "guardian"));
   }
-  revalidatePath(`/${slug}/roster/${studentId}`);
-  redirect(`/${slug}/roster/${studentId}?saved=1`);
+  revalidatePath(rosterPath(slug, studentId));
+  redirect(`${rosterPath(slug, studentId)}?saved=1#guardians`);
 }
 
 export async function updateGuardian(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
-  const guardianId = String(formData.get("guardianId") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
+  const guardianId = str(formData, "guardianId");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
-  const name = String(formData.get("name") ?? "").trim();
+  const name = str(formData, "name");
   if (!name) {
-    redirect(`/${slug}/roster/${studentId}?error=guardian`);
+    redirect(guardianFail(slug, studentId, guardianId, "guardian"));
   }
 
   const supabase = await createClient();
+  if (!(await guardianInProgram(supabase, programId, guardianId))) {
+    redirect(guardiansFail(slug, studentId, "guardian_gone"));
+  }
+
   const { error } = await supabase
     .from("guardians")
     .update({
       name,
-      email: String(formData.get("email") ?? "").trim() || null,
-      phone: String(formData.get("phone") ?? "").trim() || null,
-      relationship: String(formData.get("relationship") ?? "").trim() || null,
+      email: nullable(formData, "email"),
+      phone: nullable(formData, "phone"),
+      relationship: nullable(formData, "relationship"),
     })
     .eq("id", guardianId)
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/roster/${studentId}?error=guardian`);
+    redirect(guardianFail(slug, studentId, guardianId, "guardian"));
   }
-  revalidatePath(`/${slug}/roster/${studentId}`);
-  redirect(`/${slug}/roster/${studentId}?saved=1`);
+  revalidatePath(rosterPath(slug, studentId));
+  redirect(`${rosterPath(slug, studentId)}?saved=1#guardians`);
 }
 
 // Resubscribe / clear a deliverability flag: flip a guardian's email_status back
@@ -281,13 +390,17 @@ export async function updateGuardian(formData: FormData): Promise<void> {
 // reverse — coherent with the Resend webhook (which sets bounced/unsubscribed)
 // and the guardian unsubscribe page. Director/admin only.
 export async function resetGuardianEmailStatus(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
-  const guardianId = String(formData.get("guardianId") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
+  const guardianId = str(formData, "guardianId");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
   const supabase = await createClient();
+  if (!(await guardianInProgram(supabase, programId, guardianId))) {
+    redirect(guardiansFail(slug, studentId, "guardian_gone"));
+  }
+
   const { error } = await supabase
     .from("guardians")
     .update({ email_status: "ok" })
@@ -295,20 +408,24 @@ export async function resetGuardianEmailStatus(formData: FormData): Promise<void
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/roster/${studentId}?error=guardian#guardians`);
+    redirect(guardianFail(slug, studentId, guardianId, "guardian"));
   }
-  revalidatePath(`/${slug}/roster/${studentId}`);
-  redirect(`/${slug}/roster/${studentId}?saved=1#guardians`);
+  revalidatePath(rosterPath(slug, studentId));
+  redirect(`${rosterPath(slug, studentId)}?saved=1#guardians`);
 }
 
 export async function removeGuardian(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
-  const guardianId = String(formData.get("guardianId") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
+  const guardianId = str(formData, "guardianId");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
   const supabase = await createClient();
+  if (!(await guardianInProgram(supabase, programId, guardianId))) {
+    redirect(guardiansFail(slug, studentId, "guardian_gone"));
+  }
+
   const { error } = await supabase
     .from("guardians")
     .delete()
@@ -316,96 +433,115 @@ export async function removeGuardian(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`/${slug}/roster/${studentId}?error=guardian`);
+    redirect(guardianFail(slug, studentId, guardianId, "guardian"));
   }
-  revalidatePath(`/${slug}/roster/${studentId}`);
-  redirect(`/${slug}/roster/${studentId}?saved=1`);
+  revalidatePath(rosterPath(slug, studentId));
+  redirect(`${rosterPath(slug, studentId)}?saved=1#guardians`);
 }
 
 // ---------------------------------------------------------------------------
-// Guardian tokenized links (§8a) — rotate (show once) + email to family
+// Guardian tokenized links (§8a)
 // ---------------------------------------------------------------------------
 
-// ROTATE: mint a fresh guardian token AND revoke any prior one, handing the raw
-// token back to the page for a one-time on-screen display so staff can copy the
-// three canonical links. Rotating BREAKS every previously-sent link for this
-// family — use "Email links" for the everyday case. The raw token is only
-// knowable at mint time (hash-only at rest), so it rides back in the redirect.
-// Director/admin only (guardian_tokens write gate). guardianId comes off the
-// form; mintGuardianToken resolves it inside this program, so a tampered id
-// mints nothing and lands on "couldn't generate links" instead of stamping a
-// token row onto another program's family.
-export async function resendGuardianLinks(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
-  const guardianId = String(formData.get("guardianId") ?? "");
-  await requireRole(programId, ROSTER_WRITE_ROLES);
-
-  const supabase = await createClient();
-  const result = await rotateGuardianToken(supabase, { programId, guardianId });
-  if ("error" in result) {
-    redirect(`/${slug}/roster/${studentId}?error=links`);
-  }
-
-  revalidatePath(`/${slug}/roster/${studentId}`);
-  redirect(
-    `/${slug}/roster/${studentId}?linked=${guardianId}&token=${encodeURIComponent(result.raw)}#guardians`,
-  );
-}
-
-// EMAIL LINKS TO THIS FAMILY: mint a FRESH token (append-only — earlier links
-// keep working) and email the three parent links to this one guardian. This is
-// the everyday "get the family into the system" path — no rotation, so a family
-// that already has a working link keeps it. Graceful no-key mode: when email
-// isn't configured the send is 'skipped_no_key' and the page tells staff to copy
-// the links instead. Director/admin only.
-export async function emailGuardianLinks(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
-  const studentId = String(formData.get("studentId") ?? "");
-  const guardianId = String(formData.get("guardianId") ?? "");
-  await requireRole(programId, ROSTER_WRITE_ROLES);
-
-  const supabase = await createClient();
-
-  const { data: g } = await supabase
-    .from("guardians")
-    .select("email")
-    .eq("id", guardianId)
-    .eq("program_id", programId)
-    .maybeSingle();
-  const email = ((g as { email: string | null } | null)?.email ?? "").trim();
-  if (!email) {
-    redirect(`/${slug}/roster/${studentId}?error=email_missing#guardians`);
-  }
-
-  const { data: prog } = await supabase
+async function programName(
+  supabase: SupabaseClient,
+  programId: string,
+): Promise<string> {
+  const { data } = await supabase
     .from("programs")
     .select("name")
     .eq("id", programId)
     .maybeSingle();
-  const programName = (prog as { name: string } | null)?.name ?? "";
+  return (data as { name: string } | null)?.name ?? "";
+}
+
+// SEND FAMILY LINKS — the one per-guardian send, and the row's first affordance.
+// It mints a FRESH token (append-only, so links from earlier emails keep
+// working) and emails the three parent links to this one guardian. This is the
+// everyday "get the family into the system" path. Graceful no-key mode: when
+// email isn't configured the send is 'skipped_no_key' and the page shows the
+// freshly-minted links so staff can copy them into a message instead.
+// Director/admin only.
+//
+// Wave 6 folded the row's two send buttons into this one. `emailGuardianLinks`
+// (this behaviour) and `resendGuardianLinks` (revoke-then-mint) read as
+// synonyms in the actions file and on the row, so the everyday send now owns the
+// only send label and the revoke path moved inside Edit under a name that isn't
+// one — resetFamilyLinks, below. Neither body changed: what is minted, what is
+// revoked, and what the parent surface can resolve are exactly what they were.
+export async function sendFamilyLinks(formData: FormData): Promise<void> {
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
+  const guardianId = str(formData, "guardianId");
+  await requireRole(programId, ROSTER_WRITE_ROLES);
+
+  const supabase = await createClient();
+  const guardian = await guardianInProgram(supabase, programId, guardianId);
+  if (!guardian) {
+    redirect(guardiansFail(slug, studentId, "guardian_gone"));
+  }
+
+  const email = (guardian.email ?? "").trim();
+  if (!email) {
+    redirect(guardianFail(slug, studentId, guardianId, "email_missing"));
+  }
 
   const { send, raw } = await sendGuardianLinksEmail(supabase, {
     programId,
     guardianId,
     email,
-    programName,
+    programName: await programName(supabase, programId),
   });
 
-  revalidatePath(`/${slug}/roster/${studentId}`);
+  const detail = rosterPath(slug, studentId);
+  revalidatePath(detail);
   if (send.status === "sent") {
-    redirect(`/${slug}/roster/${studentId}?emailed=ok#guardians`);
+    redirect(`${detail}?emailed=ok#guardians`);
   }
   if (send.status === "skipped_no_key" && raw) {
     // No mail provider — surface the freshly-minted (append-only) links so staff
     // can copy them into a message. These links WORK; earlier links still work too.
     redirect(
-      `/${slug}/roster/${studentId}?emailed=nokey&linked=${guardianId}&token=${encodeURIComponent(raw)}#guardians`,
+      `${detail}?emailed=nokey&token=${encodeURIComponent(raw)}#guardians`,
     );
   }
-  redirect(`/${slug}/roster/${studentId}?error=email#guardians`);
+  redirect(guardianFail(slug, studentId, guardianId, "email"));
+}
+
+// RESET THIS FAMILY'S LINKS — mint a fresh guardian token AND revoke every prior
+// one, handing the raw token back to the page for a one-time on-screen display
+// so staff can copy the three canonical links. This BREAKS every link previously
+// sent to this family, which is the point: it is the answer to "an email was
+// forwarded outside the family". It is not a send, so it does not sit on the row
+// next to one — it lives inside Edit behind a confirm.
+//
+// The raw token is only knowable at mint time (hash-only at rest), so it rides
+// back in the redirect. Director/admin only (guardian_tokens write gate).
+// guardianId comes off the form; it is resolved in-program here and again inside
+// mintGuardianToken, so a tampered id mints nothing.
+export async function resetFamilyLinks(formData: FormData): Promise<void> {
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
+  const studentId = str(formData, "studentId");
+  const guardianId = str(formData, "guardianId");
+  await requireRole(programId, ROSTER_WRITE_ROLES);
+
+  const supabase = await createClient();
+  if (!(await guardianInProgram(supabase, programId, guardianId))) {
+    redirect(guardiansFail(slug, studentId, "guardian_gone"));
+  }
+
+  const result = await rotateGuardianToken(supabase, { programId, guardianId });
+  if ("error" in result) {
+    redirect(guardianFail(slug, studentId, guardianId, "links"));
+  }
+
+  const detail = rosterPath(slug, studentId);
+  revalidatePath(detail);
+  redirect(
+    `${detail}?token=${encodeURIComponent(result.raw)}#guardians`,
+  );
 }
 
 // BULK EMAIL LINKS TO ALL FAMILIES: for every guardian with email_status='ok'
@@ -413,18 +549,12 @@ export async function emailGuardianLinks(formData: FormData): Promise<void> {
 // fresh token and email the three links. Reports sent / skipped / failed counts.
 // No-key mode reports every recipient as skipped. Director/admin only.
 export async function emailAllGuardianLinks(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
   const supabase = await createClient();
-
-  const { data: prog } = await supabase
-    .from("programs")
-    .select("name")
-    .eq("id", programId)
-    .maybeSingle();
-  const programName = (prog as { name: string } | null)?.name ?? "";
+  const name = await programName(supabase, programId);
 
   const recipients = await computeRecipients(supabase, {
     programId,
@@ -440,15 +570,15 @@ export async function emailAllGuardianLinks(formData: FormData): Promise<void> {
       programId,
       guardianId: r.guardianId,
       email: r.email,
-      programName,
+      programName: name,
     });
     if (send.status === "sent") sent++;
     else if (send.status === "skipped_no_key") skipped++;
     else failed++;
   }
 
-  revalidatePath(`/${slug}/roster`);
-  redirect(`/${slug}/roster?bulk=${sent}.${skipped}.${failed}`);
+  revalidatePath(rosterPath(slug));
+  redirect(`${rosterPath(slug)}?bulk=${sent}.${skipped}.${failed}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -458,10 +588,11 @@ export async function emailAllGuardianLinks(formData: FormData): Promise<void> {
 // Store the program's size keys. Input is a comma/newline-separated list; keys
 // are normalized to lowercase alphanumeric+underscore, de-duped, order kept.
 export async function updateSizeFields(formData: FormData): Promise<void> {
-  const programId = String(formData.get("programId") ?? "");
-  const slug = String(formData.get("slug") ?? "");
+  const programId = str(formData, "programId");
+  const slug = str(formData, "slug");
   await requireRole(programId, ROSTER_WRITE_ROLES);
 
+  const settings = rosterPath(slug, "settings");
   const raw = String(formData.get("size_fields") ?? "");
   const seen = new Set<string>();
   const keys: string[] = [];
@@ -473,7 +604,7 @@ export async function updateSizeFields(formData: FormData): Promise<void> {
     }
   }
   if (keys.length === 0) {
-    redirect(`/${slug}/roster/settings?error=empty`);
+    redirect(`${settings}?error=empty`);
   }
 
   const supabase = await createClient();
@@ -483,8 +614,8 @@ export async function updateSizeFields(formData: FormData): Promise<void> {
     .eq("id", programId);
 
   if (error) {
-    redirect(`/${slug}/roster/settings?error=save`);
+    redirect(`${settings}?error=save`);
   }
-  revalidatePath(`/${slug}/roster/settings`);
-  redirect(`/${slug}/roster/settings?saved=1`);
+  revalidatePath(settings);
+  redirect(`${settings}?saved=1`);
 }
