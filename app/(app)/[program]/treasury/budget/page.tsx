@@ -15,61 +15,57 @@ import { TreasuryTabs } from "../TreasuryTabs";
 import { IntroStrip, HelpDot } from "../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
 import {
-  createBudget,
-  activateBudget,
-  seedTemplate,
-  addCategory,
-  updateCategory,
-  deleteCategory,
-  addLine,
-  updateLine,
-  deleteLine,
-} from "./actions";
+  BudgetCategory,
+  LINE_EDIT_PREFIX,
+  type CategoryRow,
+  type LineRow,
+} from "./BudgetLines";
+import { createBudget, activateBudget, seedTemplate, addCategory } from "./actions";
 
 // Budget builder (T018). Create a budget for the active season, define custom
 // categories (income|expense) and lines (planned dollars → cents), and seed the
 // §7 common structure with one click when empty. Reads gate on TREASURY_ROLES;
 // writes gate on treasurer only (canWrite) — board/director/admin see the whole
-// budget but every control is hidden for them.
+// budget but every control is hidden for them. The per-category table, its line
+// popovers, and the two category disclosures live in BudgetLines.
 
 interface BudgetRow {
   id: string;
   name: string;
   status: "draft" | "active" | "closed";
 }
-interface CategoryRow {
-  id: string;
-  name: string;
-  direction: CategoryDirection;
-  sort_order: number;
-}
-interface LineRow {
-  id: string;
-  category_id: string;
-  name: string;
-  planned_cents: number;
-  sort_order: number;
-}
 
+// Page-level messages. `line` and `line_in_use` belong to one line, so they
+// travel with `?edit=line-<id>` and render inside that row's popover instead.
 const ERR: Record<string, string> = {
   budget: "Could not save the budget. Check the name and try again.",
   active_exists:
     "Another budget is already active for this season. Close it before activating a new one.",
   category: "A category needs a name and a direction (income or expense).",
-  line: "A line needs a name and a valid planned amount (e.g. 1,234.56).",
   cat_in_use: "Remove this category's lines before deleting it.",
-  line_in_use:
-    "This line has ledger entries tagged to it. Re-tag those entries (void + re-enter) before deleting the line.",
   not_empty:
     "This budget already has categories — the template only seeds an empty budget.",
 };
+
+const LINE_ERR: Record<string, string> = {
+  line: "A line needs a name and a valid planned amount (e.g. 1,234.56).",
+  line_in_use:
+    "This line has ledger entries tagged to it. Re-tag those entries (void + redo) before deleting the line.",
+};
+
+function message(map: Record<string, string>, code: string | null): string | null {
+  if (!code) return null;
+  return Object.hasOwn(map, code) ? map[code] : null;
+}
 
 export default async function BudgetPage({
   params,
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ saved?: string; error?: string; help?: string }>;
+  // Next hands back an ARRAY for a duplicated param, so every read goes through
+  // `one()` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season, flags, membership, isSupport } =
@@ -86,7 +82,12 @@ export default async function BudgetPage({
     );
   }
   const canWrite = TREASURY_WRITE_ROLES.includes(role);
-  const { saved, error, help } = await searchParams;
+
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
 
   const supabase = await createClient();
 
@@ -140,16 +141,19 @@ export default async function BudgetPage({
     );
   }
 
-  const linesByCat = new Map<string, LineRow[]>();
-  for (const l of lines) {
-    const arr = linesByCat.get(l.category_id) ?? [];
-    arr.push(l);
-    linesByCat.set(l.category_id, arr);
-  }
-
   const incomeCats = categories.filter((c) => c.direction === "income");
   const expenseCats = categories.filter((c) => c.direction === "expense");
   const isEmpty = categories.length === 0;
+
+  // A line's edit popover reopens on `?edit=line-<id>` carrying its own message
+  // (the Wave-2 section-local error contract); everything else is page-level.
+  const errorCode = one("error");
+  const openKey = canWrite ? one("edit") : null;
+  const lineError = openKey?.startsWith(LINE_EDIT_PREFIX)
+    ? message(LINE_ERR, errorCode)
+    : null;
+  const pageError = lineError ? null : message(ERR, errorCode);
+  const unknownError = errorCode && !lineError && !pageError;
 
   // Fair-share guide (display-only): planned expenses ÷ students in the active
   // season. Derived purely — no inputs, no persistence. The student count is one
@@ -193,7 +197,7 @@ export default async function BudgetPage({
           programId={program.id}
           selfPath={`/${slug}/treasury/budget`}
           guideState={guideState}
-          help={help === "1"}
+          help={one("help") === "1"}
           canWrite={canWrite}
         />
       )}
@@ -203,9 +207,9 @@ export default async function BudgetPage({
         per season.
       </p>
 
-      {saved && <p className="alert-ok">Saved.</p>}
-      {error && (
-        <p className="alert-error">{ERR[error] ?? "Something went wrong."}</p>
+      {one("saved") && <p className="alert-ok">Saved.</p>}
+      {(pageError || unknownError) && (
+        <p className="alert-error">{pageError ?? "Something went wrong."}</p>
       )}
 
       {!season && (
@@ -299,232 +303,18 @@ export default async function BudgetPage({
                 {cats.length === 0 && (
                   <p className="muted">No {dir} categories yet.</p>
                 )}
-                {cats.map((cat) => {
-                  const catLines = linesByCat.get(cat.id) ?? [];
-                  const subtotal = catLines.reduce(
-                    (s, l) => s + l.planned_cents,
-                    0,
-                  );
-                  return (
-                    <div key={cat.id} className="stack">
-                      <div className="row-inline">
-                        <h3 style={{ margin: 0 }}>{cat.name}</h3>
-                        <span className="num muted">
-                          planned {formatCents(subtotal)}
-                        </span>
-                      </div>
-
-                      <table className="members">
-                        <thead>
-                          <tr>
-                            <th>Line</th>
-                            <th className="num">Planned</th>
-                            {canWrite && <th></th>}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {catLines.map((l) =>
-                            canWrite ? (
-                              <tr key={l.id}>
-                                <td colSpan={2}>
-                                  <form
-                                    action={updateLine}
-                                    className="row-inline"
-                                    id={`edit-line-${l.id}`}
-                                  >
-                                    <input
-                                      type="hidden"
-                                      name="programId"
-                                      value={program.id}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="slug"
-                                      value={slug}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="lineId"
-                                      value={l.id}
-                                    />
-                                    <input
-                                      type="text"
-                                      name="name"
-                                      defaultValue={l.name}
-                                      required
-                                      aria-label="Line name"
-                                    />
-                                    <input
-                                      type="text"
-                                      name="planned"
-                                      inputMode="decimal"
-                                      defaultValue={(
-                                        l.planned_cents / 100
-                                      ).toFixed(2)}
-                                      aria-label="Planned dollars"
-                                    />
-                                    <input
-                                      type="number"
-                                      name="sort_order"
-                                      defaultValue={l.sort_order}
-                                      aria-label="Sort order"
-                                      style={{ width: "4rem" }}
-                                    />
-                                    <button type="submit" className="secondary">
-                                      Save
-                                    </button>
-                                  </form>
-                                </td>
-                                <td>
-                                  <form action={deleteLine}>
-                                    <input
-                                      type="hidden"
-                                      name="programId"
-                                      value={program.id}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="slug"
-                                      value={slug}
-                                    />
-                                    <input
-                                      type="hidden"
-                                      name="lineId"
-                                      value={l.id}
-                                    />
-                                    <button
-                                      type="submit"
-                                      className="linklike danger"
-                                    >
-                                      Delete
-                                    </button>
-                                  </form>
-                                </td>
-                              </tr>
-                            ) : (
-                              <tr key={l.id}>
-                                <td>{l.name}</td>
-                                <td className="num">
-                                  {formatCents(l.planned_cents)}
-                                </td>
-                              </tr>
-                            ),
-                          )}
-                          {catLines.length === 0 && (
-                            <tr>
-                              <td colSpan={canWrite ? 3 : 2} className="muted">
-                                No lines yet.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-
-                      {canWrite && (
-                        <details>
-                          <summary>Add line · category settings</summary>
-                          <div className="stack">
-                            <form action={addLine} className="row-inline">
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="categoryId"
-                                value={cat.id}
-                              />
-                              <label>
-                                New line
-                                <input type="text" name="name" required />
-                              </label>
-                              <label>
-                                Planned $
-                                <input
-                                  type="text"
-                                  name="planned"
-                                  inputMode="decimal"
-                                  placeholder="0.00"
-                                />
-                              </label>
-                              <button type="submit">Add line</button>
-                            </form>
-
-                            <form
-                              action={updateCategory}
-                              className="row-inline"
-                            >
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="categoryId"
-                                value={cat.id}
-                              />
-                              <label>
-                                Rename
-                                <input
-                                  type="text"
-                                  name="name"
-                                  defaultValue={cat.name}
-                                  required
-                                />
-                              </label>
-                              <label>
-                                Direction
-                                <select
-                                  name="direction"
-                                  defaultValue={cat.direction}
-                                >
-                                  {CATEGORY_DIRECTIONS.map((d) => (
-                                    <option key={d} value={d}>
-                                      {CATEGORY_DIRECTION_LABELS[d]}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                Sort
-                                <input
-                                  type="number"
-                                  name="sort_order"
-                                  defaultValue={cat.sort_order}
-                                  style={{ width: "4rem" }}
-                                />
-                              </label>
-                              <button type="submit" className="secondary">
-                                Save category
-                              </button>
-                            </form>
-
-                            <form action={deleteCategory}>
-                              <input
-                                type="hidden"
-                                name="programId"
-                                value={program.id}
-                              />
-                              <input type="hidden" name="slug" value={slug} />
-                              <input
-                                type="hidden"
-                                name="categoryId"
-                                value={cat.id}
-                              />
-                              <button type="submit" className="linklike danger">
-                                Delete category “{cat.name}”
-                              </button>
-                            </form>
-                          </div>
-                        </details>
-                      )}
-                    </div>
-                  );
-                })}
+                {cats.map((cat) => (
+                  <BudgetCategory
+                    key={cat.id}
+                    programId={program.id}
+                    slug={slug}
+                    cat={cat}
+                    lines={lines.filter((l) => l.category_id === cat.id)}
+                    canWrite={canWrite}
+                    openKey={openKey}
+                    error={lineError}
+                  />
+                ))}
               </div>
             );
           })}
@@ -546,7 +336,7 @@ export default async function BudgetPage({
                   />
                 </label>
                 <label>
-                  Direction
+                  Income or expense
                   <select name="direction" defaultValue="expense">
                     {CATEGORY_DIRECTIONS.map((d) => (
                       <option key={d} value={d}>
@@ -556,7 +346,7 @@ export default async function BudgetPage({
                   </select>
                 </label>
                 <label>
-                  Sort
+                  Order
                   <input
                     type="number"
                     name="sort_order"

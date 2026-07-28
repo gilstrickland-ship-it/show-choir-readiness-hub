@@ -22,6 +22,17 @@ function budgetPath(slug: string): string {
   return `/${slug}/treasury/budget`;
 }
 
+// A failure that belongs to ONE line goes back to that line: `?edit=line-<id>`
+// reopens its edit popover and the page renders the message inside it, rather
+// than at the top of a budget that can run several screens (the Wave-2
+// section-local error contract). Without a line id there is nothing to reopen,
+// so it falls back to the page-level message.
+function lineErrorPath(slug: string, lineId: string, code: string): string {
+  if (!lineId) return `${budgetPath(slug)}?error=${code}`;
+  const key = `line-${encodeURIComponent(lineId)}`;
+  return `${budgetPath(slug)}?edit=${key}&error=${code}#${key}`;
+}
+
 function parseSortOrder(raw: string): number {
   const n = Number(String(raw).trim());
   return Number.isInteger(n) ? n : 0;
@@ -309,7 +320,7 @@ export async function updateLine(formData: FormData): Promise<void> {
   const plannedRaw = String(formData.get("planned") ?? "").trim();
   const planned = plannedRaw === "" ? 0 : parseDollarsToCents(plannedRaw);
   if (!name || planned === null) {
-    redirect(`${budgetPath(slug)}?error=line`);
+    redirect(lineErrorPath(slug, lineId, "line"));
   }
 
   const supabase = await createClient();
@@ -324,7 +335,7 @@ export async function updateLine(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`${budgetPath(slug)}?error=line`);
+    redirect(lineErrorPath(slug, lineId, "line"));
   }
   revalidatePath(budgetPath(slug));
   redirect(`${budgetPath(slug)}?saved=1`);
@@ -332,7 +343,7 @@ export async function updateLine(formData: FormData): Promise<void> {
 
 // Delete a line. ledger_entries.budget_line_id references it (nullable, no
 // cascade); a line with entries tagged to it raises an FK violation — message
-// the treasurer to re-tag those entries (void + re-enter) first.
+// the treasurer to re-tag those entries (void + redo) first.
 export async function deleteLine(formData: FormData): Promise<void> {
   const programId = String(formData.get("programId") ?? "");
   const slug = String(formData.get("slug") ?? "");
@@ -347,7 +358,7 @@ export async function deleteLine(formData: FormData): Promise<void> {
     .eq("program_id", programId);
 
   if (error) {
-    redirect(`${budgetPath(slug)}?error=line_in_use`);
+    redirect(lineErrorPath(slug, lineId, "line_in_use"));
   }
   revalidatePath(budgetPath(slug));
   redirect(`${budgetPath(slug)}?saved=1`);
