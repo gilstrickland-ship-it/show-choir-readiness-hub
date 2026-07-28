@@ -135,7 +135,7 @@ export default async function EnsemblesPage({
           <tr>
             <th>Ensemble</th>
             <th>Members</th>
-            {canWrite && <th></th>}
+            {canWrite && <th className="table-action"></th>}
           </tr>
         </thead>
         <tbody>

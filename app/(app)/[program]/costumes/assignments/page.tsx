@@ -150,6 +150,24 @@ export default async function AssignmentsPage({
   const drawerError = message(ERR, errorCode);
   const drawerOpen = canWrite && (one("add") === "set" || !!drawerError);
 
+  // Open (or close) ONE row's panel without losing the set picker. `?edit=` is
+  // the same param a refused save comes back on, so the link and the redirect
+  // land in exactly the same place.
+  const rowHref = (pieceId: string | null): string => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      if (typeof value !== "string") continue;
+      if (key === "edit" || key === "error" || key === "saved") continue;
+      if (key === "deleted" || key === "add") continue;
+      qs.set(key, value);
+    }
+    if (pieceId) qs.set("edit", pieceId);
+    const query = qs.toString();
+    return `/${slug}/costumes/assignments${query ? `?${query}` : ""}${
+      pieceId ? `#piece-${pieceId}` : ""
+    }`;
+  };
+
   const eyebrow = season
     ? `${sets.length} set${sets.length === 1 ? "" : "s"} · ${season.label}`
     : "No active season";
@@ -233,6 +251,7 @@ export default async function AssignmentsPage({
           setError={setError}
           openRowId={openRowId}
           rowError={rowError}
+          rowHref={rowHref}
         />
       )}
     </section>
@@ -250,6 +269,7 @@ async function AssignmentGrid({
   setError,
   openRowId,
   rowError,
+  rowHref,
 }: {
   slug: string;
   programId: string;
@@ -261,6 +281,7 @@ async function AssignmentGrid({
   setError: string | null;
   openRowId: string | null;
   rowError: string | null;
+  rowHref: (pieceId: string | null) => string;
 }) {
   const supabase = await createClient();
 
@@ -365,7 +386,7 @@ async function AssignmentGrid({
             <th>Size</th>
             <th>Who wears it</th>
             <th>Alteration</th>
-            {canWrite && <th></th>}
+            {canWrite && <th className="table-action"></th>}
           </tr>
         </thead>
         <tbody>
@@ -385,6 +406,8 @@ async function AssignmentGrid({
                 canWrite={canWrite}
                 open={openRowId === p.id}
                 error={openRowId === p.id ? rowError : null}
+                rowHref={rowHref}
+                columns={canWrite ? 5 : 4}
               />
             );
           })}

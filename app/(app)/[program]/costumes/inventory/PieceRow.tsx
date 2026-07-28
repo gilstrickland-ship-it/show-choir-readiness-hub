@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import {
   PIECE_KINDS,
@@ -13,10 +14,15 @@ import { updatePiece, retirePiece } from "../actions";
 // that was wrong, a piece that moved into a different set, a dress that came
 // back from the cleaners in worse shape than it went (spec 005 US14-2).
 //
-// The panel EXPANDS the row instead of floating over it — the Wave-4 lesson:
-// `table.members` is `display:block; overflow-x:auto` so it can scroll on a
-// phone, and a scroll container clips any absolutely-positioned descendant, so
-// a floating panel came out sliced off at the cell edge.
+// The panel opens in a row of its OWN, spanning every column, rather than inside
+// the last cell (spec 005 T143b). Two lessons stacked: `table.members` is
+// `display:block; overflow-x:auto` so it can scroll on a phone, and a scroll
+// container clips any absolutely-positioned descendant — so a FLOATING panel
+// came out sliced off at the cell edge (Wave 4). Expanding the row fixed the
+// clipping but not the offset: measured at 375px, the panel in this
+// eight-column table opened 492px into a 343px scroll port, which is zero pixels
+// of it on screen. A full-width row beneath, stuck to the left edge of the port,
+// is what puts it where it can be read.
 //
 // The form posts ONLY the five fields it shows, plus `sparse=1`. updatePiece
 // reads that as "leave everything else alone", which is what lets a size fix be
@@ -43,6 +49,8 @@ export function PieceRow({
   canWrite,
   open,
   error,
+  rowHref,
+  columns,
 }: {
   programId: string;
   slug: string;
@@ -54,11 +62,16 @@ export function PieceRow({
   // on it so the message lands inside the panel that produced it.
   open: boolean;
   error: string | null;
+  // This page's URL with one row's panel open (or none), keeping the filters.
+  rowHref: (pieceId: string | null) => string;
+  // How many columns the panel row has to span.
+  columns: number;
 }) {
   const detail = `/${slug}/costumes/pieces/${piece.id}`;
   const retired = piece.condition === "retire";
 
   return (
+    <Fragment>
     <tr>
       <td>
         <Link href={detail}>{piece.label}</Link>
@@ -76,16 +89,25 @@ export function PieceRow({
       <td>{piece.storage_location ?? "—"}</td>
       <td>{setName ?? <span className="muted">—</span>}</td>
       {canWrite && (
-        <td>
-          <details open={open}>
-            <summary
-              className="wardrobe-disclosure"
-              aria-label={`Edit ${piece.label}`}
-            >
-              Edit
-            </summary>
+        <td className="table-action">
+          <Link
+            href={rowHref(open ? null : piece.id)}
+            className="wardrobe-disclosure"
+            aria-expanded={open}
+            aria-controls={open ? `piece-${piece.id}` : undefined}
+            aria-label={`Edit ${piece.label}`}
+          >
+            {open ? "Close" : "Edit"}
+          </Link>
+        </td>
+      )}
+    </tr>
+    {canWrite && open && (
+      <tr className="table-panel-row" id={`piece-${piece.id}`}>
+        <td colSpan={columns}>
+          <div className="table-panel">
             <div className="stack wardrobe-row-panel">
-              <h3 className="drawer-title">Edit piece</h3>
+              <h3 className="drawer-title">Edit {piece.label}</h3>
               {error && <p className="alert-error">{error}</p>}
               <form action={updatePiece} className="stack wardrobe-row-form">
                 <input type="hidden" name="programId" value={programId} />
@@ -172,9 +194,10 @@ export function PieceRow({
                 </form>
               )}
             </div>
-          </details>
+          </div>
         </td>
-      )}
-    </tr>
+      </tr>
+    )}
+    </Fragment>
   );
 }

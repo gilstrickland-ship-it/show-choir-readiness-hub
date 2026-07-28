@@ -9,7 +9,10 @@ import { signIn, USERS, DEMO, ensureMembershipActive } from "./helpers";
 //
 // Locator contract this pins:
 //   * the sub-tab strip is `.subtabs` and holds exactly four items;
-//   * a row's edit control is a <summary> ("Edit" / "Assign" / "Set settings");
+//   * a SECTION's disclosure is a <summary> ("+ Add piece", "More filters",
+//     "Set settings"); a ROW's edit control is a link in `td.table-action`,
+//     because since T143b the panel opens in a row of its own beneath rather
+//     than inside the last cell;
 //   * the quick-change sheet opens with its one-line explainer.
 // A CLOSED <details> still matches getByText, so every assertion below is
 // scoped to a role, a summary, or a class — never bare page text that a
@@ -69,10 +72,35 @@ test.describe("wardrobe (spec 005 Wave W)", () => {
       page.locator("summary", { hasText: "More filters" }),
     ).toBeVisible();
     await expect(page.getByRole("link", { name: "Riser 3" })).toBeVisible();
-    // Every writable row carries its own edit disclosure.
-    expect(
-      await page.locator("table.members summary", { hasText: "Edit" }).count(),
-    ).toBeGreaterThan(0);
+    // Every writable row carries its own edit control, in the pinned action
+    // column.
+    const editLinks = page.locator("table.members td.table-action a", {
+      hasText: "Edit",
+    });
+    expect(await editLinks.count()).toBeGreaterThan(0);
+
+    // T143b: the panel opens in a full-width row beneath, and it opens WHERE IT
+    // CAN BE READ. On a phone this eight-column table scrolls, and the panel
+    // used to open several hundred pixels into that scroll — zero pixels of it
+    // on screen. Assert the geometry, not the markup: the whole panel is inside
+    // the viewport.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await editLinks.first().click();
+    const panel = page.locator("tr.table-panel-row .wardrobe-row-panel").first();
+    await expect(panel).toBeVisible();
+    const box = await panel.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+    // The control that closes it is reachable too — it is pinned to the right
+    // edge of the scroll port rather than sitting off the end of the table.
+    const closeBox = await page
+      .locator("table.members td.table-action a", { hasText: "Close" })
+      .first()
+      .boundingBox();
+    expect(closeBox).not.toBeNull();
+    expect(closeBox!.x + closeBox!.width).toBeLessThanOrEqual(375);
+    await page.setViewportSize({ width: 1280, height: 900 });
 
     // --- Checkout links the printable sheet ---------------------------------
     await page.goto("/demo/costumes/checkout");

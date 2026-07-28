@@ -18,6 +18,7 @@ import { loadGuideState } from "@/lib/guide";
 import {
   BudgetCategory,
   LINE_EDIT_PREFIX,
+  lineEditKey,
   type CategoryRow,
   type LineRow,
 } from "./BudgetLines";
@@ -157,6 +158,21 @@ export default async function BudgetPage({
   // in the wrong place. Those fail OPEN to the page banner.
   const errorCode = one("error");
   const openKey = canWrite ? one("edit") : null;
+  // Open (or close) ONE line's panel. `?edit=` is the same param a refused save
+  // comes back on, so the link and the redirect land in exactly the same place.
+  const rowHref = (lineId: string | null): string => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      if (typeof value !== "string") continue;
+      if (key === "edit" || key === "error" || key === "saved") continue;
+      qs.set(key, value);
+    }
+    if (lineId) qs.set("edit", lineEditKey(lineId));
+    const query = qs.toString();
+    return `/${slug}/treasury/budget${query ? `?${query}` : ""}${
+      lineId ? `#${lineEditKey(lineId)}` : ""
+    }`;
+  };
   const openLineId = openKey?.startsWith(LINE_EDIT_PREFIX)
     ? openKey.slice(LINE_EDIT_PREFIX.length)
     : null;
@@ -324,6 +340,7 @@ export default async function BudgetPage({
                     lines={lines.filter((l) => l.category_id === cat.id)}
                     canWrite={canWrite}
                     openKey={openKey}
+                    rowHref={rowHref}
                     error={lineError}
                   />
                 ))}

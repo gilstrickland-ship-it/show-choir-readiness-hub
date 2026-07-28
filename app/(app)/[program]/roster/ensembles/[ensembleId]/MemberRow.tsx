@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import {
   MEMBER_ROLES,
@@ -52,7 +53,10 @@ export function MemberRow({
   const roleLabel =
     MEMBER_ROLE_LABELS[member.role as MemberRole] ?? member.role;
 
+  const panelId = `${anchor}-panel`;
+
   return (
+    <Fragment>
     <tr id={anchor}>
       <td>
         <Link href={`/${slug}/roster/${member.student_id}`}>{name}</Link>
@@ -63,11 +67,23 @@ export function MemberRow({
       <td>{roleLabel}</td>
       <td>{member.voice_part ?? <span className="muted">—</span>}</td>
       {canWrite && (
-        <td>
-          <details open={open}>
-            <summary className="people-disclosure" aria-label={`Edit ${name}`}>
-              Edit
-            </summary>
+        <td className="table-action">
+          <Link
+            href={open ? `${page}#${anchor}` : `${page}?edit=${member.id}#${anchor}`}
+            className="people-disclosure"
+            aria-expanded={open}
+            aria-controls={open ? panelId : undefined}
+            aria-label={`Edit ${name}`}
+          >
+            {open ? "Close" : "Edit"}
+          </Link>
+        </td>
+      )}
+    </tr>
+    {canWrite && open && (
+      <tr className="table-panel-row" id={panelId}>
+        <td colSpan={4}>
+          <div className="table-panel">
             <div className="stack people-row-panel">
               <h3 className="drawer-title">Edit placement</h3>
               {error && <p className="alert-error">{error}</p>}
@@ -133,9 +149,10 @@ export function MemberRow({
                 )}
               </div>
             </div>
-          </details>
+          </div>
         </td>
-      )}
-    </tr>
+      </tr>
+    )}
+    </Fragment>
   );
 }

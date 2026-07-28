@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { ensembleAnchor } from "@/lib/roster/ensembles";
 import { updateEnsemble, deleteEnsemble } from "./actions";
@@ -7,10 +8,12 @@ import { updateEnsemble, deleteEnsemble } from "./actions";
 // in the row with a Save beside them, and Delete sat one tab-stop away as a bare
 // button — a mis-tap on a phone deleted a group.
 //
-// The panel EXPANDS the row rather than floating over it (the Wave-4 lesson):
+// The panel opens in a row of its OWN, spanning every column (spec 005 T143b).
 // `table.members` is `display:block; overflow-x:auto`, and a scroll container
-// clips any absolutely-positioned descendant. Delete lives inside the panel,
-// last, behind a confirm.
+// clips any absolutely-positioned descendant, so a FLOATING panel came out
+// sliced off at the cell edge (Wave 4); expanding the row fixed that but still
+// opened the panel a quarter of the way off a 375px screen, because it opened
+// inside the last cell. Delete lives inside the panel, last, behind a confirm.
 
 export interface EnsembleListRow {
   id: string;
@@ -45,7 +48,10 @@ export function EnsembleRow({
   const list = `/${slug}/roster/ensembles`;
   const members = `${list}/${ensemble.id}`;
 
+  const panelId = `${anchor}-panel`;
+
   return (
+    <Fragment>
     <tr id={anchor}>
       <td>
         {seasonLabel ? <Link href={members}>{ensemble.name}</Link> : ensemble.name}
@@ -61,14 +67,23 @@ export function EnsembleRow({
         )}
       </td>
       {canWrite && (
-        <td>
-          <details open={open}>
-            <summary
-              className="people-disclosure"
-              aria-label={`Edit ${ensemble.name}`}
-            >
-              Edit
-            </summary>
+        <td className="table-action">
+          <Link
+            href={open ? `${list}#${anchor}` : `${list}?edit=${ensemble.id}#${anchor}`}
+            className="people-disclosure"
+            aria-expanded={open}
+            aria-controls={open ? panelId : undefined}
+            aria-label={`Edit ${ensemble.name}`}
+          >
+            {open ? "Close" : "Edit"}
+          </Link>
+        </td>
+      )}
+    </tr>
+    {canWrite && open && (
+      <tr className="table-panel-row" id={panelId}>
+        <td colSpan={3}>
+          <div className="table-panel">
             <div className="stack people-row-panel">
               <h3 className="drawer-title">Edit ensemble</h3>
               {error && <p className="alert-error">{error}</p>}
@@ -134,9 +149,10 @@ export function EnsembleRow({
                 )}
               </div>
             </div>
-          </details>
+          </div>
         </td>
-      )}
-    </tr>
+      </tr>
+    )}
+    </Fragment>
   );
 }

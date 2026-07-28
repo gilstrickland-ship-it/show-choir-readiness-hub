@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import {
   formatCents,
@@ -6,6 +7,7 @@ import {
   type LedgerPageRange,
 } from "@/lib/treasury";
 import { voidEntry, categorizeEntry } from "./actions";
+import { entryAnchor } from "./flash";
 import { LineSelect, optionName, type TagOptions } from "./shared";
 
 // The ledger itself, plus the one correction affordance (spec 005 US8-2). The
@@ -18,9 +20,17 @@ import { LineSelect, optionName, type TagOptions } from "./shared";
 // point (Constitution V) and is why filing an uncategorized row is also a void
 // plus a fresh row, said plainly on the form.
 //
-// The popover opens from `?edit=<entryId>`, so a failed void or a failed filing
+// The panel opens from `?edit=<entryId>`, so a failed void or a failed filing
 // comes back with its message inside the row that produced it (the Wave-2
 // section-local error contract) instead of at the top of a long list.
+//
+// It opens in a row of its OWN, spanning every column, rather than inside the
+// last cell (spec 005 T143b). Measured at 375px: in the last cell of this
+// seven-column table the panel landed 502px into a 343px scroll port — zero
+// pixels of it on screen, on the surface where a message about a refused void
+// has to be read. The trigger moved with it: it is a link that sets `?edit=`,
+// which is the same URL a refused write already comes back on, so opening a
+// panel and returning to one after a failure are now one path, not two.
 
 export interface EntryRow {
   id: string;
@@ -49,6 +59,7 @@ export function LedgerTable({
   error,
   range,
   pageHref,
+  rowHref,
 }: {
   programId: string;
   slug: string;
@@ -66,6 +77,10 @@ export function LedgerTable({
   error: string | null;
   range: LedgerPageRange;
   pageHref: (page: number) => string;
+  // This page's URL with one row's panel open (or none), keeping every filter
+  // and the current page. Built by the page — the only thing that knows what
+  // the filters are.
+  rowHref: (entryId: string | null) => string;
 }) {
   const columns = 5 + (showBalance ? 1 : 0) + (canWrite ? 1 : 0);
   return (
@@ -79,7 +94,7 @@ export function LedgerTable({
           <th>Paid to / from · memo</th>
           <th>Receipt</th>
           {showBalance && <th className="right">Balance</th>}
-          {canWrite && <th></th>}
+          {canWrite && <th className="table-action"></th>}
         </tr>
       </thead>
       <tbody>
@@ -96,8 +111,10 @@ export function LedgerTable({
             : uncategorized
               ? "ledger-uncat"
               : undefined;
+          const open = canWrite && !voided && openId === e.id;
           return (
-            <tr key={e.id} className={rowClass}>
+            <Fragment key={e.id}>
+            <tr className={rowClass}>
               <td>{formatDateOnly(e.entry_date)}</td>
               <td className="right">
                 <span
@@ -154,25 +171,42 @@ export function LedgerTable({
                 </td>
               )}
               {canWrite && (
-                <td>
+                <td className="table-action">
                   {voided ? (
                     <span className="muted" title={e.void_reason ?? undefined}>
                       voided
                     </span>
                   ) : (
+                    <Link
+                      href={rowHref(open ? null : e.id)}
+                      className="money-disclosure"
+                      aria-expanded={open}
+                      aria-controls={open ? entryAnchor(e.id) : undefined}
+                      aria-label={`Fix the ${formatDateOnly(e.entry_date)} entry for ${formatCents(e.amount_cents)}`}
+                    >
+                      {open ? "Close" : "Fix this entry"}
+                    </Link>
+                  )}
+                </td>
+              )}
+            </tr>
+            {open && (
+              <tr className="table-panel-row" id={entryAnchor(e.id)}>
+                <td colSpan={columns}>
+                  <div className="table-panel">
                     <EntryFix
                       programId={programId}
                       slug={slug}
                       entry={e}
                       options={options}
                       uncategorized={uncategorized}
-                      open={openId === e.id}
-                      error={openId === e.id ? error : null}
+                      error={error}
                     />
-                  )}
+                  </div>
                 </td>
-              )}
-            </tr>
+              </tr>
+            )}
+            </Fragment>
           );
         })}
         {entries.length === 0 && (
@@ -235,7 +269,8 @@ function LedgerPager({
   );
 }
 
-// The row's own correction popover. Uncategorized rows lead with the filing
+// The row's own correction panel — rendered only when its row is the open one,
+// in the full-width row beneath it. Uncategorized rows lead with the filing
 // control, because that is the follow-up the Uncategorized nudge sent them here
 // for — done in place, on the row they were already looking at.
 function EntryFix({
@@ -244,7 +279,6 @@ function EntryFix({
   entry,
   options,
   uncategorized,
-  open,
   error,
 }: {
   programId: string;
@@ -252,19 +286,14 @@ function EntryFix({
   entry: EntryRow;
   options: TagOptions;
   uncategorized: boolean;
-  open: boolean;
   error: string | null;
 }) {
   return (
-    <details id={`fix-${entry.id}`} open={open}>
-      <summary
-        className="money-disclosure"
-        aria-label={`Fix the ${formatDateOnly(entry.entry_date)} entry for ${formatCents(entry.amount_cents)}`}
-      >
-        Fix this entry
-      </summary>
       <div className="stack money-fix-panel">
-        <h3 className="drawer-title">Fix this entry</h3>
+        <h3 className="drawer-title">
+          Fix the {formatDateOnly(entry.entry_date)} entry ·{" "}
+          {formatCents(entry.amount_cents)}
+        </h3>
         {error && <p className="alert-error">{error}</p>}
 
         {uncategorized && options.cats.length > 0 && (
@@ -319,6 +348,5 @@ function EntryFix({
           </p>
         </form>
       </div>
-    </details>
   );
 }

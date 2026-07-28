@@ -123,6 +123,26 @@ export default async function CostumesInventoryPage({
   // A create that came back rejected reopens the drawer with its message inside.
   const drawerOpen = canWrite && (one("add") === "piece" || !!pageError);
 
+  // Open (or close) ONE row's Edit panel without losing the filters. `?edit=` is
+  // the same param a refused save comes back on, so the link and the redirect
+  // land in exactly the same place.
+  const columns = canWrite ? 8 : 7;
+  const rowHref = (pieceId: string | null): string => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(sp)) {
+      if (typeof value !== "string") continue;
+      if (key === "edit" || key === "error" || key === "saved" || key === "add") {
+        continue;
+      }
+      qs.set(key, value);
+    }
+    if (pieceId) qs.set("edit", pieceId);
+    const query = qs.toString();
+    return `/${slug}/costumes/inventory${query ? `?${query}` : ""}${
+      pieceId ? `#piece-${pieceId}` : ""
+    }`;
+  };
+
   return (
     <section className="stack">
       <div className="page-head">
@@ -175,7 +195,7 @@ export default async function CostumesInventoryPage({
             <th>Condition</th>
             <th>Where it lives</th>
             <th>Set</th>
-            {canWrite && <th></th>}
+            {canWrite && <th className="table-action"></th>}
           </tr>
         </thead>
         <tbody>
@@ -190,11 +210,13 @@ export default async function CostumesInventoryPage({
               canWrite={canWrite}
               open={openId === p.id}
               error={openId === p.id ? rowError : null}
+              rowHref={rowHref}
+              columns={columns}
             />
           ))}
           {pieces.length === 0 && (
             <tr>
-              <td colSpan={canWrite ? 8 : 7} className="muted">
+              <td colSpan={columns} className="muted">
                 Nothing matches those filters.
               </td>
             </tr>

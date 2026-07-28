@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import {
   ALTERATION_STATUSES,
@@ -17,9 +18,14 @@ import { setAlterationStatus } from "../alteration-actions";
 // disclosure that EXPANDS the row: assign or reassign, move the alteration
 // along, take the piece back.
 //
-// Expanding, not floating: `table.members` is `display:block; overflow-x:auto`
-// so the grid can scroll on a phone, and a scroll container clips any
-// absolutely-positioned descendant (the Wave-4 lesson).
+// The panel opens in a row of its OWN, spanning every column, rather than inside
+// the last cell (spec 005 T143b). `table.members` is `display:block;
+// overflow-x:auto` so the grid can scroll on a phone, and a scroll container
+// clips any absolutely-positioned descendant, so a FLOATING panel came out
+// sliced off at the cell edge (Wave 4) — but expanding the row only fixed the
+// clipping. Measured at 375px, the panel still opened 308px into a 343px scroll
+// port: 11% of it on screen. A full-width row beneath, stuck to the left edge of
+// the port, is what puts it where it can be read.
 //
 // The size-mismatch chip is advisory and never blocks (§4) — programs size their
 // students in their own vocabulary, so the match is a best-effort heuristic.
@@ -57,6 +63,8 @@ export function AssignmentRow({
   canWrite,
   open,
   error,
+  rowHref,
+  columns,
 }: {
   programId: string;
   slug: string;
@@ -71,6 +79,10 @@ export function AssignmentRow({
   // comes back on it so the message lands inside the control that produced it.
   open: boolean;
   error: string | null;
+  // This page's URL with one row's panel open (or none), keeping the set picker.
+  rowHref: (pieceId: string | null) => string;
+  // How many columns the panel row has to span.
+  columns: number;
 }) {
   const studentSize = student ? relevantSizeValue(piece.kind, student.sizes) : null;
   const mismatch = student
@@ -85,6 +97,7 @@ export function AssignmentRow({
     : piece.label;
 
   return (
+    <Fragment>
     <tr>
       <td>
         <Link href={`/${slug}/costumes/pieces/${piece.id}`}>{piece.label}</Link>{" "}
@@ -122,16 +135,23 @@ export function AssignmentRow({
         )}
       </td>
       {canWrite && (
-        <td>
-          <details open={open}>
-            <summary
-              className="wardrobe-disclosure"
-              aria-label={
-                assignment ? `Edit ${who}` : `Assign ${piece.label}`
-              }
-            >
-              {assignment ? "Edit" : "Assign"}
-            </summary>
+        <td className="table-action">
+          <Link
+            href={rowHref(open ? null : piece.id)}
+            className="wardrobe-disclosure"
+            aria-expanded={open}
+            aria-controls={open ? `piece-${piece.id}` : undefined}
+            aria-label={assignment ? `Edit ${who}` : `Assign ${piece.label}`}
+          >
+            {open ? "Close" : assignment ? "Edit" : "Assign"}
+          </Link>
+        </td>
+      )}
+    </tr>
+    {canWrite && open && (
+      <tr className="table-panel-row" id={`piece-${piece.id}`}>
+        <td colSpan={columns}>
+          <div className="table-panel">
             <div className="stack wardrobe-row-panel">
               <h3 className="drawer-title">
                 {assignment ? "Edit assignment" : "Assign this piece"}
@@ -226,9 +246,10 @@ export function AssignmentRow({
                 </form>
               )}
             </div>
-          </details>
+          </div>
         </td>
-      )}
-    </tr>
+      </tr>
+    )}
+    </Fragment>
   );
 }

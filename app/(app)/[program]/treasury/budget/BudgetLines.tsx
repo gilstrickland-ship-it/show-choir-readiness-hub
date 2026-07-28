@@ -1,3 +1,5 @@
+import { Fragment } from "react";
+import Link from "next/link";
 import {
   CATEGORY_DIRECTIONS,
   CATEGORY_DIRECTION_LABELS,
@@ -56,6 +58,7 @@ export function BudgetCategory({
   canWrite,
   openKey,
   error,
+  rowHref,
 }: {
   programId: string;
   slug: string;
@@ -64,6 +67,10 @@ export function BudgetCategory({
   canWrite: boolean;
   openKey: string | null;
   error: string | null;
+  // This page's URL with one line's panel open (or none). The panel opens in a
+  // row of its own beneath, not in the last cell (spec 005 T143b), so the
+  // trigger has to be a link rather than a <summary>.
+  rowHref: (lineId: string | null) => string;
 }) {
   const subtotal = lines.reduce((s, l) => s + l.planned_cents, 0);
 
@@ -79,25 +86,35 @@ export function BudgetCategory({
           <tr>
             <th>Line</th>
             <th className="num">Planned</th>
-            {canWrite && <th></th>}
+            {canWrite && <th className="table-action"></th>}
           </tr>
         </thead>
         <tbody>
           {lines.map((l) => {
             const open = openKey === lineEditKey(l.id);
             return (
-              <tr key={l.id}>
+              <Fragment key={l.id}>
+              <tr>
                 <td>{l.name}</td>
                 <td className="num">{formatCents(l.planned_cents)}</td>
                 {canWrite && (
-                  <td>
-                    <details id={lineEditKey(l.id)} open={open}>
-                      <summary
-                        className="money-disclosure"
-                        aria-label={`Edit ${l.name}`}
-                      >
-                        Edit
-                      </summary>
+                  <td className="table-action">
+                    <Link
+                      href={rowHref(open ? null : l.id)}
+                      className="money-disclosure"
+                      aria-expanded={open}
+                      aria-controls={open ? lineEditKey(l.id) : undefined}
+                      aria-label={`Edit ${l.name}`}
+                    >
+                      {open ? "Close" : "Edit"}
+                    </Link>
+                  </td>
+                )}
+              </tr>
+              {canWrite && open && (
+                <tr className="table-panel-row" id={lineEditKey(l.id)}>
+                  <td colSpan={3}>
+                    <div className="table-panel">
                       <div className="stack money-fix-panel">
                         <h4 className="drawer-title">Edit line</h4>
                         {open && error && (
@@ -162,10 +179,11 @@ export function BudgetCategory({
                           </button>
                         </form>
                       </div>
-                    </details>
+                    </div>
                   </td>
-                )}
-              </tr>
+                </tr>
+              )}
+              </Fragment>
             );
           })}
           {lines.length === 0 && (

@@ -725,6 +725,58 @@
     background: var(--surface);
   }
 
+  /* ---- A row's panel leaves the last cell (spec 005 T143b) ----
+     MEASURED at 375px, before: the ledger's "Fix this entry" panel opened 502px
+     into a 343px scroll port — 0% of it on screen. The 8-column inventory: 492px
+     in, 0%. The 5-column assignments table: 308px in, 11%. No width could fix
+     any of them, because the problem was WHERE the panel opened, not how wide it
+     was; a narrower panel is still a panel nobody can see.
+
+     So the panel gets its own row spanning every column, and the box inside that
+     row is STUCK to the left edge of the scroll port at the port's own width
+     (100cqi — the container is table.members). It is therefore fully on screen
+     wherever the table happens to be scrolled, not only at the far left.
+
+     The affordance that opens it is stuck to the right edge for the same reason:
+     an action column that starts 502px into a phone's table is one nobody finds.
+     Both are no-ops on a desktop, where nothing overflows. */
+  table.members td.table-action,
+  table.members th.table-action {
+    position: sticky;
+    right: 0;
+    background: var(--paper);
+    /* A pinned column paints over whatever is scrolling under it, so it needs a
+       rule to say where the row's content stops and the action starts. A rule,
+       not a shadow: this design carries its edges in hairlines. */
+    border-left: 1px solid var(--line);
+  }
+
+  /* A sticky cell paints over the row it sits in, so it has to carry that row's
+     own fill or the tint stops at the column edge. Listed after the base rule
+     and before the hover rule, so hover still wins for both. */
+  table.members tbody tr.ledger-uncat td.table-action {
+    background: var(--warn-soft);
+  }
+
+  table.members tbody tr:hover td.table-action {
+    background: var(--surface);
+  }
+
+  table.members tr.table-panel-row > td {
+    padding: 0;
+  }
+
+  table.members .table-panel {
+    position: sticky;
+    left: 0;
+    width: 100cqi;
+    box-sizing: border-box;
+    padding: 0 0.6rem 0.75rem;
+    /* The cells above set nowrap so columns keep their shape; a panel is prose
+       and forms, and must wrap. */
+    white-space: normal;
+  }
+
   /* Anchors the app sends someone BACK to. `.shell-header` is
      `position: sticky; top: 0`, so a fragment jump parks its target directly
      under the chrome — and the target is always the row that a message belongs
@@ -3155,12 +3207,14 @@
   }
 
   /* Ensembles and placements stay tabular — two or three narrow columns, a list
-     you really do scan — so their panels expand the row and measure against the
-     scroll port (`100cqi`, the container set on table.members) less the columns
-     standing to their left. `vw` cannot express that: it knows the phone and
-     not the table. */
+     you really do scan — so their panels open in a row beneath (`.table-panel`
+     sizes that to the scroll port), capped so a desktop gets a readable measure.
+     The width used to be the port MINUS the columns to the panel's left, which
+     kept it narrow enough and still left a quarter of it off a 375px screen,
+     because it opened inside the last cell (T143b). */
   .people-row-panel {
-    width: min(22rem, 100cqi - 8rem);
+    width: 100%;
+    max-width: 22rem;
     margin-top: 0.5rem;
     padding: 0.75rem 0.9rem 0.9rem;
     background: var(--paper);
@@ -3301,14 +3355,15 @@
      container clips any absolutely-positioned descendant — a floating panel
      came out sliced off at the cell edge. Same paper-over-rule treatment as
      .drawer-panel so it still reads as a panel.
-     Its width is measured against the SCROLL PORT (`100cqi`, the container set
-     on table.members), never the viewport: the panel hangs off the last column,
-     roughly 9rem of Line + Planned to its left, so `70vw` — a number that knows
-     the phone but not the table — opened a 262px panel 230px in and left
-     two-thirds of it past the right edge at 375px. Subtracting those columns is
-     what keeps a panel on screen where it opens. */
+     The width is the row it sits in (`.table-panel` above already sizes that to
+     the scroll port), capped so a 1280px desktop gets a readable measure rather
+     than a form stretched across the whole table. It used to be measured against
+     the port MINUS the columns to its left — a calculation that kept the panel
+     narrow enough in theory and still put it off-screen in practice, because it
+     opened inside the last cell. It doesn't any more (T143b). */
   .money-fix-panel {
-    width: min(17rem, 100cqi - 12rem);
+    width: 100%;
+    max-width: 17rem;
     margin-top: 0.5rem;
     padding: 0.75rem 0.9rem 0.9rem;
     background: var(--paper);
@@ -3608,12 +3663,14 @@
     border-radius: var(--radius-m);
   }
 
-  /* A row panel lives inside a table cell, so it states a width the cell can
-     grow to; a section panel spans the page it interrupts. Host-mode has no
-     table on this surface — its rows are cards and full-width slot lines — so
-     every one of its panels is the page's measure. */
+  /* A row panel is the width of the row it opens beneath (`.table-panel` sizes
+     that to the scroll port), capped so a desktop gets a readable measure. A
+     section panel spans the page it interrupts. Host-mode has no table on this
+     surface — its rows are cards and full-width slot lines — so every one of its
+     panels is the page's measure. */
   .wardrobe-row-panel {
-    width: min(24rem, 76vw);
+    width: 100%;
+    max-width: 24rem;
   }
 
   /* The set-settings disclosure is a section of the page, not a control in a
@@ -5089,14 +5146,6 @@
     .wardrobe-filters {
       width: 100%;
     }
-
-    /* A wardrobe row panel is inside a table cell that is itself inside a
-       horizontal scroller; on a phone it takes what the cell can give rather
-       than the 24rem it gets on a desktop grid. */
-    .wardrobe-row-panel {
-      width: min(24rem, 84vw);
-    }
-
 
     /* Comms digest-first landing collapses to a single column; the aside drops
        below the digest card + recently-sent log. */

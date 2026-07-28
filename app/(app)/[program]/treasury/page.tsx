@@ -22,7 +22,11 @@ import { zonedDateKey } from "@/lib/datetime";
 import { SubTabs } from "../SubTabs";
 import { Flash } from "../Flash";
 import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
-import { LEDGER_FLASH_MAPS, type LedgerSection } from "./flash";
+import {
+  LEDGER_FLASH_MAPS,
+  entryAnchor,
+  type LedgerSection,
+} from "./flash";
 import { treasuryTabs } from "@/lib/subnav";
 import { IntroStrip, HelpDot } from "../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
@@ -402,23 +406,32 @@ export default async function LedgerPage({
 
   // Paging links keep every filter and drop the one-shot params (a flash, an
   // error, a reopened popover) so page 2 is not still shouting about page 1.
-  const TRANSIENT = new Set([
-    "page",
-    "edit",
-    "error",
-    "ok",
-    "confirm",
-    "reenter",
-  ]);
-  const pageHref = (target: number): string => {
+  const ONE_SHOT = ["edit", "error", "ok", "confirm", "reenter"];
+  const TRANSIENT = new Set(["page", ...ONE_SHOT]);
+  const keepFilters = (drop: Set<string>): URLSearchParams => {
     const qs = new URLSearchParams();
     for (const [key, value] of Object.entries(sp)) {
-      if (typeof value !== "string" || TRANSIENT.has(key)) continue;
+      if (typeof value !== "string" || drop.has(key)) continue;
       qs.set(key, value);
     }
-    if (target > 1) qs.set("page", String(target));
+    return qs;
+  };
+  const ledgerHref = (qs: URLSearchParams, hash = ""): string => {
     const query = qs.toString();
-    return `/${slug}/treasury${query ? `?${query}` : ""}`;
+    return `/${slug}/treasury${query ? `?${query}` : ""}${hash}`;
+  };
+  const pageHref = (target: number): string => {
+    const qs = keepFilters(TRANSIENT);
+    if (target > 1) qs.set("page", String(target));
+    return ledgerHref(qs);
+  };
+  // Open (or close) ONE row's fix panel without losing the filters or the page
+  // the treasurer is looking at. `?edit=` is the same param a refused write comes
+  // back on, so the link and the redirect land in exactly the same place.
+  const rowHref = (entryId: string | null): string => {
+    const qs = keepFilters(new Set(ONE_SHOT));
+    if (entryId) qs.set("edit", entryId);
+    return ledgerHref(qs, entryId ? `#${entryAnchor(entryId)}` : "");
   };
 
   const metric = (value: string | null): string => value ?? "—";
@@ -586,6 +599,7 @@ export default async function LedgerPage({
         error={rowError}
         range={range}
         pageHref={pageHref}
+        rowHref={rowHref}
       />
 
       <p className="page-foot">
