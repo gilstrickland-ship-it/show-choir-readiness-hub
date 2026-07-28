@@ -37,11 +37,18 @@ export interface PacketPipelineArgs {
   // The itinerary page has both of these in hand before it renders; passing them
   // skips the two itinerary round-trips this loader would otherwise repeat.
   itinerary?: { published: boolean; itemCount: number };
+  // THE PARSE THIS SCREEN IS ABOUT. The packet and itinerary pages are about the
+  // competition, so they want its LATEST parse. A review screen is about ONE
+  // parse — the one in its URL — and deriving its strip from the latest instead
+  // let the strip read "Parsed — stuck" over an accepted draft the moment a
+  // second upload failed behind it. The review page already has this row in
+  // hand, so passing it is also one round-trip cheaper.
+  parse?: { id: string; status: string } | null;
 }
 
 export async function loadPacketPipeline(
   supabase: SupabaseClient,
-  { programId, competitionId, itinerary }: PacketPipelineArgs,
+  { programId, competitionId, itinerary, parse: forParse }: PacketPipelineArgs,
 ): Promise<PacketPipelineState> {
   const { data: docRow } = await supabase
     .from("documents")
@@ -53,15 +60,18 @@ export async function loadPacketPipeline(
     .limit(1)
     .maybeSingle();
 
-  const { data: parseRow } = await supabase
-    .from("packet_parses")
-    .select("id, status")
-    .eq("program_id", programId)
-    .eq("competition_id", competitionId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const parse = parseRow as { id: string; status: string } | null;
+  let parse: { id: string; status: string } | null = forParse ?? null;
+  if (forParse === undefined) {
+    const { data: parseRow } = await supabase
+      .from("packet_parses")
+      .select("id, status")
+      .eq("program_id", programId)
+      .eq("competition_id", competitionId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    parse = parseRow as { id: string; status: string } | null;
+  }
 
   let published = itinerary?.published ?? false;
   let itemCount = itinerary?.itemCount ?? 0;
@@ -93,9 +103,15 @@ export async function loadPacketPipeline(
   };
 }
 
-// Turn the state into the five rendered steps. The first step that isn't done is
-// the one you're on ("now"); a parse that failed is "blocked" — the strip stops
-// pretending the next step is waiting on you when the pipeline is stuck.
+// Turn the state into the five rendered steps.
+//
+// A parse that failed leaves Parsed and Reviewed "blocked" — the strip stops
+// pretending they are waiting on you when the pipeline is stuck. The DOCUMENTED
+// recovery from there is to enter the itinerary by hand, and that is where "you
+// are here" belongs: the step you're on is the first one that is neither done
+// nor blocked. Reading it as "the first step that isn't done" put the cursor on
+// a blocked step, so nothing anywhere was current and Publish — the only thing
+// actually left to do — read "not yet".
 export function packetPipelineSteps(
   state: PacketPipelineState,
   compBase: string,
@@ -124,14 +140,17 @@ export function packetPipelineSteps(
     },
   ];
 
-  const firstOpen = done.findIndex((s) => !s.done);
+  const isBlocked = (key: string): boolean =>
+    state.parseStatus === "failed" && (key === "parsed" || key === "reviewed");
+
+  const firstOpen = done.findIndex((s) => !s.done && !isBlocked(s.key));
   return done.map((s, i) => ({
     key: s.key,
     label: s.label,
     href: s.href,
     state: s.done
       ? "done"
-      : state.parseStatus === "failed" && (s.key === "parsed" || s.key === "reviewed")
+      : isBlocked(s.key)
         ? "blocked"
         : i === firstOpen
           ? "now"

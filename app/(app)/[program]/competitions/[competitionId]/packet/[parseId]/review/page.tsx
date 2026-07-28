@@ -111,12 +111,19 @@ export default async function ReviewPage({
     signedUrl = signed?.signedUrl ?? null;
   }
 
-  // The same five-step strip the packet and itinerary pages show (US7-4).
+  // The same five-step strip the packet and itinerary pages show (US7-4) — but
+  // about THIS parse, not the competition's latest one. Those pages are about
+  // the competition, so latest is right for them; this screen is about the parse
+  // in its URL, and deriving the strip from a newer sibling meant a failed
+  // re-upload could print "Parsed — stuck" across the top of an accepted draft.
+  // The row is already loaded above, so being parse-specific also costs a query
+  // less than being wrong did.
   const compBase = `/${slug}/competitions/${competitionId}`;
   const pipeline = packetPipelineSteps(
     await loadPacketPipeline(supabase, {
       programId: program.id,
       competitionId,
+      parse: { id: parse.id, status: parse.status },
     }),
     compBase,
   );
