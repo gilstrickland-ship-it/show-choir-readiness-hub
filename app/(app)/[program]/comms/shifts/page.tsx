@@ -74,7 +74,7 @@ export default async function ShiftsPage({
   const shareParam = one("share");
   const signupShareLinks =
     canShare && season
-      ? (await activeShareLinks(supabase, program.id)).filter(
+      ? (await activeShareLinks(supabase, program.id)).links.filter(
           (l) => l.resource === "signup_page" && l.resource_id === season.id,
         )
       : [];

@@ -23,6 +23,7 @@ export type ItinOkKey =
   | "published"
   | "unpublished"
   | "accepted"
+  | "accepted_live"
   | "added"
   | "saved"
   | "removed"
@@ -34,7 +35,9 @@ export type ItinErrorKey =
   | "save"
   | "remove"
   | "gone"
-  | "share";
+  | "share"
+  | "publish"
+  | "unpublish";
 
 const ITIN_OK: FlashMap<ItinOkKey, ItinSection> = {
   published: {
@@ -48,6 +51,14 @@ const ITIN_OK: FlashMap<ItinOkKey, ItinSection> = {
   accepted: {
     section: "page",
     message: "Parsed itinerary applied — check the items below, then publish.",
+  },
+  // The same write onto an ALREADY-PUBLISHED itinerary. There is no "then
+  // publish" left to do, so saying it would send a director away believing
+  // families still cannot see what they just accepted.
+  accepted_live: {
+    section: "page",
+    message:
+      "Parsed itinerary applied — these times are live to families right now.",
   },
   added: { section: "page", message: "Item added." },
   saved: { section: "page", message: "Item saved." },
@@ -75,6 +86,20 @@ const ITIN_ERROR: FlashMap<ItinErrorKey, ItinSection> = {
     section: "share",
     message:
       "Couldn't make a broadcast link. The old one has been retired, so make a new one before sharing.",
+  },
+  // The two writes that decide whether families can see this at all. A swallowed
+  // failure here is the worst message on the surface: "families can see it now"
+  // over a schedule nobody outside the office can open — or the reverse, a
+  // director told the times are private while they are still live.
+  publish: {
+    section: "page",
+    message:
+      "Couldn't publish. Nothing has changed — families still can't see these times. Try again.",
+  },
+  unpublish: {
+    section: "page",
+    message:
+      "Couldn't take this back to a draft. Families can still see these times. Try again.",
   },
 };
 

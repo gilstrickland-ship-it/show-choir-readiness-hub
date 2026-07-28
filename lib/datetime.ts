@@ -256,8 +256,32 @@ const TIME_ZONE_LABELS: Record<string, string> = {
 };
 
 export function formatTimeZoneLabel(timeZone: string): string {
-  const mapped = TIME_ZONE_LABELS[timeZone];
-  if (mapped) return mapped;
+  // Object.hasOwn, not a bare index: the value is whatever is stored on the
+  // program row, and a program whose timezone reads "constructor" would
+  // otherwise hand React a function to render on every page that names the zone.
+  if (Object.hasOwn(TIME_ZONE_LABELS, timeZone)) return TIME_ZONE_LABELS[timeZone];
   const city = timeZone.includes("/") ? timeZone.split("/").pop()! : timeZone;
   return city.replace(/_/g, " ");
+}
+
+// Is this a zone Intl will actually accept? A program's timezone is the input to
+// every date and time this app renders — including the tokenized parent surface,
+// which has no login and no staff to notice — and Intl.DateTimeFormat THROWS a
+// RangeError on an unknown zone rather than falling back. Stored unvalidated,
+// one bad Settings save therefore takes down every page of the program at once,
+// including the families' one, and the only screen that could fix it is among
+// the pages that no longer render.
+//
+// Constructing a formatter is the check, because it is exactly what every
+// renderer does. (Intl.supportedValuesOf('timeZone') exists, but it excludes
+// legacy aliases like "US/Central" that are perfectly valid and may already be
+// stored.)
+export function isValidTimeZone(timeZone: string): boolean {
+  if (typeof timeZone !== "string" || timeZone.trim() === "") return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
 }

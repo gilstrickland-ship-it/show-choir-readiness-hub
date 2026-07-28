@@ -112,6 +112,17 @@ async function resolveItem(
   return (data as { id: string } | null)?.id ?? null;
 }
 
+// Did that write actually happen? PostgREST answers a write that MATCHED NOTHING
+// exactly like a write that succeeded: `error` is null and the caller is none
+// the wiser. On a surface where RLS is the real gate (an archived season, a role
+// that may not write) the row-count is the only difference between "saved" and
+// "silently discarded", so every write here asks for `.select("id")` and treats
+// zero rows as the failure it is (the local reference is absences/actions.ts).
+function wrote(result: { data: unknown; error: unknown }): boolean {
+  if (result.error) return false;
+  return ((result.data as { id: string }[] | null) ?? []).length > 0;
+}
+
 export async function addItineraryItem(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
@@ -159,7 +170,7 @@ export async function updateItineraryItem(formData: FormData): Promise<void> {
     redirect(failPath(slug, competitionId, "gone", itemId));
   }
 
-  const { error } = await supabase
+  const saved = await supabase
     .from("itinerary_items")
     .update({
       starts_at: wallToIso(formData, "starts_at", tz),
@@ -171,10 +182,12 @@ export async function updateItineraryItem(formData: FormData): Promise<void> {
       sort_order: Number(str(formData, "sort_order")) || 0,
     })
     .eq("id", itemId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
   // A swallowed failure here is a schedule change the director believes landed
-  // and families never see.
-  if (error) redirect(failPath(slug, competitionId, "save", itemId));
+  // and families never see — and an RLS-filtered write is exactly that failure
+  // wearing a null error (see `wrote`).
+  if (!wrote(saved)) redirect(failPath(slug, competitionId, "save", itemId));
 
   revalidatePath(itinPath(slug, competitionId));
   redirect(okPath(slug, competitionId, "saved"));
@@ -192,12 +205,13 @@ export async function deleteItineraryItem(formData: FormData): Promise<void> {
     redirect(failPath(slug, competitionId, "gone", itemId));
   }
 
-  const { error } = await supabase
+  const removed = await supabase
     .from("itinerary_items")
     .delete()
     .eq("id", itemId)
-    .eq("program_id", programId);
-  if (error) redirect(failPath(slug, competitionId, "remove", itemId));
+    .eq("program_id", programId)
+    .select("id");
+  if (!wrote(removed)) redirect(failPath(slug, competitionId, "remove", itemId));
 
   revalidatePath(itinPath(slug, competitionId));
   redirect(okPath(slug, competitionId, "removed"));
@@ -222,18 +236,27 @@ export async function publishItinerary(formData: FormData): Promise<void> {
     redirect(failPath(slug, competitionId, "itinerary"));
   }
 
-  await supabase
+  const published = await supabase
     .from("itineraries")
     .update({ status: "published", published_at: new Date().toISOString() })
     .eq("id", itineraryId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
+  // THE gate for parent visibility. Everything below this line — a live public
+  // URL, and a banner that tells the director families can see it now — is only
+  // true if this landed, so nothing below runs until it is proved.
+  if (!wrote(published)) redirect(failPath(slug, competitionId, "publish"));
 
-  // Auto-mint a share link only if this competition has none active yet.
+  // Auto-mint a share link only if this competition has none active yet — and
+  // only if we could actually SEE whether it has one. A failed listing used to
+  // read as "none", which is how republishing piled up a second live URL for the
+  // same itinerary; the director can still mint one from the share card.
   let share = "";
-  const existing = (await activeShareLinks(supabase, programId)).filter(
+  const listed = await activeShareLinks(supabase, programId);
+  const existing = listed.links.filter(
     (l) => l.resource === "itinerary" && l.resource_id === competitionId,
   );
-  if (existing.length === 0) {
+  if (!listed.unavailable && existing.length === 0) {
     const minted = await mintShareLink(supabase, {
       programId,
       resource: "itinerary",
@@ -304,11 +327,16 @@ export async function unpublishItinerary(formData: FormData): Promise<void> {
     redirect(failPath(slug, competitionId, "itinerary"));
   }
 
-  await supabase
+  const unpublished = await supabase
     .from("itineraries")
     .update({ status: "draft", published_at: null })
     .eq("id", itineraryId)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .select("id");
+  // The same gate, read the other way: told "families no longer see these
+  // times" over a write that did not land, a director stops trying to take it
+  // down.
+  if (!wrote(unpublished)) redirect(failPath(slug, competitionId, "unpublish"));
 
   revalidatePath(itinPath(slug, competitionId));
   redirect(okPath(slug, competitionId, "unpublished"));

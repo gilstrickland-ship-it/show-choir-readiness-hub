@@ -21,7 +21,12 @@ import { flashSection, type FlashMap } from "@/lib/flash";
 export type SettingsSection = "program" | "share" | "support";
 
 export type SettingsOkKey = "saved" | "revoked" | "granted" | "ended";
-export type SettingsErrorKey = "missing" | "save" | "revoke" | "support";
+export type SettingsErrorKey =
+  | "missing"
+  | "timezone"
+  | "save"
+  | "revoke"
+  | "support";
 
 const SETTINGS_OK: FlashMap<SettingsOkKey, SettingsSection> = {
   saved: { section: "program", message: "Program details saved." },
@@ -37,6 +42,14 @@ const SETTINGS_ERROR: FlashMap<SettingsErrorKey, SettingsSection> = {
   missing: {
     section: "program",
     message: "A program needs a name and a time zone.",
+  },
+  // Every date and time in the app — including the families' pages — is
+  // rendered through this value, and an unknown zone throws rather than falling
+  // back. It is refused at the door, not discovered on the next render.
+  timezone: {
+    section: "program",
+    message:
+      "That isn't a time zone we recognize. Pick one from the list and save again.",
   },
   save: { section: "program", message: "Couldn't save. Try again." },
   revoke: { section: "share", message: "Couldn't revoke that link. Try again." },
@@ -80,7 +93,13 @@ export function settingsErrorAnchor(key: SettingsErrorKey): string {
 export type MemberSection = "page" | "invite" | "panel";
 
 export type MemberOkKey = "saved" | "removed";
-export type MemberErrorKey = "invite" | "role" | "remove" | "last_director";
+export type MemberErrorKey =
+  | "invite"
+  | "invite_director_only"
+  | "role"
+  | "remove"
+  | "last_director"
+  | "director_only";
 
 const MEMBER_OK: FlashMap<MemberOkKey, MemberSection> = {
   saved: { section: "page", message: "Member updated." },
@@ -96,6 +115,20 @@ const MEMBER_ERROR: FlashMap<MemberErrorKey, MemberSection> = {
     section: "panel",
     message:
       "A program has to keep at least one director. Make someone else a director first, then change this one.",
+  },
+  // The other half of the same boundary: director is the seat every
+  // director-only control answers to (support consent, unarchiving a season), so
+  // handing it out is itself a director-only act. Without this an admin could
+  // name their OWN row and walk up into it.
+  director_only: {
+    section: "panel",
+    message:
+      "Only a director can make someone a director. Ask your director to make this change.",
+  },
+  invite_director_only: {
+    section: "invite",
+    message:
+      "Only a director can invite someone as a director. Pick another seat, or ask your director to send this invite.",
   },
 };
 

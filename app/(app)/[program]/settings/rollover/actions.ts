@@ -55,8 +55,21 @@ function fail(slug: string, key: RolloverErrorKey): string {
   return `${rolloverPath(slug)}?error=${key}#${rolloverErrorAnchor(key)}`;
 }
 
+// What a "find or create" can come back with. An ARCHIVED same-label season is
+// its own answer, not a season and not a failure — see below.
+type SeasonResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: "archived" | "failed" };
+
 // Insert a season, or reuse the same-label one that is already there (which is
-// what makes every caller re-runnable). Returns its id, or null on failure.
+// what makes every caller re-runnable).
+//
+// …unless the one that is already there is ARCHIVED. Archiving is the vault
+// (§9.4): a frozen season, kept for the record. Adopting it silently made the
+// wizard write the new year's ensembles, students and costume sets into last
+// year's frozen books — and then, at the last step, un-freeze it by making it
+// the active season. Nothing on the screen said which season the director was
+// filling in. That is refused now, out loud, with the two ways out named.
 async function findOrCreateSeason(
   supabase: Db,
   args: {
@@ -65,9 +78,13 @@ async function findOrCreateSeason(
     startsOn: string | null;
     endsOn: string | null;
   },
-): Promise<string | null> {
-  const existingId = await seasonIdByLabel(supabase, args.programId, args.label);
-  if (existingId) return existingId;
+): Promise<SeasonResult> {
+  const existing = await seasonByLabel(supabase, args.programId, args.label);
+  if (existing) {
+    return existing.archived
+      ? { ok: false, reason: "archived" }
+      : { ok: true, id: existing.id };
+  }
 
   const { data: created, error } = await supabase
     .from("seasons")
@@ -80,31 +97,37 @@ async function findOrCreateSeason(
     })
     .select("id")
     .single();
-  if (!error && created) return (created as { id: string }).id;
+  if (!error && created) return { ok: true, id: (created as { id: string }).id };
 
   // The insert lost. Two submits arriving together (a double click, a retried
   // POST) both clear the check above, and nothing in the schema stops the second
   // — so instead of failing the director who pressed twice, look again: if the
   // season is there now, that IS the season they asked for.
-  return seasonIdByLabel(supabase, args.programId, args.label);
+  const raced = await seasonByLabel(supabase, args.programId, args.label);
+  if (!raced) return { ok: false, reason: "failed" };
+  return raced.archived
+    ? { ok: false, reason: "archived" }
+    : { ok: true, id: raced.id };
 }
 
-// The id of this program's season with that label, if it has one. `limit(1)`
-// rather than a bare maybeSingle so a program that somehow ended up with two
-// same-label seasons resolves to one instead of erroring.
-async function seasonIdByLabel(
+// This program's season with that label, if it has one, and whether it is
+// archived. `limit(1)` rather than a bare maybeSingle so a program that somehow
+// ended up with two same-label seasons resolves to one instead of erroring.
+async function seasonByLabel(
   supabase: Db,
   programId: string,
   label: string,
-): Promise<string | null> {
+): Promise<{ id: string; archived: boolean } | null> {
   const { data } = await supabase
     .from("seasons")
-    .select("id")
+    .select("id, archived_at")
     .eq("program_id", programId)
     .eq("label", label)
     .limit(1)
     .maybeSingle();
-  return (data as { id: string } | null)?.id ?? null;
+  const row = data as { id: string; archived_at: string | null } | null;
+  if (!row) return null;
+  return { id: row.id, archived: row.archived_at !== null };
 }
 
 // True when that season really is this program's. newSeasonId travels the wizard
@@ -196,13 +219,17 @@ export async function startFirstSeason(formData: FormData): Promise<void> {
     redirect(`${back}?seasonError=exists`);
   }
 
-  const seasonId = await findOrCreateSeason(supabase, {
+  // This program has no seasons at all (the block above returned otherwise), so
+  // there is no same-label season to adopt and the archived refusal cannot come
+  // back here — a lost insert race is the only way this fails.
+  const season = await findOrCreateSeason(supabase, {
     programId,
     label,
     startsOn: String(formData.get("starts_on") ?? "").trim() || null,
     endsOn: String(formData.get("ends_on") ?? "").trim() || null,
   });
-  if (!seasonId) redirect(`${back}?seasonError=create`);
+  if (!season.ok) redirect(`${back}?seasonError=create`);
+  const seasonId = season.id;
 
   const activated = await makeSeasonActive(supabase, programId, seasonId);
   if (!activated) {
@@ -236,15 +263,19 @@ export async function createRolloverSeason(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
-  const newSeasonId = await findOrCreateSeason(supabase, {
+  const created = await findOrCreateSeason(supabase, {
     programId,
     label,
     startsOn: String(formData.get("starts_on") ?? "").trim() || null,
     endsOn: String(formData.get("ends_on") ?? "").trim() || null,
   });
-  if (!newSeasonId) {
-    redirect(fail(slug, "create"));
+  if (!created.ok) {
+    // A same-label ARCHIVED season is a different refusal from a failed write,
+    // and it has to say so: the director typed a name, and the reason the
+    // wizard will not go on is that name.
+    redirect(fail(slug, created.reason === "archived" ? "archived_label" : "create"));
   }
+  const newSeasonId = created.id;
 
   // Nothing to carry over? Then the ensembles / returning-students / costume
   // steps have no source data — go straight to activate. Counting seasons other

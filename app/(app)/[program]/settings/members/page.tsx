@@ -36,6 +36,10 @@ const ROLE_OPTIONS: readonly Role[] = [
   "board_member",
 ];
 
+// Director is the seat every director-only control answers to, so only a
+// director hands it out (settings/actions mayGrant, which is the gate — this
+// only stops offering a choice that would be refused).
+
 const MEMBER_COLUMNS = 4;
 
 export default async function MembersPage({
@@ -57,6 +61,10 @@ export default async function MembersPage({
   const sp = await searchParams;
   const one = (key: string): string | null => oneParam(sp, key);
   const flash = readFlash<MemberSection>(sp, MEMBER_FLASH_MAPS);
+  const canGrantDirector = role === "director";
+  const inviteRoles = ROLE_OPTIONS.filter(
+    (r) => r !== "director" || canGrantDirector,
+  );
 
   const openMemberId = one("edit");
   const confirmRemove = one("confirm") === "remove";
@@ -182,6 +190,7 @@ export default async function MembersPage({
               slug={slug}
               member={m}
               name={nameOf(m)}
+              canGrantDirector={canGrantDirector}
               open={openMemberId === m.id}
               confirmRemove={openMemberId === m.id && confirmRemove}
               error={openMemberId === m.id ? panelError : null}
@@ -212,7 +221,7 @@ export default async function MembersPage({
           <label>
             What they can do
             <select name="role" defaultValue="admin">
-              {ROLE_OPTIONS.map((r) => (
+              {inviteRoles.map((r) => (
                 <option key={r} value={r}>
                   {ROLE_LABELS[r]}
                 </option>

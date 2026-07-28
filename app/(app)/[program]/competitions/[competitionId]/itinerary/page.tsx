@@ -177,7 +177,7 @@ export default async function ItineraryPage({
   // URL is knowable only at mint time), so the copyable URL is shown once when it
   // rides in via ?share=; otherwise we show that a link is active + a rotate button.
   const activeItinShareLinks = isPublished
-    ? (await activeShareLinks(supabase, program.id)).filter(
+    ? (await activeShareLinks(supabase, program.id)).links.filter(
         (l) => l.resource === "itinerary" && l.resource_id === competitionId,
       )
     : [];

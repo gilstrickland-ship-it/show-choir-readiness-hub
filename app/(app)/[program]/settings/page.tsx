@@ -63,7 +63,8 @@ export default async function SettingsPage({
 
   // Active broadcast share links (FR-002 / §8a). Resolve friendly subjects:
   // an itinerary link names its competition, a signup or calendar link its season.
-  const shareLinks = await activeShareLinks(supabase, program.id);
+  const { links: shareLinks, unavailable: shareLinksUnavailable } =
+    await activeShareLinks(supabase, program.id);
   const linkSubjects = new Map<string, string>();
   if (shareLinks.length > 0) {
     const compIds = shareLinks
@@ -98,14 +99,18 @@ export default async function SettingsPage({
   // Email health (F1) — presence booleans evaluated server-side (never env
   // values) + guardian inbox-health counts scoped to this program by RLS.
   const health = emailHealth();
-  const countGuardians = async (status: string) =>
-    (
-      await supabase
-        .from("guardians")
-        .select("id", { count: "exact", head: true })
-        .eq("program_id", program.id)
-        .eq("email_status", status)
-    ).count ?? 0;
+  // `count ?? 0` used to swallow a failed count, and the section then printed
+  // "Every address is good." — a claim about whether this program can reach its
+  // families, made out of a read that did not happen. A count we do not have is
+  // null, and the section says so instead.
+  const countGuardians = async (status: string): Promise<number | null> => {
+    const { count, error } = await supabase
+      .from("guardians")
+      .select("id", { count: "exact", head: true })
+      .eq("program_id", program.id)
+      .eq("email_status", status);
+    return error ? null : (count ?? 0);
+  };
   const [okCount, bouncedCount, unsubCount] = await Promise.all([
     countGuardians("ok"),
     countGuardians("bounced"),
@@ -158,6 +163,7 @@ export default async function SettingsPage({
         tz={tz}
         flash={flash}
         links={shareLinks}
+        unavailable={shareLinksUnavailable}
         labelFor={subjectFor}
       />
 
@@ -178,7 +184,8 @@ export default async function SettingsPage({
         flash={flash}
         isDirector={isDirector}
         activeUntil={supportOn ? program.support_access_until : null}
-        views={supportViews}
+        views={supportViews.views}
+        viewsUnavailable={supportViews.unavailable}
       />
     </section>
   );

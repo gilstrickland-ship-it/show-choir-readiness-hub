@@ -23,18 +23,32 @@ export function EmailHealthSection({
 }: {
   slug: string;
   checks: EmailCheck[];
-  guardians: { ok: number; bounced: number; unsubscribed: number };
+  // A count is null when its read FAILED. "Every address is good" is a claim
+  // about whether this program can reach its families, and it used to be built
+  // out of a count coalesced to zero — so a failed read reassured the director.
+  guardians: {
+    ok: number | null;
+    bounced: number | null;
+    unsubscribed: number | null;
+  };
 }) {
   const failing = checks.filter((c) => !c.ok).length;
-  const needsAttention = guardians.bounced + guardians.unsubscribed;
+  const countsKnown =
+    guardians.bounced !== null && guardians.unsubscribed !== null;
+  const needsAttention = countsKnown
+    ? guardians.bounced! + guardians.unsubscribed!
+    : null;
+  const num = (n: number | null): string => (n === null ? "—" : String(n));
   const summary =
-    failing === 0
-      ? needsAttention === 0
-        ? "All clear"
-        : `Set up · ${needsAttention} address${
-            needsAttention === 1 ? "" : "es"
-          } not receiving`
-      : `${failing} of ${checks.length} checks need attention`;
+    failing > 0
+      ? `${failing} of ${checks.length} checks need attention`
+      : needsAttention === null
+        ? "Set up · address health unknown"
+        : needsAttention === 0
+          ? "All clear"
+          : `Set up · ${needsAttention} address${
+              needsAttention === 1 ? "" : "es"
+            } not receiving`;
 
   return (
     <section id="email-health" className="panel stack">
@@ -63,9 +77,14 @@ export function EmailHealthSection({
           <strong>Guardian inbox health</strong>
           <br />
           <span className="muted">
-            {guardians.ok} receiving email · {guardians.bounced} bounced ·{" "}
-            {guardians.unsubscribed} unsubscribed.{" "}
-            {needsAttention > 0 ? (
+            {num(guardians.ok)} receiving email · {num(guardians.bounced)}{" "}
+            bounced · {num(guardians.unsubscribed)} unsubscribed.{" "}
+            {needsAttention === null ? (
+              <>
+                These counts couldn&apos;t be read just now, so this is not a
+                clean bill of health — reload to try again.
+              </>
+            ) : needsAttention > 0 ? (
               <Link href={`/${slug}/roster/email-issues`}>
                 Review addresses that need attention
               </Link>

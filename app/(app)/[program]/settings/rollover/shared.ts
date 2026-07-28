@@ -18,6 +18,8 @@ export type RolloverErrorKey =
   | "activate"
   | "season"
   | "archive"
+  | "archive_active"
+  | "archived_label"
   | "unarchive";
 
 const ROLLOVER_OK: FlashMap<RolloverOkKey, RolloverSection> = {
@@ -48,6 +50,23 @@ const ROLLOVER_ERROR: FlashMap<RolloverErrorKey, RolloverSection> = {
   archive: {
     section: "seasons",
     message: "Couldn't archive that season. Try again.",
+  },
+  // Archiving freezes every season-scoped write (the vault, §9.4). Doing it to
+  // the ACTIVE season leaves the program unable to write anything at all, with
+  // no season to fall back to — so it is refused, not just hidden.
+  archive_active: {
+    section: "seasons",
+    message:
+      "You can't archive the season you're working in. Make another season the active one first, then archive this one.",
+  },
+  // The rollover wizard reuses a same-label season so a director can back up and
+  // re-submit. An ARCHIVED one is not a season to reuse: adopting it would carry
+  // the new year's roster into a frozen season and then un-freeze it by making
+  // it active.
+  archived_label: {
+    section: "wizard",
+    message:
+      "There's already an archived season with that name. Give the new season a different name, or unarchive that one first if it's the one you meant.",
   },
   unarchive: {
     section: "seasons",

@@ -46,6 +46,7 @@ export function StaffMemberRow({
   slug,
   member,
   name,
+  canGrantDirector,
   open,
   confirmRemove,
   error,
@@ -58,6 +59,10 @@ export function StaffMemberRow({
   // What to call them: their profile name if they have signed in, else the
   // address the invite went to.
   name: string;
+  // Only a director hands out the director seat (settings/actions mayGrant).
+  // The action refuses either way — this just stops offering a choice that
+  // would be refused.
+  canGrantDirector: boolean;
   // The panel opens on `?edit=<memberId>`, and every refusal from this row comes
   // back on it so the message lands inside the control that produced it.
   open: boolean;
@@ -70,6 +75,11 @@ export function StaffMemberRow({
   const anchor = staffMemberAnchor(member.id);
   const panelId = `${anchor}-panel`;
   const roleLabel = ROLE_LABELS[member.role] ?? member.role;
+  // A member who already IS a director keeps the option, or an admin's edit of
+  // that row would silently demote them just by pressing Save.
+  const roleOptions = ROLE_OPTIONS.filter(
+    (r) => r !== "director" || canGrantDirector || member.role === "director",
+  );
 
   return (
     <Fragment>
@@ -105,7 +115,7 @@ export function StaffMemberRow({
                   <label>
                     What they can do
                     <select name="role" defaultValue={member.role}>
-                      {ROLE_OPTIONS.map((r) => (
+                      {roleOptions.map((r) => (
                         <option key={r} value={r}>
                           {ROLE_LABELS[r]}
                         </option>

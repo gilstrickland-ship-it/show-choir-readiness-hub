@@ -175,7 +175,7 @@ export default async function CommsPage({
   // silently retire the live link and print the replacement on another page.
   const signupLinkLive =
     flags.shifts && canShare && season
-      ? (await activeShareLinks(supabase, program.id)).some(
+      ? (await activeShareLinks(supabase, program.id)).links.some(
           (l) => l.resource === "signup_page" && l.resource_id === season.id,
         )
       : false;

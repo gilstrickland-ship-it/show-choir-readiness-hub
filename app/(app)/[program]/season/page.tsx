@@ -164,7 +164,7 @@ export default async function SeasonPage({
     SETTINGS_ROLES.includes(role) || COMPETITION_WRITE_ROLES.includes(role);
   const activeSeasonCalLinks =
     canManageCalendar && season
-      ? (await activeShareLinks(supabase, program.id)).filter(
+      ? (await activeShareLinks(supabase, program.id)).links.filter(
           (l) => l.resource === "season_calendar" && l.resource_id === season.id,
         )
       : [];

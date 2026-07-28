@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { programPath } from "@/lib/return-path";
+import { isValidTimeZone } from "@/lib/datetime";
 import type { LaunchErrorKey } from "./shared";
 
 // Self-serve program creation (F1). A signed-in user with no program can create
@@ -72,6 +73,11 @@ export async function createProgram(formData: FormData): Promise<void> {
 
   if (!name || !timezone) {
     redirect(launchFail("missing"));
+  }
+  // Same door, same guard as Settings: this value is what every date in the new
+  // program renders through, and Intl throws on a zone it does not know.
+  if (!isValidTimeZone(timezone)) {
+    redirect(launchFail("timezone"));
   }
 
   const admin = createAdminClient();

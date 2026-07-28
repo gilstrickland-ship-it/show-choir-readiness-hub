@@ -31,6 +31,7 @@ export function SupportAccessSection({
   isDirector,
   activeUntil,
   views,
+  viewsUnavailable,
 }: {
   programId: string;
   slug: string;
@@ -40,6 +41,10 @@ export function SupportAccessSection({
   // The consent window's end, or null when it is closed.
   activeUntil: string | null;
   views: SupportView[];
+  // The audit read having failed. "No support views recorded" is an assurance
+  // about who has looked at this program's data, so it is never printed out of
+  // a read that did not happen (lib/support recentSupportViews).
+  viewsUnavailable: boolean;
 }) {
   const summary = activeUntil
     ? `On until ${formatDateTimeInTz(activeUntil, tz)}`
@@ -94,7 +99,12 @@ export function SupportAccessSection({
 
       {/* The durable audit trail (T035), for you — never behind a disclosure. */}
       <h3>Recent support views</h3>
-      {views.length === 0 ? (
+      {viewsUnavailable ? (
+        <p className="alert-error">
+          This trail couldn&apos;t be read just now, so it is blank rather than
+          empty — it is not saying nobody looked. Reload to try again.
+        </p>
+      ) : views.length === 0 ? (
         <p className="muted">
           No support views recorded. This list fills in only when {brand.name}{" "}
           support opens your program while consent is on.

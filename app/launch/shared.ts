@@ -13,10 +13,17 @@ import type { FlashMap } from "@/lib/flash";
 // One section: /launch is a single screen, whichever of its four states it is in.
 
 export type LaunchSection = "page";
-export type LaunchErrorKey = "missing" | "create";
+export type LaunchErrorKey = "missing" | "timezone" | "create";
 
 const LAUNCH_ERROR: FlashMap<LaunchErrorKey, LaunchSection> = {
   missing: { section: "page", message: "A program needs a name and a time zone." },
+  // Stored unvalidated, an unknown zone throws on every render of the program
+  // that was just created — including its families' pages (lib/datetime
+  // isValidTimeZone).
+  timezone: {
+    section: "page",
+    message: "That isn't a time zone we recognize. Pick one from the list.",
+  },
   create: {
     section: "page",
     message: "We couldn't create that program. Please try again.",

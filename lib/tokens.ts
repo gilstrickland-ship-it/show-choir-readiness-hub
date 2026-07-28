@@ -580,16 +580,43 @@ export async function mintShareLink(
 }
 
 // Revoke one share link by id (idempotent; scoped to the program).
+//
+// RETURNS WHETHER THE URL IS ACTUALLY DEAD. This used to be `Promise<void>`, and
+// the caller told the director "That URL stops working immediately" whatever
+// happened — including when the write was refused, or when the id belonged to
+// another program and matched nothing. Revocation is the one control a director
+// has over a link they have already handed out; being told a live URL is dead is
+// worse than being told nothing.
+//
+// Zero rows is not automatically a failure, though: the update is filtered on
+// `revoked_at is null`, so a second press of a button on a stale page matches
+// nothing while the link IS dead. That case is confirmed with one read rather
+// than guessed at in either direction.
 export async function revokeShareLink(
   supabase: SupabaseClient,
   args: { programId: string; shareLinkId: string },
-): Promise<void> {
-  await supabase
+): Promise<{ ok: boolean }> {
+  const { data, error } = await supabase
     .from("share_links")
     .update({ revoked_at: new Date().toISOString() })
     .eq("id", args.shareLinkId)
     .eq("program_id", args.programId)
-    .is("revoked_at", null);
+    .is("revoked_at", null)
+    .select("id");
+  if (error) return { ok: false };
+  if (((data as { id: string }[] | null) ?? []).length > 0) return { ok: true };
+
+  // Nothing matched. Either it was already revoked — the URL is dead, which is
+  // what the message claims — or it is not this program's link at all, and
+  // nothing was revoked by anyone.
+  const { data: already } = await supabase
+    .from("share_links")
+    .select("id")
+    .eq("id", args.shareLinkId)
+    .eq("program_id", args.programId)
+    .not("revoked_at", "is", null)
+    .maybeSingle();
+  return { ok: Boolean(already) };
 }
 
 // Revoke every active share link for one resource (used to "rotate": retire the
@@ -610,19 +637,34 @@ export async function revokeShareLinksForResource(
 // Active (non-revoked, non-expired) share links for a program — the Settings
 // listing. Metadata only (resource / created / expires); the raw URL is never
 // stored, so it cannot be re-shown here — staff rotate to get a fresh URL.
+//
+// `unavailable` is the read having FAILED, and it is a separate answer from an
+// empty list on purpose: an empty list renders as "Nothing is shared right now.
+// Anyone outside your staff sees nothing until you make a link", which is a
+// statement about what this program has handed out — and it is exactly wrong
+// when what actually happened is that we could not look.
+export interface ActiveShareLinksResult {
+  links: ActiveShareLink[];
+  unavailable: boolean;
+}
+
 export async function activeShareLinks(
   supabase: SupabaseClient,
   programId: string,
-): Promise<ActiveShareLink[]> {
+): Promise<ActiveShareLinksResult> {
   const nowIso = new Date().toISOString();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("share_links")
     .select("id, resource, resource_id, created_at, expires_at")
     .eq("program_id", programId)
     .is("revoked_at", null)
     .order("created_at", { ascending: false });
+  if (error) return { links: [], unavailable: true };
   const rows = (data as ActiveShareLink[] | null) ?? [];
-  return rows.filter((r) => !r.expires_at || r.expires_at > nowIso);
+  return {
+    links: rows.filter((r) => !r.expires_at || r.expires_at > nowIso),
+    unavailable: false,
+  };
 }
 
 // ---- Token event logging (§10 security audit) ------------------------------

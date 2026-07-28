@@ -73,21 +73,34 @@ export async function recordSupportView(args: {
 // Recent support views for a program's transparency panel (Settings, §10). Uses
 // the caller's RLS client — the support_access_log_read policy (0005) already
 // scopes this to the program's own director/admin/board. Newest first.
+//
+// `unavailable` is the read having FAILED, and it is deliberately a different
+// answer from an empty list: empty renders as "No support views recorded", which
+// is a statement about who has looked at this program's data. Consent you cannot
+// audit is not consent, so this panel may never say "nobody looked" when what
+// happened is that it could not check.
 export interface SupportView {
   support_user_id: string;
   path: string | null;
   at: string;
 }
+
+export interface SupportViewsResult {
+  views: SupportView[];
+  unavailable: boolean;
+}
+
 export async function recentSupportViews(
   supabase: import("@supabase/supabase-js").SupabaseClient,
   programId: string,
   limit = 20,
-): Promise<SupportView[]> {
-  const { data } = await supabase
+): Promise<SupportViewsResult> {
+  const { data, error } = await supabase
     .from("support_access_log")
     .select("support_user_id, path, at")
     .eq("program_id", programId)
     .order("at", { ascending: false })
     .limit(limit);
-  return (data as SupportView[] | null) ?? [];
+  if (error) return { views: [], unavailable: true };
+  return { views: (data as SupportView[] | null) ?? [], unavailable: false };
 }

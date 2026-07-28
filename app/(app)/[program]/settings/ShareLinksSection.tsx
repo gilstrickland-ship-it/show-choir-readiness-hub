@@ -30,6 +30,7 @@ export function ShareLinksSection({
   tz,
   flash,
   links,
+  unavailable,
   labelFor,
 }: {
   programId: string;
@@ -37,12 +38,18 @@ export function ShareLinksSection({
   tz: string;
   flash: PageFlash<SettingsSection>;
   links: ActiveShareLink[];
+  // The listing having FAILED, which is not the same fact as an empty listing:
+  // "Nothing is shared right now. Anyone outside your staff sees nothing" is a
+  // privacy assurance, and it must never be made out of a read that did not
+  // happen (lib/tokens activeShareLinks).
+  unavailable: boolean;
   // What the link is OF — a competition name, a season label — resolved by the
   // page, which is the half that can query.
   labelFor: (link: ActiveShareLink) => string | null;
 }) {
-  const summary =
-    links.length === 0
+  const summary = unavailable
+    ? "Couldn't be read"
+    : links.length === 0
       ? "None handed out"
       : `${links.length} live link${links.length === 1 ? "" : "s"}`;
 
@@ -61,7 +68,12 @@ export function ShareLinksSection({
         link here makes its URL stop working immediately.
       </p>
 
-      {links.length === 0 ? (
+      {unavailable ? (
+        <p className="alert-error">
+          The list of live links couldn&apos;t be read just now. This is not the
+          same as there being none — reload before you rely on it.
+        </p>
+      ) : links.length === 0 ? (
         <p className="muted">
           Nothing is shared right now. Anyone outside your staff sees nothing
           until you make a link.
