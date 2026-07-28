@@ -77,6 +77,8 @@ const SLOT = {
   ledger_voided: 65,
   ledger_audit_extra: 66,
   hosted_event_archived: 67,
+  // A live entry with NO budget line — what categorize_ledger_entry operates on.
+  ledger_uncategorized: 68,
   // Octv support user (is_support = true, NOT a member of any program). Slot in
   // both A and B id-spaces resolves to the same person only via the `S` export;
   // kept ≥ 70 so it never collides with per-program slots.
@@ -115,6 +117,7 @@ export interface ProgramIds {
   budgetCategory: string;
   budgetLine: string;
   ledgerLive: string;
+  ledgerUncategorized: string;
   ledgerAudit: string;
   shift: string;
   shiftSignup: string;
@@ -184,6 +187,7 @@ function build(prefix: 'a' | 'b'): ProgramIds {
     budgetCategory: g('budget_category'),
     budgetLine: g('budget_line'),
     ledgerLive: g('ledger_live'),
+    ledgerUncategorized: g('ledger_uncategorized'),
     ledgerAudit: g('ledger_audit'),
     shift: g('shift'),
     shiftSignup: g('shift_signup'),

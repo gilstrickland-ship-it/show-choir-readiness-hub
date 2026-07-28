@@ -368,6 +368,34 @@ export class RlsClient {
     }
   }
 
+  /**
+   * Several statements inside ONE rolled-back transaction, under this role.
+   * Needed for the money-write functions: proving that an entry and its audit
+   * row land together means calling the function and then reading both back
+   * before the rollback, and a single-statement helper cannot see writes a
+   * volatile function made in that same statement.
+   */
+  async tx<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client: PoolClient = await getPool().connect();
+    try {
+      await client.query('begin');
+      await client.query(`set local role ${this.role}`);
+      await client.query(`select set_config('${JWT_SUB_GUC}', $1, true)`, [this.sub ?? '']);
+      const out = await run(client);
+      await client.query('rollback');
+      return out;
+    } catch (err) {
+      try {
+        await client.query('rollback');
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   /** Returns true if `sql` executes without error under this role. */
   async allows(sql: string, params: unknown[] = []): Promise<boolean> {
     try {

@@ -13,14 +13,19 @@ import {
   formatCents,
   ledgerSearchTerm,
   lineVariance,
-  actualForLine,
-  sumActuals,
+  actualForDirection,
+  lineActualsFromRows,
+  seasonTotalsFromRow,
+  totalForLine,
+  ledgerPageRange,
+  parsePageParam,
   monthKeyForDate,
   firstOfMonth,
   formatMonthKey,
   listMonthsWithEntries,
   reconciledThroughMonth,
-  type LedgerAmountRow,
+  LEDGER_PAGE_SIZE,
+  UNCATEGORIZED_KEY,
   type LedgerMonthRow,
 } from "@/lib/treasury";
 
@@ -142,28 +147,178 @@ describe("lineVariance", () => {
   });
 });
 
-describe("sumActuals / actualForLine", () => {
-  const rows: LedgerAmountRow[] = [
-    { direction: "in", amount_cents: 10000, voided_at: null, budget_line_id: "L1" },
-    { direction: "out", amount_cents: 4000, voided_at: null, budget_line_id: "L2" },
-    { direction: "out", amount_cents: 2500, voided_at: null, budget_line_id: null },
-    // voided rows never count
-    { direction: "in", amount_cents: 99999, voided_at: "2026-01-01", budget_line_id: "L1" },
-  ];
+// Every money total now arrives as a SQL aggregate (migration 0019) instead of
+// being summed in JavaScript over a fetched row list, which silently stopped at
+// PostgREST's 1000-row cap. What is left to test here is the shaping — and
+// above all that a FAILED read produces null, never zeros: "$0.00" is a number a
+// treasurer would read aloud to a board, and a blank is not.
+describe("seasonTotalsFromRow", () => {
+  const row = {
+    in_cents: 250000,
+    out_cents: 90000,
+    net_cents: 160000,
+    entry_count: 42,
+    uncategorized_count: 3,
+    uncategorized_cents: 12500,
+    months: ["2026-07", "2026-06"],
+  };
 
-  test("sumActuals excludes voided", () => {
-    expect(sumActuals(rows)).toEqual({
-      inCents: 10000,
-      outCents: 6500,
-      netCents: 3500,
+  test("maps a whole aggregate row", () => {
+    expect(seasonTotalsFromRow(row)).toEqual({
+      inCents: 250000,
+      outCents: 90000,
+      netCents: 160000,
+      entryCount: 42,
+      uncategorizedCount: 3,
+      uncategorizedCents: 12500,
+      months: ["2026-07", "2026-06"],
     });
   });
 
-  test("actualForLine matches line + direction, skips voided", () => {
-    expect(actualForLine("L1", "income", rows)).toBe(10000);
-    expect(actualForLine("L2", "expense", rows)).toBe(4000);
-    // wrong direction contributes nothing
-    expect(actualForLine("L1", "expense", rows)).toBe(0);
+  test("accepts bigint columns delivered as strings", () => {
+    expect(seasonTotalsFromRow({ ...row, in_cents: "250000" })?.inCents).toBe(250000);
+  });
+
+  test("a missing or malformed row is null, NOT a zeroed total", () => {
+    expect(seasonTotalsFromRow(null)).toBeNull();
+    expect(seasonTotalsFromRow(undefined)).toBeNull();
+    expect(seasonTotalsFromRow("nope")).toBeNull();
+    expect(seasonTotalsFromRow({ ...row, net_cents: null })).toBeNull();
+    expect(seasonTotalsFromRow({})).toBeNull();
+  });
+
+  test("a season with no months at all still maps", () => {
+    expect(seasonTotalsFromRow({ ...row, months: null })?.months).toEqual([]);
+  });
+});
+
+describe("lineActualsFromRows / actualForDirection / totalForLine", () => {
+  const rows = [
+    { budget_line_id: "L1", in_cents: 10000, out_cents: 0 },
+    { budget_line_id: "L2", in_cents: 0, out_cents: 4000 },
+    { budget_line_id: null, in_cents: 0, out_cents: 2500 }, // uncategorized bucket
+  ];
+  const map = lineActualsFromRows(rows);
+
+  test("keys by line id, with the null line under the uncategorized key", () => {
+    expect(map.get("L1")).toEqual({ inCents: 10000, outCents: 0 });
+    expect(map.get(UNCATEGORIZED_KEY)).toEqual({ inCents: 0, outCents: 2500 });
+  });
+
+  test("a non-array (a failed read) yields an empty map, not a throw", () => {
+    expect(lineActualsFromRows(null).size).toBe(0);
+    expect(lineActualsFromRows({ oops: true }).size).toBe(0);
+  });
+
+  test("actualForDirection reads a line the way its category means it", () => {
+    expect(actualForDirection(map.get("L1"), "income")).toBe(10000);
+    expect(actualForDirection(map.get("L2"), "expense")).toBe(4000);
+    // wrong direction contributes nothing — a stray entry never inflates a line
+    expect(actualForDirection(map.get("L1"), "expense")).toBe(0);
+    expect(actualForDirection(undefined, "income")).toBe(0);
+  });
+
+  test("totalForLine is every cent booked to the line, both directions", () => {
+    expect(totalForLine({ inCents: 10000, outCents: 4000 })).toBe(14000);
+    expect(totalForLine(undefined)).toBe(0);
+  });
+});
+
+// The ledger list is explicitly paginated because PostgREST truncates at
+// `max_rows` with no signal. The arithmetic below is what the "showing X–Y of N"
+// line promises, so it is pinned: an off-by-one here is a treasurer being told
+// she is looking at rows she is not.
+describe("parsePageParam", () => {
+  test("a positive integer passes through", () => {
+    expect(parsePageParam("3")).toBe(3);
+    expect(parsePageParam(" 12 ")).toBe(12);
+  });
+
+  test("anything that isn't a page number falls back to page 1", () => {
+    expect(parsePageParam(null)).toBe(1);
+    expect(parsePageParam(undefined)).toBe(1);
+    expect(parsePageParam("")).toBe(1);
+    expect(parsePageParam("0")).toBe(1);
+    expect(parsePageParam("-4")).toBe(1); // must never produce a negative range
+    expect(parsePageParam("1.5")).toBe(1);
+    expect(parsePageParam("abc")).toBe(1);
+    expect(parsePageParam("1e400")).toBe(1);
+    // Next hands back an array for a duplicated ?page=
+    expect(parsePageParam(["2", "3"] as unknown as string)).toBe(1);
+  });
+});
+
+describe("ledgerPageRange", () => {
+  test("first page of a long ledger", () => {
+    expect(ledgerPageRange(412, 1, 100)).toEqual({
+      page: 1,
+      pages: 5,
+      from: 0,
+      to: 99,
+      firstShown: 1,
+      lastShown: 100,
+      total: 412,
+      hasPrev: false,
+      hasNext: true,
+    });
+  });
+
+  test("a middle page counts from the right offset", () => {
+    const r = ledgerPageRange(412, 3, 100);
+    expect([r.from, r.to]).toEqual([200, 299]);
+    expect([r.firstShown, r.lastShown]).toEqual([201, 300]);
+    expect([r.hasPrev, r.hasNext]).toEqual([true, true]);
+  });
+
+  test("the last page stops at the real total, not at the page size", () => {
+    const r = ledgerPageRange(412, 5, 100);
+    expect([r.firstShown, r.lastShown]).toEqual([401, 412]);
+    expect(r.hasNext).toBe(false);
+  });
+
+  test("an exact multiple does not invent an empty trailing page", () => {
+    const r = ledgerPageRange(400, 4, 100);
+    expect(r.pages).toBe(4);
+    expect([r.firstShown, r.lastShown]).toEqual([301, 400]);
+    expect(r.hasNext).toBe(false);
+  });
+
+  test("past the end clamps to the last real page", () => {
+    const r = ledgerPageRange(150, 99, 100);
+    expect(r.page).toBe(2);
+    expect([r.firstShown, r.lastShown]).toEqual([101, 150]);
+  });
+
+  test("an empty ledger is one page showing nothing", () => {
+    const r = ledgerPageRange(0, 1, 100);
+    expect(r).toEqual({
+      page: 1,
+      pages: 1,
+      from: 0,
+      to: 99,
+      firstShown: 0,
+      lastShown: 0,
+      total: 0,
+      hasPrev: false,
+      hasNext: false,
+    });
+  });
+
+  test("a single entry reads 1–1 of 1", () => {
+    const r = ledgerPageRange(1, 1, 100);
+    expect([r.firstShown, r.lastShown, r.pages]).toEqual([1, 1, 1]);
+  });
+
+  test("nonsense totals and page sizes degrade to a safe first page", () => {
+    expect(ledgerPageRange(-5, 1, 100).total).toBe(0);
+    expect(ledgerPageRange(NaN, 1, 100).total).toBe(0);
+    const r = ledgerPageRange(250, 1, 0);
+    expect(r.to - r.from + 1).toBe(LEDGER_PAGE_SIZE);
+  });
+
+  test("the default page size is the one the ledger actually uses", () => {
+    const r = ledgerPageRange(1000, 2);
+    expect([r.from, r.to]).toEqual([LEDGER_PAGE_SIZE, LEDGER_PAGE_SIZE * 2 - 1]);
   });
 });
 
@@ -238,8 +393,17 @@ describe("ledgerSearchTerm", () => {
     expect(ledgerSearchTerm(`he said "hi"`)).toBe("he said hi");
   });
 
+  // `_` is an ilike wildcard too — it matches any ONE character. Left in, a
+  // search for "check_no" quietly also matched "check-no" and "checkano", so the
+  // treasurer saw entries she did not ask for and had no way to tell why.
+  test("strips the single-character ilike wildcard as well", () => {
+    expect(ledgerSearchTerm("check_no")).toBe("check no");
+    expect(ledgerSearchTerm("_")).toBeNull();
+    expect(ledgerSearchTerm("bus_co_2026")).toBe("bus co 2026");
+  });
+
   test("punctuation-only input leaves nothing to search on", () => {
-    expect(ledgerSearchTerm("%*(),")).toBeNull();
+    expect(ledgerSearchTerm("%*(),_")).toBeNull();
   });
 
   test("caps the length — a search is a payee, not an expression", () => {

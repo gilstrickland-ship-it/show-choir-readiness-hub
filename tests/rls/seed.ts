@@ -147,6 +147,12 @@ insert into budget_lines (id, program_id, category_id, name, planned_cents) valu
 insert into ledger_entries (id, program_id, season_id, direction, amount_cents, budget_line_id, entered_by, memo) values
   ('${p.ledgerLive}', '${p.program}', '${p.seasonActive}', 'out', 12500, '${p.budgetLine}', '${p.treasurer}', 'live entry');
 
+-- A live entry with no budget line. This is the row categorize_ledger_entry
+-- exists for (void + re-enter on the line, one transaction), and the one the
+-- Uncategorized nudge counts.
+insert into ledger_entries (id, program_id, season_id, direction, amount_cents, entered_by, memo, counterparty) values
+  ('${p.ledgerUncategorized}', '${p.program}', '${p.seasonActive}', 'out', 7500, '${p.treasurer}', 'uncategorized entry', 'Bus Co');
+
 insert into ledger_audit (id, program_id, entry_id, action, actor) values
   ('${p.ledgerAudit}', '${p.program}', '${p.ledgerLive}', 'create', '${p.treasurer}');
 
