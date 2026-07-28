@@ -217,6 +217,18 @@ export type ShareResource =
   | "signup_page"
   | "season_calendar";
 
+// What each kind of link is CALLED, in the words the app already uses for it
+// (spec 005 Wave 13 / T164). Exhaustive over ShareResource, so adding a kind is
+// a type error here rather than a raw enum value ("signup_page") reaching a
+// director reading the Settings listing — which is what the page's own private
+// copy of this map did for `packet` before it moved here.
+export const SHARE_RESOURCE_LABELS: Record<ShareResource, string> = {
+  itinerary: "Itinerary",
+  packet: "Parent packet",
+  signup_page: "Volunteer signup",
+  season_calendar: "Season calendar",
+};
+
 export interface ResolvedShareLink {
   kind: "share";
   tokenId: string;
