@@ -5,7 +5,7 @@ import { SubTabs } from "../SubTabs";
 import { settingsTabs } from "@/lib/subnav";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
-import { readFlash } from "@/lib/flash";
+import { readFlash, oneParam } from "@/lib/flash";
 import { supportAccessActive, recentSupportViews } from "@/lib/support";
 import { activeShareLinks, type ActiveShareLink } from "@/lib/tokens";
 import { emailHealth } from "@/lib/email";
@@ -15,7 +15,11 @@ import { SpendingRulesSection } from "./SpendingRulesSection";
 import { ShareLinksSection } from "./ShareLinksSection";
 import { EmailHealthSection, type EmailCheck } from "./EmailHealthSection";
 import { SupportAccessSection } from "./SupportAccessSection";
-import { SETTINGS_FLASH_MAPS, type SettingsSection } from "./shared";
+import {
+  SETTINGS_ANCHOR,
+  SETTINGS_FLASH_MAPS,
+  type SettingsSection,
+} from "./shared";
 
 // Settings § Program (director/admin). Four unrelated admin concerns used to be
 // stacked here under one <h1> with no heading between them: the program's own
@@ -52,6 +56,21 @@ export default async function SettingsPage({
   }
   const sp = await searchParams;
   const flash = readFlash<SettingsSection>(sp, SETTINGS_FLASH_MAPS);
+
+  // Revoking a share link is the app's only irreversible act, so it asks first
+  // (T143e) — the same two-step every other destructive control uses. The first
+  // press is a LINK to `?confirm=revoke_<linkId>`; the box that address opens is
+  // the only place a form that posts the revoke exists. An id that names no live
+  // link simply matches no row, so a hand-typed address opens nothing.
+  const confirmParam = oneParam(sp, "confirm");
+  const confirmRevokeId = confirmParam?.startsWith("revoke_")
+    ? confirmParam.slice("revoke_".length)
+    : null;
+  // Asking, and cancelling, both land back on the section that owns the row.
+  const revokeHref = (linkId: string | null): string =>
+    `/${slug}/settings${
+      linkId ? `?confirm=revoke_${encodeURIComponent(linkId)}` : ""
+    }#${SETTINGS_ANCHOR.share}`;
 
   const isDirector = role === "director";
   const tz = program.timezone;
@@ -180,6 +199,8 @@ export default async function SettingsPage({
         links={shareLinks}
         unavailable={shareLinksUnavailable}
         labelFor={subjectFor}
+        confirmRevokeId={confirmRevokeId}
+        revokeHref={revokeHref}
       />
 
       <EmailHealthSection

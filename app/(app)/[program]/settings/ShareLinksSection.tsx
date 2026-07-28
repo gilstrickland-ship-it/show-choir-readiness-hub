@@ -1,3 +1,5 @@
+import { Fragment } from "react";
+import Link from "next/link";
 import type { PageFlash } from "@/lib/flash";
 import { SHARE_RESOURCE_LABELS, type ActiveShareLink } from "@/lib/tokens";
 import { formatDateInTz } from "@/lib/datetime";
@@ -20,9 +22,22 @@ import { SETTINGS_ANCHOR, type SettingsSection } from "./shared";
 // one moment — the instant it is minted. That is why this page lists metadata
 // and never a link: there is no "show it to me again" to build.
 //
-// Revoking is one click and takes effect immediately. It sits in `.table-action`
-// so it is pinned to the right edge of the scroll port on a phone rather than
-// starting several hundred pixels into a table nobody has scrolled (T143b).
+// REVOKING ASKS FIRST (T143e). It used to be one click, and it was the only
+// irreversible act in the app without a confirm step: the address dies the
+// instant it is pressed, every family holding it loses the schedule, and the
+// only recovery is to mint a new link and get the new address to all of them —
+// which for a broadcast link handed out in a newsletter may be impossible. So it
+// is now the same two-step every other destructive control uses (delete trip,
+// remove member, deactivate student, the itinerary's PublishGate): the button is
+// a LINK to `?confirm=revoke_<id>`, and the box that address opens holds the only
+// form on this page that can post the revoke. Nothing here can revoke in one tap.
+//
+// The trigger sits in `.table-action` so it is pinned to the right edge of the
+// scroll port on a phone rather than starting several hundred pixels into a table
+// nobody has scrolled (T143b); the confirm opens in a row of its own beneath,
+// spanning every column, the way the commitments table and the member list do.
+
+const SHARE_COLUMNS = 4;
 
 export function ShareLinksSection({
   programId,
@@ -32,6 +47,8 @@ export function ShareLinksSection({
   links,
   unavailable,
   labelFor,
+  confirmRevokeId,
+  revokeHref,
 }: {
   programId: string;
   slug: string;
@@ -46,6 +63,11 @@ export function ShareLinksSection({
   // What the link is OF — a competition name, a season label — resolved by the
   // page, which is the half that can query.
   labelFor: (link: ActiveShareLink) => string | null;
+  // Which link the reader has asked to revoke (`?confirm=revoke_<id>`), or null.
+  // An id matching no row on this page opens nothing at all.
+  confirmRevokeId: string | null;
+  // This section's URL asking about one link, or with nothing being asked.
+  revokeHref: (linkId: string | null) => string;
 }) {
   const summary = unavailable
     ? "Couldn't be read"
@@ -101,33 +123,89 @@ export function ShareLinksSection({
             {links.map((l) => {
               const subject = labelFor(l);
               const kind = SHARE_RESOURCE_LABELS[l.resource] ?? l.resource;
+              const named = `${kind.toLowerCase()} link${
+                subject ? ` for ${subject}` : ""
+              }`;
+              const asking = confirmRevokeId === l.id;
               return (
-                <tr key={l.id}>
-                  <td>
-                    {kind}
-                    {subject ? <span className="muted"> · {subject}</span> : null}
-                  </td>
-                  <td className="muted">{formatDateInTz(l.created_at, tz)}</td>
-                  <td className="muted">
-                    {l.expires_at ? formatDateInTz(l.expires_at, tz) : "Never"}
-                  </td>
-                  <td className="table-action">
-                    <form action={revokeShareLinkAction}>
-                      <input type="hidden" name="programId" value={programId} />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="shareLinkId" value={l.id} />
-                      <button
-                        type="submit"
+                <Fragment key={l.id}>
+                  <tr>
+                    <td>
+                      {kind}
+                      {subject ? <span className="muted"> · {subject}</span> : null}
+                    </td>
+                    <td className="muted">{formatDateInTz(l.created_at, tz)}</td>
+                    <td className="muted">
+                      {l.expires_at ? formatDateInTz(l.expires_at, tz) : "Never"}
+                    </td>
+                    <td className="table-action">
+                      <Link
+                        href={revokeHref(asking ? null : l.id)}
                         className="linklike danger"
-                        aria-label={`Revoke the ${kind.toLowerCase()} link${
-                          subject ? ` for ${subject}` : ""
-                        }`}
+                        aria-label={
+                          asking
+                            ? `Keep the ${named}`
+                            : `Revoke the ${named}…`
+                        }
                       >
-                        Revoke
-                      </button>
-                    </form>
-                  </td>
-                </tr>
+                        {asking ? "Cancel" : "Revoke…"}
+                      </Link>
+                    </td>
+                  </tr>
+
+                  {asking && (
+                    <tr className="table-panel-row">
+                      <td colSpan={SHARE_COLUMNS}>
+                        <div className="table-panel">
+                          <div className="confirm-box stack">
+                            <p>
+                              Revoke the {named}? Three things happen, and none
+                              of them can be undone:
+                            </p>
+                            <ul>
+                              <li>
+                                The web address stops working immediately.
+                              </li>
+                              <li>
+                                Everyone who already has it loses access —
+                                anyone who bookmarked it, and anyone they
+                                forwarded it to, sees only &ldquo;This link is
+                                no longer active&rdquo;.
+                              </li>
+                              <li>
+                                There is no way to switch it back on. To share
+                                this again you have to make a{" "}
+                                <strong>new link</strong> and send the new
+                                address to everyone who needs it.
+                              </li>
+                            </ul>
+                            <div className="row-inline">
+                              <form action={revokeShareLinkAction}>
+                                <input
+                                  type="hidden"
+                                  name="programId"
+                                  value={programId}
+                                />
+                                <input type="hidden" name="slug" value={slug} />
+                                <input
+                                  type="hidden"
+                                  name="shareLinkId"
+                                  value={l.id}
+                                />
+                                <button type="submit" className="danger">
+                                  Revoke this link
+                                </button>
+                              </form>
+                              <Link href={revokeHref(null)}>
+                                Keep it working
+                              </Link>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>

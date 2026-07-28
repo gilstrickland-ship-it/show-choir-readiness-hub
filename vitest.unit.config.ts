@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 // ============================================================================
 
 export default defineConfig({
+  // The .tsx spec below compiles JSX the way Next does — the automatic runtime,
+  // so a spec never has to import React just to render one component.
+  esbuild: { jsx: 'automatic' },
   resolve: {
     // Mirror tsconfig's "@/*" → project root, so specs import app modules the
     // same way the app does.
@@ -20,6 +23,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['tests/unit/**/*.spec.ts'],
+    // .tsx too: one spec renders a server component to static markup to prove a
+    // destructive control is absent from the page until it is confirmed
+    // (T143e) — which is a fact about JSX, not about a pure function.
+    include: ['tests/unit/**/*.spec.ts', 'tests/unit/**/*.spec.tsx'],
   },
 });
