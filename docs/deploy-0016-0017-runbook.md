@@ -1,6 +1,8 @@
 # Deploy runbook — migrations 0016 + 0017 (production)
 
-**Status as of 2026-07-27**: production Supabase project `season-engine` (`eaewbydelcgyskbhejnk`) is at migration **0015**. Two migrations are pending, and they must be applied **in order**.
+**APPLIED 2026-07-27.** Production `season-engine` (`eaewbydelcgyskbhejnk`) was at **0015**; `0016`, `0017` and follow-up `0018` are now applied and verified (61/61 edges composite, 0 poisoned rows, 3/3 competitions backfilled, security advisors clear). This document is kept as the record and as the procedure for any other environment.
+
+Original status follows.
 
 | # | Migration | Why it is pending | Impact today |
 |---|---|---|---|

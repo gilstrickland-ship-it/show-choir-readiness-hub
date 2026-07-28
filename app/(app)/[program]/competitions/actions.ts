@@ -12,12 +12,13 @@ import {
   competitionEnsembleIds,
   competitionRoster,
   ensemblesInProgram,
+  resolveCompetition,
   resolveCompetitionId,
   resolveSeasonId,
   type CompetitionStatus,
 } from "@/lib/competitions";
 import { flag, type FlaggableProgram } from "@/lib/flags";
-import { returnPath } from "@/lib/return-path";
+import { returnPath, programPath } from "@/lib/return-path";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { runPacketParse } from "@/lib/ai/packet-parse";
 
@@ -38,8 +39,9 @@ function seasonReturn(fd: FormData, slug: string): string | null {
 }
 
 // A SPARSE save carries only the fields it edits (the Season page's row-edit
-// popover: name, date, status). Full forms — the module pages' — carry the whole
-// record, where an absent field still means "cleared", byte-for-byte as before.
+// popover: name, date, status; the comp page's ensemble-change confirm: the new
+// ensemble set). Full forms — the module pages' — carry the whole record, where
+// an absent field still means "cleared", byte-for-byte as before.
 function isSparse(fd: FormData): boolean {
   return str(fd, "sparse") === "1";
 }
@@ -153,7 +155,6 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const competitionId = str(formData, "competitionId");
-  const seasonId = nullable(formData, "seasonId");
   await requireRole(programId, COMPETITION_WRITE_ROLES);
 
   // Spine edit popover (Season page): failures reopen that row's popover, saves
@@ -170,7 +171,8 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   // and, below, from computing an ensemble "removal" out of a set the form was
   // never carrying in the first place.
   const sparse = isSparse(formData);
-  const sends = (key: string): boolean => !sparse || formData.get(key) !== null;
+  const sends = (key: string): boolean =>
+    !sparse || formData.getAll(key).length > 0;
 
   const name = str(formData, "name");
   if (sends("name") && !name) redirect(fail("name"));
@@ -195,23 +197,22 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   // The competition id is a form field. Scoping only the UPDATE below is not
   // enough: a foreign id matches zero rows there WITHOUT an error, and the
   // junction writes further down would still run against it. Resolve it first
-  // and stop (Constitution I).
-  if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
-    redirect(fail("save"));
-  }
-  // seasonId only narrows the reseed/release queries below, but a season that
-  // isn't ours is still a posted id we never checked — fail closed.
-  if (seasonId && !(await resolveSeasonId(supabase, programId, seasonId))) {
-    redirect(fail("season"));
-  }
+  // and stop (Constitution I) — and take the season off the stored row, so the
+  // seeding and release passes below never depend on a form carrying it.
+  const resolved = await resolveCompetition(supabase, programId, competitionId);
+  if (!resolved) redirect(fail("save"));
+  const seasonId = resolved.season_id;
 
-  // Who is going is detail-page work, so a sparse save never diffs the junction:
-  // it has no opinion about the set, and treating "didn't say" as "remove" is how
+  // Who is going is detail-page work, so a save that says nothing about the
+  // ensembles doesn't diff the junction: treating "didn't say" as "remove" is how
   // a concurrent ensemble add turned a date fix into a removal-confirm bounce.
+  // The ensemble-change confirm is the one sparse form that DOES post the set,
+  // and it posts nothing else — everything it used to replay through hidden
+  // inputs is re-read here instead.
   let added: string[] = [];
   let removed: string[] = [];
   let newEnsembleIds: string[] = [];
-  if (!sparse) {
+  if (sends("ensemble_ids")) {
     newEnsembleIds = ensembleIdsFrom(formData);
     // ≥1 ensemble required (F6, D3), and every one of them has to be ours.
     if (newEnsembleIds.length === 0) redirect(fail("ensemble"));
@@ -227,20 +228,27 @@ export async function updateCompetition(formData: FormData): Promise<void> {
     removed = currentEnsembleIds.filter((id) => !newSet.has(id));
 
     // Guard: removing an ensemble drops students from eligibility — confirm first.
+    // The slug arrives as a form field, so the target is built through the
+    // fail-closed helper rather than interpolated (lib/return-path).
     if (removed.length > 0 && !confirmed) {
+      const pending = encodeURIComponent(newEnsembleIds.join(","));
       redirect(
-        `/${slug}/competitions/${competitionId}?confirm=ensemble&pending_ensembles=${encodeURIComponent(newEnsembleIds.join(","))}`,
+        `${programPath(slug, `competitions/${competitionId}`) ?? "/"}?confirm=ensemble&pending_ensembles=${pending}`,
       );
     }
   }
 
-  const { error } = await supabase
-    .from("competitions")
-    .update(fields)
-    .eq("id", competitionId)
-    .eq("program_id", programId);
+  // A form that edits only the ensembles has no core fields to write; an UPDATE
+  // with nothing in it is a round-trip that can only fail.
+  if (Object.keys(fields).length > 0) {
+    const { error } = await supabase
+      .from("competitions")
+      .update(fields)
+      .eq("id", competitionId)
+      .eq("program_id", programId);
 
-  if (error) redirect(fail("save"));
+    if (error) redirect(fail("save"));
+  }
 
   // Apply junction changes. A failure here is a real failure — swallowing it is
   // how a "who is going" change reports success and never lands.
@@ -274,7 +282,7 @@ export async function updateCompetition(formData: FormData): Promise<void> {
   }
 
   // Removal cleanup: drop eligibility for students in NO remaining ensemble.
-  if (removed.length > 0 && seasonId) {
+  if (removed.length > 0) {
     await releaseRemovedStudents(supabase, {
       programId,
       competitionId,
@@ -350,26 +358,30 @@ async function releaseRemovedStudents(
     .in("student_id", toRemove);
 }
 
-// Manual "reseed" action (idempotent; safe to re-run when the roster changes).
+// "Add missing students" (idempotent; safe to re-run when the roster changes) —
+// every active-season member of the participating ensembles who has no
+// attendance row for this competition gets one, marked expected. Statuses
+// already set are untouched.
 export async function reseedAttendance(formData: FormData): Promise<void> {
   const programId = str(formData, "programId");
   const slug = str(formData, "slug");
   const competitionId = str(formData, "competitionId");
-  const seasonId = nullable(formData, "seasonId");
   await requireRole(programId, COMPETITION_WRITE_ROLES);
 
   const supabase = await createClient();
   // Seeding writes attendance rows keyed on competition_id, so an unresolved
   // competition id here would plant them against another program's competition.
-  if (!(await resolveCompetitionId(supabase, programId, competitionId))) {
-    redirect(`/${slug}/competitions/${competitionId}?error=save`);
-  }
-  if (seasonId && !(await resolveSeasonId(supabase, programId, seasonId))) {
-    redirect(`/${slug}/competitions/${competitionId}?error=save`);
-  }
+  // The season comes off the resolved row — the form doesn't carry one.
+  const resolved = await resolveCompetition(supabase, programId, competitionId);
+  if (!resolved) redirect(`/${slug}/competitions/${competitionId}?error=save`);
 
   const ensembleIds = await competitionEnsembleIds(supabase, competitionId);
-  await seedAttendance(supabase, { programId, competitionId, ensembleIds, seasonId });
+  await seedAttendance(supabase, {
+    programId,
+    competitionId,
+    ensembleIds,
+    seasonId: resolved.season_id,
+  });
 
   revalidatePath(`/${slug}/competitions/${competitionId}`);
   redirect(`/${slug}/competitions/${competitionId}?reseeded=1`);

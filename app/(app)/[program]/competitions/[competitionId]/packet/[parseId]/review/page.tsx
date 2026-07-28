@@ -8,8 +8,10 @@ import {
   ITINERARY_ITEM_KINDS,
 } from "@/lib/competitions";
 import { CompetitionTabs } from "../../../CompetitionTabs";
+import { PacketPipeline } from "../../../PacketPipeline";
 import { IntroStrip, HelpDot } from "../../../../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
+import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { acceptParse } from "./actions";
 import { formatTimeZoneLabel } from "@/lib/datetime";
 
@@ -109,31 +111,38 @@ export default async function ReviewPage({
     signedUrl = signed?.signedUrl ?? null;
   }
 
+  // The same five-step strip the packet and itinerary pages show (US7-4).
+  const compBase = `/${slug}/competitions/${competitionId}`;
+  const pipeline = packetPipelineSteps(
+    await loadPacketPipeline(supabase, {
+      programId: program.id,
+      competitionId,
+    }),
+    compBase,
+  );
+
   return (
     <section className="stack">
       <p>
-        <Link href={`/${slug}/competitions/${competitionId}/packet`}>
-          ← Packet
-        </Link>
+        <Link href={`${compBase}/packet`}>← Packet</Link>
       </p>
       <CompetitionTabs
         slug={slug}
         competitionId={competitionId}
         active="packet"
       />
+      <PacketPipeline steps={pipeline} />
       <div className="page-title-row">
         <h1>Review parsed packet</h1>
         {showGuide && (
-          <HelpDot
-            href={`/${slug}/competitions/${competitionId}/packet/${parseId}/review?help=1`}
-          />
+          <HelpDot href={`${compBase}/packet/${parseId}/review?help=1`} />
         )}
       </div>
       {showGuide && (
         <IntroStrip
           surfaceKey="packet_review"
           programId={program.id}
-          selfPath={`/${slug}/competitions/${competitionId}/packet/${parseId}/review`}
+          selfPath={`${compBase}/packet/${parseId}/review`}
           guideState={guideState}
           help={sp.help === "1"}
         />

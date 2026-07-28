@@ -82,6 +82,31 @@ export const COMMON_CAPTIONS: readonly string[] = [
 // failure a friendly message instead of an invisible poisoned row.
 // ============================================================================
 
+// The competition row an action is allowed to touch: its id AND the season it
+// belongs to, read off the stored row. Callers that need the season take it from
+// here rather than from a hidden field — a posted season is one more id to check,
+// and a form that doesn't carry one (the slim ensemble-change confirm) would
+// otherwise silently skip the season-scoped cleanup.
+export interface ResolvedCompetition {
+  id: string;
+  season_id: string;
+}
+
+export async function resolveCompetition(
+  supabase: SupabaseClient,
+  programId: string,
+  competitionId: string,
+): Promise<ResolvedCompetition | null> {
+  if (!programId || !competitionId) return null;
+  const { data } = await supabase
+    .from("competitions")
+    .select("id, season_id")
+    .eq("id", competitionId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  return (data as ResolvedCompetition | null) ?? null;
+}
+
 // The competition id, only when it belongs to `programId`. Null otherwise —
 // callers redirect to their surface's existing error state.
 export async function resolveCompetitionId(
@@ -89,14 +114,7 @@ export async function resolveCompetitionId(
   programId: string,
   competitionId: string,
 ): Promise<string | null> {
-  if (!programId || !competitionId) return null;
-  const { data } = await supabase
-    .from("competitions")
-    .select("id")
-    .eq("id", competitionId)
-    .eq("program_id", programId)
-    .maybeSingle();
-  return (data as { id: string } | null)?.id ?? null;
+  return (await resolveCompetition(supabase, programId, competitionId))?.id ?? null;
 }
 
 // True when every posted ensemble id belongs to `programId`. A partial match is

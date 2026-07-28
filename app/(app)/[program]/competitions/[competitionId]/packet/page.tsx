@@ -6,6 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 import { COMPETITION_WRITE_ROLES } from "@/lib/competitions";
 import { formatDateTimeInTz } from "@/lib/datetime";
 import { CompetitionTabs } from "../CompetitionTabs";
+import { PacketPipeline } from "../PacketPipeline";
+import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { uploadPacket, reparsePacket, runParseNow } from "./actions";
 
 // A queued/running parse older than this is treated as stuck — the inline worker
@@ -106,10 +108,23 @@ export default async function PacketPage({
     if (!parseByDoc.has(p.document_id)) parseByDoc.set(p.document_id, p);
   }
 
+  // Where this packet is in the five steps (US7-4). Only when parsing is on —
+  // with the flag off there is no parse/review half of the pipeline to show.
+  const pipeline = parseEnabled
+    ? packetPipelineSteps(
+        await loadPacketPipeline(supabase, {
+          programId: program.id,
+          competitionId,
+        }),
+        `/${slug}/competitions/${competitionId}`,
+      )
+    : null;
+
   return (
     <section className="stack">
       <CompetitionTabs slug={slug} competitionId={competitionId} active="packet" />
       <h1>Host packet</h1>
+      {pipeline && <PacketPipeline steps={pipeline} />}
 
       {sp.uploaded && (
         <p className="alert-ok">

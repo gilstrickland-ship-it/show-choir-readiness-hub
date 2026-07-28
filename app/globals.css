@@ -2535,46 +2535,68 @@
     color: var(--alert-text);
   }
 
-  /* Shared row list: 1px separators top, plus a bottom rule on the last row. */
-  .comp-rows {
+  /* ---- Glance cards (spec 005 US7) ----
+     One card per area of comp week. The whole card is the link — a phone-sized
+     tap target that opens the route owning that job. */
+  .comp-glance {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 0.75rem;
+  }
+
+  .comp-glance-card {
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--line-strong);
+    border-radius: var(--radius-m);
+    background: var(--paper);
+    padding: 0.85rem 1rem;
     display: flex;
     flex-direction: column;
+    gap: 0.3rem;
+    min-height: 76px;
+    color: inherit;
+    text-decoration: none;
+    transition: border-color var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease);
   }
 
-  .comp-rows > *:last-child {
-    border-bottom: 1px solid var(--line);
+  .comp-glance-card:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-1);
   }
 
-  .comp-itin-row {
+  .comp-glance-title {
     display: flex;
-    gap: 1rem;
-    padding: 0.55rem 0;
-    border-top: 1px solid var(--line);
-    font-size: 0.875rem;
-    align-items: baseline;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted-ink);
   }
 
-  .comp-itin-time {
-    font-family: var(--font-display-stack);
-    font-size: 1.0625rem;
-    font-weight: 750;
-    width: 76px;
-    flex: none;
-    font-variant-numeric: tabular-nums;
+  .comp-glance-status {
+    font-size: 0.9rem;
+    font-weight: 550;
   }
 
-  .comp-itin-body {
-    flex: 1;
-    min-width: 0;
+  /* Ensemble chips under the comp title. */
+  .comp-head-chips {
+    margin: 0;
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
   }
 
-  .comp-itin-body strong {
-    font-weight: 650;
-  }
-
-  .comp-itin-time.perform,
-  .comp-itin-body .perform {
-    color: var(--accent);
+  /* Edit popover trigger — the same 44px-tall named summary the trip page uses,
+     so nothing mutating hides behind a bare triangle. */
+  .comp-disclosure {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--accent-strong);
+    min-height: 44px;
+    padding: 0.65rem 0;
   }
 
   .comp-att-summary {
@@ -2582,202 +2604,60 @@
     color: var(--muted-ink);
   }
 
-  .comp-att-row {
+  /* ---- Packet pipeline strip (spec 005 US7-4) ----
+     Uploaded → Parsed → Reviewed → On itinerary → Published, shown on all three
+     surfaces the pipeline crosses. Compound selectors on every state variant:
+     a bare `.done`/`.now` in this layer would outrank the base-layer element
+     styles it sits beside (the T061/T066 cascade trap). */
+  .packet-steps {
+    width: 100%;
+  }
+
+  .packet-steps ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
-    gap: 0.75rem;
-    padding: 0.6rem 0;
-    border-top: 1px solid var(--line);
-    align-items: center;
-    font-size: 0.875rem;
     flex-wrap: wrap;
+    gap: 0.35rem 0.9rem;
   }
 
-  .comp-att-name {
-    flex: 1;
-    min-width: 160px;
-  }
-
-  .comp-att-toggle {
-    display: flex;
-    gap: 0.4rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .comp-att-note {
-    font: inherit;
+  .packet-step {
     font-size: 0.8rem;
-    padding: 0.3rem 0.5rem;
-    width: 8rem;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-s);
-    background: var(--paper);
-    color: var(--ink);
+    color: var(--muted-ink);
   }
 
-  .comp-toggle-btn {
-    font: inherit;
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 0.3rem 0.75rem;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-s);
-    background: var(--paper);
-    color: var(--ink-2);
-    cursor: pointer;
-    transition: background-color var(--dur) var(--ease),
-      border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  .packet-step a {
+    color: inherit;
+    text-decoration: none;
   }
 
-  .comp-toggle-btn:hover {
-    border-color: var(--ink-2);
-    color: var(--ink);
+  .packet-step a:hover {
+    color: var(--accent);
+    text-decoration: underline;
   }
 
-  .comp-toggle-btn.active.expected {
-    border-color: var(--ok);
-    background: var(--ok-soft);
+  .packet-step-mark {
+    margin-right: 0.3rem;
+    font-weight: 700;
+  }
+
+  .packet-step-state {
+    font-size: 0.72rem;
+  }
+
+  .packet-step.done {
     color: var(--ok-text);
   }
 
-  .comp-toggle-btn.active.partial {
-    border-color: var(--warn);
-    background: var(--warn-soft);
-    color: var(--warn-text);
-  }
-
-  .comp-toggle-btn.active.absent {
-    border-color: var(--alert);
-    background: var(--alert-soft);
-    color: var(--alert-text);
-  }
-
-  .comp-section-footer {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    margin-top: 0.35rem;
-    font-size: 0.82rem;
-  }
-
-  .comp-section-footer a {
-    color: var(--muted-ink);
-  }
-
-  .comp-section-footer .linklike {
-    font-size: 0.82rem;
-    color: var(--muted-ink);
-  }
-
-  .comp-shift-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 0.75rem;
-  }
-
-  .comp-shift-card {
-    border: 1px solid var(--line);
-    border-radius: var(--radius-m);
-    padding: 0.85rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .comp-shift-title {
+  .packet-step.now {
+    color: var(--ink);
     font-weight: 650;
-    font-size: 0.9rem;
   }
 
-  .comp-shift-time {
-    font-size: 0.8rem;
-    color: var(--muted-ink);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .comp-progress {
-    height: 6px;
-    border-radius: 3px;
-    background: var(--surface-2);
-    overflow: hidden;
-  }
-
-  .comp-progress-fill {
-    height: 100%;
-  }
-
-  .comp-progress-fill.warn {
-    background: var(--warn);
-  }
-
-  .comp-progress-fill.ok {
-    background: var(--ok);
-  }
-
-  .comp-shift-count {
-    font-size: 0.78rem;
-    font-weight: 600;
-  }
-
-  .comp-shift-count.warn {
-    color: var(--warn-text);
-  }
-
-  .comp-shift-count.ok {
-    color: var(--ok-text);
-  }
-
-  .comp-meal-rule {
-    margin: 0;
-    font-size: 0.84rem;
-    color: var(--muted-ink);
-  }
-
-  .comp-meal-figures {
-    display: flex;
-    gap: 1.75rem;
-    align-items: baseline;
-    padding: 0.6rem 0;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
-  }
-
-  .comp-meal-num {
-    font-family: var(--font-display-stack);
-    font-size: 2.125rem;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .comp-meal-ens {
-    font-size: 0.875rem;
-  }
-
-  .comp-meal-note {
-    margin: 0;
-    font-size: 0.82rem;
-  }
-
-  .comp-packet-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    padding: 0.6rem 0;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-    font-size: 0.875rem;
-    flex-wrap: wrap;
-  }
-
-  .comp-packet-file {
-    flex: 1;
-    min-width: 200px;
-  }
-
-  .comp-packet-row a {
-    font-size: 0.82rem;
-    color: var(--muted-ink);
+  .packet-step.blocked {
+    color: var(--alert-text);
+    font-weight: 650;
   }
 
   .comp-caption {
@@ -4667,27 +4547,12 @@
       font-size: 1.2rem;
     }
 
-    .comp-att-row {
-      align-items: flex-start;
+    /* Glance cards go single-column on a phone: a two-up grid at 375px puts
+       "41 expected · 2 absent" on three lines. */
+    .comp-glance {
+      grid-template-columns: 1fr;
     }
 
-    .comp-att-name {
-      min-width: 100%;
-    }
-
-    .comp-att-toggle {
-      width: 100%;
-    }
-
-    .comp-att-note {
-      flex: 1;
-      width: auto;
-      min-width: 6rem;
-    }
-
-    .comp-meal-figures {
-      gap: 1rem 1.5rem;
-    }
 
     /* Wave C task landings on phones: metric strip 2-col, header + filters
        stack, drawer stays on-screen, queue rows break. */

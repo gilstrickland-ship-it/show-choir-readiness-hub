@@ -17,8 +17,10 @@ import {
 } from "@/lib/itinerary-days";
 import { activeShareLinks, shareLinkUrl } from "@/lib/tokens";
 import { CompetitionTabs } from "../CompetitionTabs";
+import { PacketPipeline } from "../PacketPipeline";
 import { IntroStrip, HelpDot } from "../../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
+import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import {
   addItineraryItem,
   updateItineraryItem,
@@ -155,6 +157,25 @@ export default async function ItineraryPage({
     signedUrl = signed?.signedUrl ?? null;
   }
 
+  // Packet pipeline strip (US7-4) — the last two steps of it happen on this page.
+  // Only when a packet was actually uploaded and parsing is on: a hand-entered
+  // itinerary has no packet half, and the strip would be four grey steps of
+  // nothing. The itinerary state it needs is already loaded above.
+  const pipeline =
+    flags.packet_parse && storagePath
+      ? packetPipelineSteps(
+          await loadPacketPipeline(supabase, {
+            programId: program.id,
+            competitionId,
+            itinerary: {
+              published: itinerary?.status === "published",
+              itemCount: items.length,
+            },
+          }),
+          `/${slug}/competitions/${competitionId}`,
+        )
+      : null;
+
   const showPublishConfirm =
     sp.confirm === "publish" && canWrite && itinerary?.status === "draft";
 
@@ -287,6 +308,8 @@ export default async function ItineraryPage({
           />
         )}
       </div>
+
+      {pipeline && <PacketPipeline steps={pipeline} />}
 
       {showGuide && (
         <IntroStrip
