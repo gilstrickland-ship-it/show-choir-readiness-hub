@@ -200,18 +200,31 @@ grant usage on schema auth to anon, authenticated, service_role;
 grant select on auth.users to anon, authenticated, service_role;
 `;
 
-// Grant table privileges AFTER the schema exists so RLS — not a missing GRANT —
+// Grant TABLE privileges AFTER the schema exists so RLS — not a missing GRANT —
 // is what the specs actually exercise. (A missing grant and an RLS denial both
 // surface as SQLSTATE 42501, which would let a broken policy pass silently.)
+//
+// FUNCTION GRANTS ARE DELIBERATELY ABSENT, and that is a fix, not an omission.
+// This block used to end with `grant execute on all functions in schema public
+// to anon, …` (and the same for `private`), which runs AFTER every migration —
+// so it silently undid the EXECUTE revokes that 0018 and 0019 exist to make.
+// Those revokes are the whole point of both files: a SECURITY DEFINER money
+// function reachable at /rest/v1/rpc/<name> by `anon` is the defect 0018 was
+// written to clean up. Re-granting them here made them untestable — every
+// assertion about them would have passed with the migration reverted.
+//
+// Nothing is lost by dropping the lines. Migration 0007 grants routines to all
+// three API roles and sets matching default privileges, IN SEQUENCE, so every
+// function reaches the state production is in; the later revokes then land on
+// top exactly as they do on a real project. Functions therefore carry the ACL
+// the migrations gave them, and tests/rls/ledger.spec.ts asserts it directly.
 const GRANTS_SQL = `
 grant usage on schema public to anon, authenticated, service_role;
 grant select, insert, update, delete on all tables in schema public
   to anon, authenticated, service_role;
 grant usage, select on all sequences in schema public
   to anon, authenticated, service_role;
-grant execute on all functions in schema public to anon, authenticated, service_role;
 grant usage on schema private to anon, authenticated, service_role;
-grant execute on all functions in schema private to anon, authenticated, service_role;
 `;
 
 export async function applySchema(url: string): Promise<void> {

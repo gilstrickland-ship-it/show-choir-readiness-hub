@@ -10,7 +10,9 @@
 
 import { describe, test, expect } from 'vitest';
 import { A, B, SUPPORT_USER } from './fixtures';
-import { asUser, asAnon, raw, rlsSkipped, RLS_DENIED } from './harness';
+import { asUser, asAnon, raw, rlsSkipped, RLS_DENIED, type RlsError } from './harness';
+import { postgrestOver } from './postgrest';
+import { loadBoardSnapshot } from '@/lib/pdf/queries';
 import {
   summarizeSeasonLedger,
   UNCATEGORIZED_KEY,
@@ -288,35 +290,50 @@ describe.skipIf(rlsSkipped())('0019 write functions — atomic, treasurer-only, 
     expect(audit).toBe(1);
   });
 
-  test('an already-voided entry returns false and writes NO audit row', async () => {
-    const { ok, auditCount } = await treasurer().tx(async (c) => {
+  // 0020: the single `false` these two used to share said the same thing about
+  // a no-op and a tenancy mistake, so the UI could only offer one sentence for
+  // both. Each raises its own code now, and NEITHER writes anything — which is
+  // the property that actually matters and is asserted below either way.
+  test('an already-voided entry raises OC003 and writes NO audit row', async () => {
+    const { code, auditCount } = await treasurer().tx(async (c) => {
       const before = await c.query(`select count(*)::int as n from ledger_audit where entry_id = $1`, [
         A.ledgerVoided,
       ]);
-      const res = await c.query<{ ok: boolean }>(
-        `select public.void_ledger_entry($1, $2, 'again') as ok`,
-        [A.ledgerVoided, A.program],
-      );
+      let raised = '';
+      // A raised exception aborts the transaction, so the follow-up count needs
+      // a savepoint to roll back to. NOT `rollback; begin` — `set local role`
+      // and the auth GUC are LOCAL to the transaction and would be lost with it,
+      // which would silently continue the test as a superuser with no auth.uid().
+      await c.query('savepoint before_void');
+      try {
+        await c.query(`select public.void_ledger_entry($1, $2, 'again')`, [
+          A.ledgerVoided,
+          A.program,
+        ]);
+      } catch (err) {
+        raised = (err as RlsError).code ?? '';
+        await c.query('rollback to savepoint before_void');
+      }
       const after = await c.query(`select count(*)::int as n from ledger_audit where entry_id = $1`, [
         A.ledgerVoided,
       ]);
-      return { ok: res.rows[0].ok, auditCount: after.rows[0].n - before.rows[0].n };
+      return { code: raised, auditCount: after.rows[0].n - before.rows[0].n };
     });
-    expect(ok).toBe(false);
+    expect(code).toBe('OC003');
     expect(auditCount).toBe(0);
   });
 
   test("another program's entry cannot be voided, and nothing is written", async () => {
     // The definer function is asked to void B's entry while claiming A. It must
     // refuse without acting: the row is scoped by (id, program_id), so the
-    // lookup finds nothing and the call returns false having written neither the
-    // void nor an audit row. Ground truth is read with RLS bypassed, because A's
-    // treasurer cannot see B's rows at all — which is the point.
-    const res = await treasurer().query<{ ok: boolean }>(
-      `select public.void_ledger_entry($1, $2, 'not mine') as ok`,
+    // lookup finds nothing and the call raises "not this program's" having
+    // written neither the void nor an audit row. Ground truth is read with RLS
+    // bypassed, because A's treasurer cannot see B's rows at all — the point.
+    const err = await treasurer().expectDenied(
+      `select public.void_ledger_entry($1, $2, 'not mine')`,
       [B.ledgerLive, A.program],
     );
-    expect(res.rows[0].ok).toBe(false);
+    expect(err.code).toBe('OC001');
     const truth = await raw<{ voided_at: string | null }>(
       `select voided_at from ledger_entries where id = $1`,
       [B.ledgerLive],
@@ -394,11 +411,11 @@ describe.skipIf(rlsSkipped())('0019 write functions — atomic, treasurer-only, 
   });
 
   test('a cross-program entry id files nothing and writes nothing', async () => {
-    const res = await treasurer().query<{ id: string | null }>(
-      `select public.categorize_ledger_entry($1, $2, $3) as id`,
+    const err = await treasurer().expectDenied(
+      `select public.categorize_ledger_entry($1, $2, $3)`,
       [B.ledgerUncategorized, A.program, A.budgetLine],
     );
-    expect(res.rows[0].id).toBeNull();
+    expect(err.code).toBe('OC001');
     const truth = await raw<{ voided_at: string | null; budget_line_id: string | null }>(
       `select voided_at, budget_line_id from ledger_entries where id = $1`,
       [B.ledgerUncategorized],
@@ -407,12 +424,67 @@ describe.skipIf(rlsSkipped())('0019 write functions — atomic, treasurer-only, 
     expect(truth.rows[0].budget_line_id).toBeNull();
   });
 
-  test('an entry that is already on a line files nothing', async () => {
-    const res = await treasurer().query<{ id: string | null }>(
-      `select public.categorize_ledger_entry($1, $2, $3) as id`,
+  test('an entry that is already on a line reads as already filed', async () => {
+    const err = await treasurer().expectDenied(
+      `select public.categorize_ledger_entry($1, $2, $3)`,
       [A.ledgerLive, A.program, A.budgetLine],
     );
-    expect(res.rows[0].id).toBeNull();
+    expect(err.code).toBe('OC002');
+  });
+
+  // THE DOUBLE SUBMIT, WHICH IS THE WHOLE REASON 0020 EXISTS. Filing is a void
+  // plus a replacement, so pressing "Save the line" twice sends the ORIGINAL id
+  // the second time and finds it voided. That used to be indistinguishable from
+  // "not this program's" and from a hand-void — all three returned NULL, and the
+  // UI said "Nothing changed — the entry is still there, uncategorized" about a
+  // filing that had just worked. The replacement's audit row records what it
+  // replaced, so the second call can say "already filed" as a fact.
+  test('filing the same entry twice says ALREADY FILED, not "nothing changed"', async () => {
+    const { firstId, secondCode, replacements } = await treasurer().tx(async (c) => {
+      const first = await c.query<{ id: string }>(
+        `select public.categorize_ledger_entry($1, $2, $3) as id`,
+        [A.ledgerUncategorized, A.program, A.budgetLine],
+      );
+      // The second press. A savepoint, not `rollback; begin` — `set local role`
+      // and the auth GUC belong to the transaction, and losing them would run
+      // the rest of this as a superuser with no auth.uid(). Rolling back to it
+      // also leaves the FIRST filing standing, which is what makes the
+      // replacement count below meaningful.
+      let code = '';
+      await c.query('savepoint before_resubmit');
+      try {
+        await c.query(`select public.categorize_ledger_entry($1, $2, $3)`, [
+          A.ledgerUncategorized,
+          A.program,
+          A.budgetLine,
+        ]);
+      } catch (err) {
+        code = (err as RlsError).code ?? '';
+        await c.query('rollback to savepoint before_resubmit');
+      }
+      const n = await c.query<{ n: number }>(
+        `select count(*)::int as n from ledger_audit
+          where program_id = $1 and action = 'create' and diff ->> 'replaces' = $2::text`,
+        [A.program, A.ledgerUncategorized],
+      );
+      return {
+        firstId: first.rows[0].id,
+        secondCode: code,
+        replacements: n.rows[0].n,
+      };
+    });
+    expect(firstId).toBeTruthy();
+    expect(secondCode).toBe('OC002');
+    // One original, one replacement — never two.
+    expect(replacements).toBe(1);
+  });
+
+  test('an entry voided by hand has nothing to file, and says so distinctly', async () => {
+    const err = await treasurer().expectDenied(
+      `select public.categorize_ledger_entry($1, $2, $3)`,
+      [A.ledgerVoided, A.program, A.budgetLine],
+    );
+    expect(err.code).toBe('OC003');
   });
 
   test('board member cannot categorize', async () => {
@@ -428,7 +500,95 @@ describe.skipIf(rlsSkipped())('0019 write functions — atomic, treasurer-only, 
       `select public.categorize_ledger_entry($1, $2, $3)`,
       [A.ledgerUncategorized, A.program, B.budgetLine],
     );
+    expect(err.code).toBe('OC012');
     expect(err.message).toMatch(/budget line/i);
+  });
+
+  // 0020 §1: five distinct guards used to raise one code, so the ledger could
+  // only ever answer "check the amount (e.g. 1,234.56), direction, and date" —
+  // including when what was actually wrong was a competition from last season.
+  test('add_ledger_entry names WHICH thing it refused', async () => {
+    const cases: [string, unknown[], string][] = [
+      [
+        'a zero amount',
+        [A.program, A.seasonActive, '2026-02-01', 'in', 0, null, null, null],
+        'OC010',
+      ],
+      [
+        "another program's season",
+        [A.program, B.seasonActive, '2026-02-01', 'in', 500, null, null, null],
+        'OC011',
+      ],
+      [
+        "another program's budget line",
+        [A.program, A.seasonActive, '2026-02-01', 'in', 500, B.budgetLine, null, null],
+        'OC012',
+      ],
+      [
+        "another program's competition",
+        [A.program, A.seasonActive, '2026-02-01', 'in', 500, null, B.competition, null],
+        'OC013',
+      ],
+    ];
+    for (const [what, args, code] of cases) {
+      const err = await treasurer().expectDenied(
+        `select public.add_ledger_entry($1, $2, $3::date, $4::ledger_entry_direction, $5::bigint, $6::uuid, $7::uuid, $8::uuid)`,
+        args,
+      );
+      expect(err.code, what).toBe(code);
+    }
+  });
+
+  // The 0019 §8 / 0020 §4 revokes, asserted where they can actually fail. The
+  // harness used to re-grant EXECUTE on every public function to `anon` AFTER
+  // the migrations ran, so these functions were reachable at
+  // /rest/v1/rpc/<name> by an unauthenticated caller throughout the suite and
+  // every one of these assertions would have passed with the revokes deleted.
+  test('the money functions are not executable by anon or PUBLIC', async () => {
+    const SIGNATURES = [
+      'public.ledger_season_totals(uuid, uuid)',
+      'public.ledger_line_actuals(uuid, uuid, uuid, uuid)',
+      'public.ledger_running_balance(uuid, uuid, uuid[])',
+      'public.add_ledger_entry(uuid, uuid, date, ledger_entry_direction, bigint, uuid, uuid, uuid, text, text, text)',
+      'public.void_ledger_entry(uuid, uuid, text)',
+      'public.categorize_ledger_entry(uuid, uuid, uuid)',
+      'private.ledger_may_read(uuid)',
+      'private.ledger_may_write(uuid)',
+    ];
+    for (const sig of SIGNATURES) {
+      const res = await raw<{ anon: boolean; pub: boolean; auth: boolean }>(
+        `select has_function_privilege('anon', $1, 'EXECUTE') as anon,
+                has_function_privilege('public', $1, 'EXECUTE') as pub,
+                has_function_privilege('authenticated', $1, 'EXECUTE') as auth`,
+        [sig],
+      );
+      expect(res.rows[0].anon, `${sig} must not be executable by anon`).toBe(false);
+      expect(res.rows[0].pub, `${sig} must not be executable by PUBLIC`).toBe(false);
+      // The app's own role keeps it — the in-function guards are the real
+      // control, and revoking it from `authenticated` would break the product.
+      if (sig.startsWith('public.')) {
+        expect(res.rows[0].auth, `${sig} must stay executable by authenticated`).toBe(true);
+      }
+    }
+  });
+
+  // 0018's revokes ride the same harness bug, and are equally worth pinning: a
+  // SECURITY INVOKER trigger function exposed as an RPC is what that file
+  // exists to clean up.
+  test("0018's trigger functions are not callable as RPCs", async () => {
+    for (const sig of [
+      'public.enforce_one_group_per_kind_per_trip()',
+      'public.enforce_share_link_resource_program()',
+      'public.handle_new_auth_user()',
+    ]) {
+      const res = await raw<{ anon: boolean; auth: boolean }>(
+        `select has_function_privilege('anon', $1, 'EXECUTE') as anon,
+                has_function_privilege('authenticated', $1, 'EXECUTE') as auth`,
+        [sig],
+      );
+      expect(res.rows[0].anon, `${sig} must not be callable by anon`).toBe(false);
+      expect(res.rows[0].auth, `${sig} must not be callable by authenticated`).toBe(false);
+    }
   });
 
   test('the functions never un-void: the void-only trigger still governs them', async () => {
@@ -457,6 +617,15 @@ describe.skipIf(rlsSkipped())('0019 write functions — atomic, treasurer-only, 
 // the point at which the old un-paginated fetch started printing a smaller
 // number to the board than the Reports page showed on screen. Everything happens
 // inside a rolled-back transaction, so no other spec sees these rows.
+//
+// AND THE LAST TEST RUNS THE ACTUAL LOADER. The two above it drive
+// summarizeSeasonLedger over rows fetched by a hand-written SELECT — which pins
+// the reduction, but not loadBoardSnapshot: its paging loop, its filters, its
+// category rollup and its "reconciled through" line were never executed here, so
+// the defect that shipped (a snapshot printing a PREFIX of the books) could
+// return with this suite still green. The third test hands the real loader a
+// PostgREST-shaped client over this same connection, so the code path the PDF
+// takes is the code path under test.
 // ============================================================================
 
 describe.skipIf(rlsSkipped())('board snapshot: the JS reduction equals the SQL aggregates', () => {
@@ -544,5 +713,74 @@ describe.skipIf(rlsSkipped())('board snapshot: the JS reduction equals the SQL a
       expect(mine?.inCents).toBe(Number(row.in_cents));
       expect(mine?.outCents).toBe(Number(row.out_cents));
     }
+  });
+
+  // THE LOADER ITSELF, over 1,200 real rows. This is the read the PDF performs:
+  // its paging loop, its program+season+not-voided filters, its per-category
+  // rollup and its uncategorized bucket. Everything it reports is checked
+  // against the SQL aggregates the on-screen Reports page uses — because "the
+  // PDF agrees with the page" is the only claim that matters, and it can only
+  // be made by running both.
+  test('loadBoardSnapshot reports the whole season, agreeing with the SQL aggregates', async () => {
+    const { snapshot, totals, byLine } = await treasurer().tx(async (c) => {
+      await c.query(SEED, [A.program, A.seasonActive, A.budgetLine, A.treasurer]);
+      const t = await c.query<{
+        in_cents: string;
+        out_cents: string;
+        entry_count: string;
+        uncategorized_cents: string;
+      }>(`select * from public.ledger_season_totals($1, $2)`, [A.program, A.seasonActive]);
+      const l = await c.query<{
+        budget_line_id: string | null;
+        in_cents: string;
+        out_cents: string;
+      }>(`select * from public.ledger_line_actuals($1, $2)`, [A.program, A.seasonActive]);
+      const snap = await loadBoardSnapshot(postgrestOver(c), A.seasonActive);
+      return { snapshot: snap, totals: t.rows[0], byLine: l.rows };
+    });
+
+    expect(snapshot).not.toBeNull();
+    const s = snapshot!;
+
+    // The uncategorized bucket the loader carved out equals the aggregate's.
+    expect(s.uncategorizedInCents + s.uncategorizedOutCents).toBe(
+      Number(totals.uncategorized_cents),
+    );
+
+    // Actuals, whole. `totalActual*` already fold the uncategorized bucket in,
+    // so together they must account for every cent in the season — and this is
+    // exactly the number that came up short when the read stopped at 1,000.
+    expect(s.totalActualIncome + s.totalActualExpense).toBe(
+      Number(totals.in_cents) + Number(totals.out_cents),
+    );
+
+    // Per category: every line's actual, summed, equals ledger_line_actuals for
+    // the lines that category owns. The seed books everything to one line, so
+    // exactly one category carries it and the rest are zero — which is the
+    // shape a real snapshot has too.
+    const lineTotal = new Map(
+      byLine
+        .filter((r) => r.budget_line_id !== null)
+        .map((r) => [r.budget_line_id as string, Number(r.in_cents) + Number(r.out_cents)]),
+    );
+    const bookedToLines = [...lineTotal.values()].reduce((a, b) => a + b, 0);
+    const rolledUp = [...s.incomeCategories, ...s.expenseCategories].reduce(
+      (sum, cat) => sum + cat.actualCents,
+      0,
+    );
+    expect(rolledUp).toBe(bookedToLines);
+
+    // And the identity that says nothing was dropped or double-counted.
+    expect(rolledUp + s.uncategorizedInCents + s.uncategorizedOutCents).toBe(
+      Number(totals.in_cents) + Number(totals.out_cents),
+    );
+    expect(Number(totals.entry_count)).toBeGreaterThan(CAP);
+  });
+
+  test('loadBoardSnapshot returns null for a season that is not there', async () => {
+    const snapshot = await treasurer().tx((c) =>
+      loadBoardSnapshot(postgrestOver(c), '00000000-0000-0000-0000-000000000000'),
+    );
+    expect(snapshot).toBeNull();
   });
 });

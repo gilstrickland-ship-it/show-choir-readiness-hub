@@ -56,6 +56,34 @@ function rowErrorPath(slug: string, entryId: string, code: string): string {
   return `${base}?edit=${id}&error=${code}#fix-${id}`;
 }
 
+// The 0020 money functions raise a distinct SQLSTATE per outcome, so the error
+// code decides the sentence — never the message text, which lives in the UI.
+// Class `OC` is ours (see 0020's header); an unmapped code falls through to the
+// caller's generic message, which is what an app deployed ahead of the migration
+// gets.
+const OC = {
+  notOurs: "OC001",
+  alreadyFiled: "OC002",
+  alreadyVoided: "OC003",
+  amount: "OC010",
+  season: "OC011",
+  budgetLine: "OC012",
+  competition: "OC013",
+  trip: "OC014",
+  noLine: "OC015",
+} as const;
+
+// `code` on a PostgREST error is the SQLSTATE verbatim. Own-property lookup, not
+// `in`, for the same reason every error map in the app uses it.
+function codeMessage(
+  map: Record<string, string>,
+  error: { code?: string } | null,
+  fallback: string,
+): string {
+  const code = error?.code;
+  return code && Object.hasOwn(map, code) ? map[code] : fallback;
+}
+
 function textOrNull(raw: FormDataEntryValue | null): string | null {
   const v = String(raw ?? "").trim();
   return v || null;
@@ -254,12 +282,17 @@ export async function addEntry(formData: FormData): Promise<void> {
     redirect(`${ledgerPath(slug)}?error=entry_tag`);
   }
 
-  let receiptPath = await uploadReceipt(
+  // Tracked separately from `receiptPath` because only an object THIS request
+  // uploaded may be cleaned up on failure — the redo path below carries a prior
+  // entry's receipt forward, and deleting that would destroy the proof behind a
+  // row that is still on the books.
+  const uploadedPath = await uploadReceipt(
     supabase,
     programId,
     slug,
     formData.get("receipt"),
   );
+  let receiptPath = uploadedPath;
 
   // "Void & redo" carries the original's receipt forward. A file input cannot be
   // prefilled, so without this the redo silently dropped the only proof the
@@ -295,7 +328,28 @@ export async function addEntry(formData: FormData): Promise<void> {
   });
 
   if (error || !newId) {
-    redirect(`${ledgerPath(slug)}?error=entry`);
+    // The receipt reached storage before the entry reached the ledger, so a
+    // refused write used to strand the object: it is in the bucket forever,
+    // attached to nothing, and the treasurer has to upload it again on the
+    // retry. Take it back out before reporting the failure.
+    if (uploadedPath) {
+      await supabase.storage.from("receipts").remove([uploadedPath]);
+    }
+    // Every rejection used to read as advice about the amount format, including
+    // "that competition is from last season". One code, one sentence (0020).
+    redirect(
+      `${ledgerPath(slug)}?error=${codeMessage(
+        {
+          [OC.amount]: "entry",
+          [OC.season]: "entry_season",
+          [OC.budgetLine]: "entry_line",
+          [OC.competition]: "entry_competition",
+          [OC.trip]: "entry_trip",
+        },
+        error,
+        "entry",
+      )}`,
+    );
   }
   revalidatePath(ledgerPath(slug));
   redirect(`${ledgerPath(slug)}?saved=1`);
@@ -319,16 +373,31 @@ export async function voidEntry(formData: FormData): Promise<void> {
   }
 
   const supabase = await createClient();
-  // `false` means the filter matched nothing — another program's entry, or one
-  // already voided. The function writes nothing in that case, so no audit row
-  // is ever created for a void that did not happen.
+  // 0020 raises rather than returning `false`, and the two no-ops it used to
+  // share that value between — "not this program's entry" and "already voided"
+  // — are different things to say. The function writes nothing in either case,
+  // so no audit row is ever created for a void that did not happen.
   const { data: voided, error } = await supabase.rpc("void_ledger_entry", {
     p_entry_id: entryId,
     p_program_id: programId,
     p_reason: reason,
   });
   if (error || voided !== true) {
-    redirect(rowErrorPath(slug, entryId, "void"));
+    redirect(
+      rowErrorPath(
+        slug,
+        entryId,
+        codeMessage(
+          {
+            [OC.notOurs]: "void_missing",
+            [OC.alreadyVoided]: "void_already",
+            [OC.season]: "void_archived",
+          },
+          error,
+          "void",
+        ),
+      ),
+    );
   }
 
   revalidatePath(ledgerPath(slug));
@@ -431,7 +500,28 @@ export async function categorizeEntry(formData: FormData): Promise<void> {
   });
 
   if (error || !newId) {
-    redirect(rowErrorPath(slug, entryId, "categorize"));
+    // "Nothing changed — the entry is still there, uncategorized" was the ONE
+    // message for every outcome here, including a double submit of a filing
+    // that had already worked. 0020 tells them apart (see its header): the
+    // second press now says the entry is filed, because it is.
+    redirect(
+      rowErrorPath(
+        slug,
+        entryId,
+        codeMessage(
+          {
+            [OC.notOurs]: "categorize_missing",
+            [OC.alreadyFiled]: "categorize_already",
+            [OC.alreadyVoided]: "categorize_voided",
+            [OC.season]: "categorize_archived",
+            [OC.budgetLine]: "categorize_line",
+            [OC.noLine]: "categorize",
+          },
+          error,
+          "categorize",
+        ),
+      ),
+    );
   }
 
   revalidatePath(ledgerPath(slug));
