@@ -29,6 +29,18 @@ const OK = {
   saved: { section: "page", message: "Note saved." },
 } as const;
 
+// The note is what the caterer is told — a pickup time, a vendor, a serving
+// window — and it prints on the meal PDF somebody carries to the bus. "Note
+// saved." used to be said over an unchecked write, so a refused one (an
+// archived season, a seat that may not write) looked exactly like a saved one
+// and the change was gone by the next page load.
+const ERR = {
+  save: {
+    section: "page",
+    message: "Couldn't save that note. It has not changed — try again.",
+  },
+} as const;
+
 export default async function MealsPage({
   params,
   searchParams,
@@ -41,7 +53,9 @@ export default async function MealsPage({
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const tz = program.timezone;
-  const ok = flashFrom(OK, oneParam(await searchParams, "ok"));
+  const sp = await searchParams;
+  const ok = flashFrom(OK, oneParam(sp, "ok"));
+  const err = flashFrom(ERR, oneParam(sp, "error"));
 
   const supabase = await createClient();
   // Confirm the competition exists in this program (RLS-scoped) → clean 404.
@@ -82,6 +96,7 @@ export default async function MealsPage({
       </div>
 
       {ok && <p className="alert-ok">{ok.message}</p>}
+      {err && <p className="alert-error">{err.message}</p>}
 
       <p>
         <strong>{data.totalAttending}</strong> meals needed ·{" "}

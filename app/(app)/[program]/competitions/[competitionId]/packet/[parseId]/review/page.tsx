@@ -14,12 +14,22 @@ import { IntroStrip, HelpDot } from "../../../../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
 import { loadPacketPipeline, packetPipelineSteps } from "@/lib/packet-pipeline";
 import { acceptParse } from "./actions";
+import { ACCEPT_LIVE_CONFIRM, REVIEW_FLASH_MAPS } from "./shared";
+import { readFlash } from "@/lib/flash";
 import { formatTimeZoneLabel } from "@/lib/datetime";
 
 // Packet parse review screen (§5 step 5, T015). Source document on the left,
 // editable parsed items + ambiguities/issues on the right. Accept materializes
-// items into the draft itinerary (source='parsed') for further manual editing;
-// nothing auto-publishes (Constitution IV).
+// items into the itinerary (source='parsed') for further manual editing.
+//
+// WHAT THIS SCREEN PROMISES HAS TO BE TRUE IN BOTH STATES. It used to say, in
+// every case, "Nothing here reaches a parent until you accept it here and then
+// publish the itinerary" — which is exactly right for a draft and false for a
+// competition whose itinerary is already published, where accepting replaces
+// what families are reading in one click. The screen reads the itinerary's
+// status now and says whichever of the two things is true, and the live case
+// asks for an explicit confirm before the button will do anything (the action
+// requires it too — Constitution IV, a human approves what they are seeing).
 
 interface ParseRow {
   id: string;
@@ -59,7 +69,9 @@ export default async function ReviewPage({
   searchParams,
 }: {
   params: Promise<{ program: string; competitionId: string; parseId: string }>;
-  searchParams: Promise<{ help?: string }>;
+  // Next hands back an ARRAY for a duplicated param, so every read goes through
+  // lib/flash — a hand-typed `?error=constructor` must resolve to nothing.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug, competitionId, parseId } = await params;
   const { program, role, flags, membership, isSupport } =
@@ -69,6 +81,8 @@ export default async function ReviewPage({
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
   const tz = program.timezone;
   const sp = await searchParams;
+  const flash = readFlash(sp, REVIEW_FLASH_MAPS);
+  const showHelp = sp.help === "1";
 
   const supabase = await createClient();
 
@@ -90,6 +104,16 @@ export default async function ReviewPage({
     .maybeSingle();
   const parse = parseData as ParseRow | null;
   if (!parse) notFound();
+
+  // Is there still a publish step between these items and a family's phone? The
+  // whole tone of this screen turns on the answer, so it is read, not assumed.
+  const { data: itinRow } = await supabase
+    .from("itineraries")
+    .select("status")
+    .eq("program_id", program.id)
+    .eq("competition_id", competitionId)
+    .maybeSingle();
+  const isLive = (itinRow as { status: string } | null)?.status === "published";
 
   const parsed = parse.raw_output?.parsed;
   const items = parsed?.items ?? [];
@@ -148,14 +172,24 @@ export default async function ReviewPage({
           programId={program.id}
           selfPath={`${compBase}/packet/${parseId}/review`}
           guideState={guideState}
-          help={sp.help === "1"}
+          help={showHelp}
         />
       )}
-      <p className="muted">
-        AI-drafted from the host packet. Nothing here reaches a parent until you
-        accept it here and then publish the itinerary. Times are shown in{" "}
-        {formatTimeZoneLabel(tz)}.
-      </p>
+      {flash.error && <p className="alert-error">{flash.error.message}</p>}
+      {isLive ? (
+        <p className="alert-error">
+          AI-drafted from the host packet. This competition&apos;s itinerary is
+          already <strong>published</strong>, so accepting replaces the times
+          families are reading right now — there is no publish step left after
+          it. Times are shown in {formatTimeZoneLabel(tz)}.
+        </p>
+      ) : (
+        <p className="muted">
+          AI-drafted from the host packet. Nothing here reaches a parent until
+          you accept it here and then publish the itinerary. Times are shown in{" "}
+          {formatTimeZoneLabel(tz)}.
+        </p>
+      )}
 
       {parsed?.competition && (
         <p className="muted">
@@ -299,11 +333,40 @@ export default async function ReviewPage({
                   </div>
                 </fieldset>
               ))}
-              <p className="muted">
-                Accepting replaces the draft itinerary&apos;s items with these.
-                You can keep editing on the Itinerary tab, then publish there.
-              </p>
-              <button type="submit">Accept into draft itinerary</button>
+              {isLive ? (
+                // The extra, explicit yes. Not a nicety: without it one click
+                // puts AI-drafted times in front of every family, and the
+                // action refuses a post that does not carry this (./actions).
+                <div className="confirm-box stack">
+                  <strong>These replace what families see now</strong>
+                  <p>
+                    The itinerary for this competition is published. Accepting
+                    removes the times families are reading and puts these in
+                    their place immediately — nothing else has to happen for
+                    them to see it.
+                  </p>
+                  <label className="row-inline">
+                    <input
+                      type="checkbox"
+                      name="confirm"
+                      value={ACCEPT_LIVE_CONFIRM}
+                      required
+                    />
+                    I have read these times and I want families to see them now.
+                  </label>
+                </div>
+              ) : (
+                <p className="muted">
+                  Accepting replaces the draft itinerary&apos;s items with
+                  these. You can keep editing on the Itinerary tab, then publish
+                  there.
+                </p>
+              )}
+              <button type="submit">
+                {isLive
+                  ? "Replace what families see"
+                  : "Accept into draft itinerary"}
+              </button>
             </form>
           ) : (
             <p className="muted">

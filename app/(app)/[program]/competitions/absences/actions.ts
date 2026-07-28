@@ -95,7 +95,14 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
     redirect(queueFail(slug, "failed"));
   }
 
-  const { error: updErr } = await supabase
+  // `.eq("status", "pending")` is what makes this the transition and not just a
+  // write: the read above happened in a different round trip, so two staff
+  // pressing Confirm on the same row — or one person double-clicking — both saw
+  // 'pending' there and both arrive here. Only the update that actually MOVED
+  // the row comes back with one, and only that one may send the email. (This is
+  // the same shape dismissAbsence was hardened into; confirm was left behind,
+  // so a guardian could be told twice that their child was excused.)
+  const { data: confData, error: updErr } = await supabase
     .from("absence_requests")
     .update({
       status: "confirmed",
@@ -103,14 +110,19 @@ export async function confirmAbsence(formData: FormData): Promise<void> {
       resolved_at: new Date().toISOString(),
     })
     .eq("id", req.id)
-    .eq("program_id", programId);
+    .eq("program_id", programId)
+    .eq("status", "pending")
+    .select("id");
   if (updErr) {
     console.error("confirmAbsence request update failed", updErr);
     redirect(queueFail(slug, "failed"));
   }
 
-  // Let the reporting guardian know the outcome (best-effort; never blocks).
-  await notifyAbsenceOutcome({ programId, requestId: req.id, outcome: "confirmed" });
+  // Let the reporting guardian know the outcome (best-effort; never blocks) —
+  // once, by whichever call won.
+  if (((confData as { id: string }[] | null) ?? []).length > 0) {
+    await notifyAbsenceOutcome({ programId, requestId: req.id, outcome: "confirmed" });
+  }
 
   revalidatePath(queuePath(slug));
   redirect(queueOk(slug, "confirmed"));
