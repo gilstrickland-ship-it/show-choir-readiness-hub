@@ -20,6 +20,7 @@ import { formatCents, seasonTotalsFromRow } from "@/lib/treasury";
 import { loadCompReadiness, type ReadinessCheck } from "@/lib/readiness";
 import {
   zonedWallToUtc,
+  zonedDateKey,
   formatDateInTz,
   formatTimeInTz,
   calendarDaysBetween,
@@ -109,7 +110,12 @@ export default async function DashboardPage({
   let readinessDone = 0;
   let readinessTotal = 0;
   if (show.comp && seasonId) {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // TODAY IS THE PROGRAM'S TODAY. `competitions.date` is a plain calendar day,
+    // so the key it is compared against has to be the day it IS in the program's
+    // timezone — not in UTC. In Central, every evening after 6pm a UTC key reads
+    // as tomorrow, which walked the program's own competition off its home page
+    // on the evening before it (Wave 14 fixed this on the parent routes).
+    const todayStr = zonedDateKey(now, tz);
     const { data: compRow } = await supabase
       .from("competitions")
       .select("id, name, date, host_school")

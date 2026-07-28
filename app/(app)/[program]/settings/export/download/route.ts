@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionUser, getMembership } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
 import { buildExportZip } from "@/lib/export-zip";
+import { zonedDateKey } from "@/lib/datetime";
 
 // Export-all direct download (§13.2, T029). Director/admin. Streams a single zip
 // built by the shared lib/export-zip builder — the SAME builder the async
@@ -29,10 +30,14 @@ export async function GET(
   const supabase = await createClient();
   const { data: progRow } = await supabase
     .from("programs")
-    .select("id, name")
+    .select("id, name, timezone")
     .eq("slug", slug)
     .maybeSingle();
-  const program = progRow as { id: string; name: string } | null;
+  const program = progRow as {
+    id: string;
+    name: string;
+    timezone: string;
+  } | null;
   if (!program) return text("Program not found", 404);
 
   const membership = await getMembership(program.id, user.id);
@@ -41,7 +46,10 @@ export async function GET(
   }
 
   const zipContent = await buildExportZip(supabase, program.id);
-  const stamp = new Date().toISOString().slice(0, 10);
+  // The day this was taken, on the program's calendar — a UTC key names
+  // tomorrow every Central evening, and this string is what the file is filed
+  // under afterwards.
+  const stamp = zonedDateKey(new Date(), program.timezone);
   const filename = `${slug}-export-${stamp}.zip`;
 
   return new Response(zipContent as BodyInit, {

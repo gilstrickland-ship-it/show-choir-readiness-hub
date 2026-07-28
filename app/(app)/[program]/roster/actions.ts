@@ -10,6 +10,7 @@ import { programPath } from "@/lib/return-path";
 import { rotateGuardianToken } from "@/lib/tokens";
 import { sendGuardianLinksEmail } from "@/lib/comms-send";
 import { computeRecipients } from "@/lib/comms";
+import { zonedDateKey } from "@/lib/datetime";
 import {
   STUDENT_STATUSES,
   guardianAnchor,
@@ -237,8 +238,18 @@ export async function deactivateStudent(formData: FormData): Promise<void> {
     .eq("program_id", programId)
     .eq("student_id", studentId);
 
-  // Flip attendance to absent for competitions dated today or later.
-  const today = new Date().toISOString().slice(0, 10);
+  // Flip attendance to absent for competitions dated today or later — where
+  // "today" is the PROGRAM's today. `competitions.date` is a plain calendar day,
+  // and a UTC key reads as tomorrow every Central evening, so a student
+  // withdrawn after 6pm on the eve of a competition stayed 'expected' for it —
+  // on the very day the director was counting heads.
+  const { data: progRow } = await supabase
+    .from("programs")
+    .select("timezone")
+    .eq("id", programId)
+    .maybeSingle();
+  const tz = (progRow as { timezone: string } | null)?.timezone ?? "UTC";
+  const today = zonedDateKey(new Date(), tz);
   const { data: comps } = await supabase
     .from("competitions")
     .select("id")
