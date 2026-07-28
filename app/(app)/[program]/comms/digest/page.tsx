@@ -15,13 +15,7 @@ import Link from "next/link";
 import { CommsTabs } from "../CommsTabs";
 import { IntroStrip, HelpDot } from "../../IntroStrip";
 import { loadGuideState } from "@/lib/guide";
-import {
-  draftNow,
-  saveDigest,
-  approveDigest,
-  sendDigest,
-  discardDigest,
-} from "./actions";
+import { draftNow, reviewDigest, discardDigest } from "./actions";
 
 // Comms — Digest workspace (§8, T025, Constitution IV). Weekly AI-drafted parent
 // digest: gather → Claude draft → director review/edit/approve → send with
@@ -33,6 +27,15 @@ import {
 // carries a status card that links in. Approve and send stay two separate
 // presses on a page that shows the whole body, which is the point of
 // Constitution IV: a human reads what an AI wrote before a parent does.
+//
+// APPROVE AND SEND SUBMIT THE TEXT ON SCREEN. They used to be sibling forms
+// carrying only the digest id, so a director who edited the AI's draft and
+// pressed Approve approved the STORED row and lost their edits to the redirect's
+// re-render — the human approved something other than what they were reading,
+// which is the one thing the approval gate exists to prevent. The buttons sit
+// inside the subject/body form now and post a named `intent`; the action saves
+// the posted text before it flips any status, so an unedited approval and an
+// edited one are the same code path.
 
 interface DigestRow {
   id: string;
@@ -228,6 +231,25 @@ export default async function DigestPage({
       {sp.error === "empty" && (
         <p className="alert-error">A digest needs a subject and a body.</p>
       )}
+      {sp.error === "save" && (
+        <p className="alert-error">
+          Nothing was saved, so nothing was approved or sent. A digest that has
+          already gone out can&apos;t be edited — reload to see its current
+          state.
+        </p>
+      )}
+      {sp.error === "intent" && (
+        <p className="alert-error">
+          That form didn&apos;t say what it was for, so nothing was changed.
+          Reload and try again.
+        </p>
+      )}
+      {sp.error === "notdraft" && (
+        <p className="alert-error">
+          Your edits were saved, but this digest is no longer a draft — only a
+          draft can be approved. Reload to see where it got to.
+        </p>
+      )}
       {sp.error === "notapproved" && (
         <p className="alert-error">Only an approved digest can be sent.</p>
       )}
@@ -290,13 +312,18 @@ export default async function DigestPage({
 
             {editable ? (
               <form
-                action={saveDigest}
+                action={reviewDigest}
                 className="stack"
                 style={{ marginTop: "0.5rem" }}
               >
                 <input type="hidden" name="programId" value={program.id} />
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="digestId" value={d.id} />
+                <input
+                  type="hidden"
+                  name="seasonId"
+                  value={season?.id ?? ""}
+                />
                 <label style={{ width: "100%" }}>
                   Subject
                   <input
@@ -318,9 +345,35 @@ export default async function DigestPage({
                     Plain text works — leave a blank line between paragraphs.
                   </span>
                 </label>
-                <button type="submit" className="secondary">
-                  Save edits
-                </button>
+                {/* Every submit here carries the subject and body above it, so
+                    approving or sending can only ever act on the text on
+                    screen. Two presses, still: Approve appears on a draft,
+                    Send only once it is approved. */}
+                <div className="row-inline">
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="save"
+                    className="secondary"
+                  >
+                    Save edits
+                  </button>
+                  {d.status === "draft" && (
+                    <button type="submit" name="intent" value="approve">
+                      Approve
+                    </button>
+                  )}
+                  {d.status === "approved" && (
+                    <button type="submit" name="intent" value="send">
+                      Send to {recipientCount} families now
+                    </button>
+                  )}
+                </div>
+                <p className="muted">
+                  {d.status === "draft"
+                    ? "Approve saves your edits first — what you approve is what is in the box above."
+                    : "Send saves your edits first, then emails this text to every family."}
+                </p>
               </form>
             ) : (
               <>
@@ -335,49 +388,19 @@ export default async function DigestPage({
               </>
             )}
 
-            {canManage && (
+            {/* Discard is the one control that must NOT carry the edits — it
+                throws the draft away — so it stays its own form, after the
+                review form rather than inside it (forms cannot nest). */}
+            {canManage && d.status === "draft" && (
               <div className="row-inline" style={{ marginTop: "0.5rem" }}>
-                {d.status === "draft" && (
-                  <>
-                    <form action={approveDigest}>
-                      <input
-                        type="hidden"
-                        name="programId"
-                        value={program.id}
-                      />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="digestId" value={d.id} />
-                      <button type="submit">Approve</button>
-                    </form>
-                    <form action={discardDigest}>
-                      <input
-                        type="hidden"
-                        name="programId"
-                        value={program.id}
-                      />
-                      <input type="hidden" name="slug" value={slug} />
-                      <input type="hidden" name="digestId" value={d.id} />
-                      <button type="submit" className="discard">
-                        Discard
-                      </button>
-                    </form>
-                  </>
-                )}
-                {d.status === "approved" && (
-                  <form action={sendDigest}>
-                    <input type="hidden" name="programId" value={program.id} />
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="digestId" value={d.id} />
-                    <input
-                      type="hidden"
-                      name="seasonId"
-                      value={season?.id ?? ""}
-                    />
-                    <button type="submit">
-                      Send to {recipientCount} families now
-                    </button>
-                  </form>
-                )}
+                <form action={discardDigest}>
+                  <input type="hidden" name="programId" value={program.id} />
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="digestId" value={d.id} />
+                  <button type="submit" className="discard">
+                    Discard
+                  </button>
+                </form>
               </div>
             )}
           </div>
