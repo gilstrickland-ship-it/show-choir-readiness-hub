@@ -37,9 +37,9 @@
 
 ## Phase 5 — Wave 5: Comms
 
-- [ ] T134 One digest home (US9-1/2): landing card → status + link only; workspace owns all digest actions; digest-off behavior preserved.
-- [ ] T135 Shifts standard edit + announcements flag wired (US9-3/4): `?edit=` mode → per-row edit popovers; `/comms/announcements` requires `announcements` flag (default stays on).
-- [ ] T136 Wave-5 verification: full gate + e2e + visual QA.
+- [X] T134 One digest home (US9-1/2): landing card → status + link only; workspace owns all digest actions; digest-off behavior preserved.
+- [X] T135 Shifts standard edit + announcements flag wired (US9-3/4): `?edit=` mode → per-row edit popovers; `/comms/announcements` requires `announcements` flag (default stays on).
+- [X] T136 Wave-5 verification: full gate + e2e + visual QA.
 
 ## Phase 5b — Wave W: Wardrobe (costume manager) — runs after Wave 5
 
