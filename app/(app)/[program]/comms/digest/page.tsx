@@ -168,6 +168,7 @@ export default async function DigestPage({
         slug={slug}
         active="digest"
         digestEnabled={digestEnabled}
+        announcementsEnabled={flags.announcements}
         shiftsEnabled={flags.shifts}
       />
 

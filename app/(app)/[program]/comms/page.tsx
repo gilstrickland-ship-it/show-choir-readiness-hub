@@ -57,7 +57,8 @@ export default async function CommsPage({
     );
   }
   const canManageDigest = DIGEST_WRITE_ROLES.includes(role);
-  const canAnnounce = ANNOUNCEMENT_WRITE_ROLES.includes(role);
+  // Composing an announcement needs both the seat and the feature (US9-4).
+  const canCompose = ANNOUNCEMENT_WRITE_ROLES.includes(role) && flags.announcements;
   const canShare = SETTINGS_ROLES.includes(role); // director/admin (share_links RLS)
   const tz = program.timezone;
 
@@ -188,7 +189,7 @@ export default async function CommsPage({
           </p>
           <h1 className="page-h1">Comms</h1>
         </div>
-        {canAnnounce && (
+        {canCompose && (
           <div className="page-head-actions">
             <Link href={`/${slug}/comms/announcements`} className="button-link accent">
               + New announcement
@@ -201,6 +202,7 @@ export default async function CommsPage({
         slug={slug}
         active="digest"
         digestEnabled={flags.digest}
+        announcementsEnabled={flags.announcements}
         shiftsEnabled={flags.shifts}
       />
 
@@ -219,7 +221,7 @@ export default async function CommsPage({
             slug={slug}
             state={digestState}
             canManage={canManageDigest}
-            canCompose={canAnnounce}
+            canCompose={canCompose}
           />
 
           <h2 className="comms-section-h">Recently sent</h2>

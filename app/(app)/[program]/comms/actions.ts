@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth";
+import { flag, type FlaggableProgram } from "@/lib/flags";
 import { ANNOUNCEMENT_WRITE_ROLES } from "@/lib/comms";
 import { sendAnnouncementCore } from "@/lib/comms-send";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
@@ -35,6 +36,21 @@ export async function sendAnnouncement(formData: FormData): Promise<void> {
   if (!subject || !bodyMd) redirect(`/${slug}/comms/announcements?error=empty`);
 
   const supabase = await createClient();
+
+  // The `announcements` flag gates the channel, not just the page (spec 005
+  // US9-4, Constitution VIII: flags are evaluated server-side). The route 404s
+  // when it is off, so the only way to reach this line with the flag down is a
+  // POST to the action itself — which is exactly the case a flag has to hold.
+  const { data: progData } = await supabase
+    .from("programs")
+    .select("tier, feature_overrides")
+    .eq("id", programId)
+    .maybeSingle();
+  const announcementsOn = flag(
+    (progData as FlaggableProgram | null) ?? { tier: "prep", feature_overrides: null },
+    "announcements",
+  );
+  if (!announcementsOn) redirect(`/${slug}/comms`);
 
   // Both ids come off the form and the write policy checks only the row's own
   // program_id, so resolve them inside THIS program first (Constitution I).

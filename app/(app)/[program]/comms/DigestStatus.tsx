@@ -25,8 +25,9 @@ export function DigestStatus({
   // DIGEST_WRITE_ROLES (director/admin). Other comms seats read the state but
   // are not offered a workspace they cannot act in.
   canManage: boolean;
-  // ANNOUNCEMENT_WRITE_ROLES — the digest-off card is the only state that can
-  // honestly point at another way to reach families right now.
+  // ANNOUNCEMENT_WRITE_ROLES *and* the `announcements` flag — the only case
+  // where the digest-off card can honestly point at another way to reach
+  // families right now.
   canCompose: boolean;
 }) {
   const workspace = `/${slug}/comms/digest`;

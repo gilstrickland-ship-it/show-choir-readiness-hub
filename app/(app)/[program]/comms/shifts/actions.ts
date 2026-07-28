@@ -26,6 +26,17 @@ function shiftsPath(slug: string): string {
   return `/${slug}/comms/shifts`;
 }
 
+// A failure that belongs to ONE shift goes back to that shift: `?edit=` reopens
+// its Edit panel and the page renders the message inside it, instead of at the
+// top of a list the writer then has to scroll to find their row again (the
+// Wave-2 section-local error contract). With no shift id there is no row to
+// return to, so it falls back to the page-level message.
+function rowErrorPath(slug: string, shiftId: string, code: string): string {
+  if (!shiftId) return `${shiftsPath(slug)}?error=${code}`;
+  const id = encodeURIComponent(shiftId);
+  return `${shiftsPath(slug)}?edit=${id}&error=${code}#shift-${id}`;
+}
+
 // Convert a datetime-local wall-clock value in the program tz to a UTC ISO
 // string, or null when blank.
 function wallToIso(fd: FormData, key: string, tz: string): string | null {
@@ -156,7 +167,7 @@ export async function updateShift(formData: FormData): Promise<void> {
   await requireRole(programId, SHIFT_WRITE_ROLES);
 
   const title = str(formData, "title");
-  if (!title) redirect(`${shiftsPath(slug)}?error=title`);
+  if (!title) redirect(rowErrorPath(slug, shiftId, "title"));
   const neededRaw = Number(str(formData, "needed_count"));
   const needed = Number.isFinite(neededRaw) && neededRaw > 0 ? Math.floor(neededRaw) : 1;
 
@@ -200,9 +211,9 @@ export async function deleteShift(formData: FormData): Promise<void> {
   revalidatePath(shiftsPath(slug));
   // The signup sweep above can only reach THIS program's rows, so a signup
   // belonging to another program leaves the shift referenced and the delete
-  // fails. Say so — reporting "deleted" for a shift that is still there is the
-  // worst outcome, because staff stop looking.
-  if (error) redirect(`${shiftsPath(slug)}?error=in_use`);
+  // fails. Say so, on the row that is still there — reporting "deleted" for a
+  // shift that is still listed is the worst outcome, because staff stop looking.
+  if (error) redirect(rowErrorPath(slug, shiftId, "in_use"));
   redirect(`${shiftsPath(slug)}?deleted=1`);
 }
 

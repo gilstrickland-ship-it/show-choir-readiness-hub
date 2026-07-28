@@ -73,6 +73,10 @@ export default async function ItineraryPage({
     await getTenantContext(slug);
   requireFlag(program, "competitions");
   const canWrite = COMPETITION_WRITE_ROLES.includes(role);
+  // Is /comms/announcements actually reachable for this program? Both flags gate
+  // it (spec 005 US9-4); the roles line up already — COMPETITION_WRITE_ROLES and
+  // ANNOUNCEMENT_WRITE_ROLES are both director/admin.
+  const canAnnounce = flags.comms && flags.announcements;
   const tz = program.timezone;
   const sp = await searchParams;
 
@@ -339,10 +343,19 @@ export default async function ItineraryPage({
           <p className="alert-info">
             You&apos;ve changed times since publishing. Families who open their
             link see the update immediately — but nobody is notified
-            automatically. Send a quick announcement if the change matters.{" "}
-            <Link href={`/${slug}/comms/announcements`}>
-              Go to announcements →
-            </Link>
+            automatically.
+            {/* Only offer the announcement route when this program actually has
+                it: both flags gate that page (spec 005 US9-4), and a nudge that
+                sends a director to a 404 is worse than no nudge. */}
+            {canAnnounce && (
+              <>
+                {" "}
+                Send a quick announcement if the change matters.{" "}
+                <Link href={`/${slug}/comms/announcements`}>
+                  Go to announcements →
+                </Link>
+              </>
+            )}
           </p>
         ) : (
           <p className="alert-info">
@@ -464,7 +477,8 @@ export default async function ItineraryPage({
           {canWrite && isPublished && (
             <p className="muted">
               This itinerary is live to families — changes show on their page
-              immediately. Send an announcement if a time moves.
+              immediately.
+              {canAnnounce ? " Send an announcement if a time moves." : ""}
             </p>
           )}
 

@@ -35,7 +35,7 @@ export default async function SuggestShiftsPage({
   searchParams: Promise<{ competition?: string }>;
 }) {
   const { program: slug } = await params;
-  const { program, role, season } = await getTenantContext(slug);
+  const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
   requireFlag(program, "shifts");
   if (!COMMS_ROLES.includes(role)) {
@@ -178,7 +178,13 @@ export default async function SuggestShiftsPage({
 
   return (
     <section className="stack">
-      <CommsTabs slug={slug} active="shifts" shiftsEnabled />
+      <CommsTabs
+        slug={slug}
+        active="shifts"
+        digestEnabled={flags.digest}
+        announcementsEnabled={flags.announcements}
+        shiftsEnabled
+      />
       <p>
         <Link href={`/${slug}/comms/shifts`}>← Shifts</Link>
       </p>

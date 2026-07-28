@@ -3466,6 +3466,39 @@
     color: var(--ok-text);
   }
 
+  /* A shift row's "Edit" panel (spec 005 US9-3). Like Money's row panels it
+     EXPANDS the card instead of floating over it: the card already contains a
+     `table.members` of signups, which is `display:block; overflow-x:auto` and so
+     a scroll container that would slice an absolutely-positioned panel — and
+     expanding leaves the shift's title, time and open-slot count on screen while
+     you correct them, which the `?edit=` mode switch this replaces did not.
+     Same paper-over-rule treatment as .drawer-panel so it still reads as a
+     panel. Prefixed class, not a bare state word, so nothing here can outrank
+     the base-layer element styles it sits beside (the T061/T066 cascade trap). */
+  .shift-edit-panel {
+    width: min(30rem, 100%);
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* The panel stacks two independent forms (save the shift, delete it) — a
+     hairline says those are two decisions, not one long form, and the delete
+     gets a thumb-sized hit area because it is the irreversible one. */
+  .shift-edit-form + .shift-edit-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    width: 100%;
+  }
+
+  .shift-edit-form button.linklike {
+    min-height: 44px;
+  }
+
   /* ===================== Settings (restyle, Wave D) ===================== */
 
   /* The program form is a scan-friendly narrow column per the design. */
@@ -4070,7 +4103,8 @@
      three copies of the same five declarations is how they drift apart. */
   .travel-disclosure,
   .comp-disclosure,
-  .money-disclosure {
+  .money-disclosure,
+  .shift-disclosure {
     cursor: pointer;
     font-weight: 600;
     color: var(--accent-strong);
@@ -4593,6 +4627,12 @@
     .digest-card > .button-link {
       align-self: stretch;
       text-align: center;
+    }
+
+    /* A shift's Edit panel takes the card's full width on a phone rather than
+       the 30rem it gets on a desktop card. */
+    .shift-edit-panel {
+      width: 100%;
     }
 
     /* Restricted notice: tighten the display heading + let the CTA span the

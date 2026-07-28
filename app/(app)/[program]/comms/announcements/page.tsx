@@ -18,6 +18,14 @@ import { sendAnnouncement } from "../actions";
 // compose (director/admin) with recipient preview + per-send history. The human
 // writing it IS the approval (no AI, no queue). Comms is hidden from board_member
 // (read-only seat). Flagged-off or role-forbidden → 404.
+//
+// Two flags gate this route (spec 005 US9-4): `comms` for the surface and
+// `announcements` for this channel. The registry has always declared
+// `announcements` as a real product lever — "immediate announcement sends to
+// guardians", the one comms channel that reaches a family the instant it is
+// pressed — but nothing evaluated it, so turning it off did nothing. It is
+// default-on and set by no tier bundle, so wiring it changes no existing
+// program; it just makes the switch mean what it says.
 
 const NO_HEALTH_LABEL = "Do not enter health or medical information.";
 
@@ -54,6 +62,7 @@ export default async function AnnouncementsPage({
   const { program: slug } = await params;
   const { program, role, season, flags } = await getTenantContext(slug);
   requireFlag(program, "comms");
+  requireFlag(program, "announcements");
   if (!COMMS_ROLES.includes(role)) {
     return (
       <Restricted slug={slug} surface="Comms" role={role} allowed={COMMS_ROLES} />
@@ -144,8 +153,9 @@ export default async function AnnouncementsPage({
       <CommsTabs
         slug={slug}
         active="announcements"
-        shiftsEnabled={flags.shifts}
         digestEnabled={flags.digest}
+        announcementsEnabled
+        shiftsEnabled={flags.shifts}
       />
 
       {(emailIssueCount ?? 0) > 0 && (
