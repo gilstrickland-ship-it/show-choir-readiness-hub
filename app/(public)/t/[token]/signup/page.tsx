@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { formatDateTimeInTz } from "@/lib/datetime";
+import { oneParam, type SearchParams } from "@/lib/flash";
 import { TokenFooter } from "../parts";
 import { claimShift, cancelShift } from "./actions";
 
@@ -9,6 +10,11 @@ import { claimShift, cancelShift } from "./actions";
 // capacity-aware. Share link (or any browse view): read-only list of open shifts
 // with an "ask for your family link" note — no claim controls.
 
+// `?s=` codes the actions redirect back with. The code rides in the URL, so the
+// lookup below goes through Object.hasOwn: `?s=constructor` must resolve to
+// nothing rather than walking up Object.prototype and handing React a function
+// (the defect T143a closed on the staff side; this map was the last one on the
+// parent surface still indexing a URL value unguarded).
 const STATUS_MESSAGE: Record<string, { text: string; ok: boolean }> = {
   claimed: { text: "You're signed up. Thank you!", ok: true },
   cancelled: { text: "Your signup was cancelled.", ok: true },
@@ -32,10 +38,11 @@ export default async function PublicSignupPage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ s?: string }>;
+  // What Next actually hands back — `?s=a&s=b` arrives as an array.
+  searchParams: Promise<SearchParams>;
 }) {
   const { token } = await params;
-  const { s } = await searchParams;
+  const s = oneParam(await searchParams, "s");
   const resolved = await getResolvedToken(token);
   if (!resolved) notFound();
 
@@ -85,7 +92,8 @@ export default async function PublicSignupPage({
     }
   }
 
-  const message = s ? STATUS_MESSAGE[s] : undefined;
+  const message =
+    s && Object.hasOwn(STATUS_MESSAGE, s) ? STATUS_MESSAGE[s] : null;
 
   return (
     <section className="stack">

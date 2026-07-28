@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
+import { oneParam, type SearchParams } from "@/lib/flash";
 import { TokenFooter } from "../parts";
 import { unsubscribe } from "./actions";
 
@@ -13,10 +14,11 @@ export default async function UnsubscribePage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ s?: string }>;
+  // What Next actually hands back — `?s=a&s=b` arrives as an array.
+  searchParams: Promise<SearchParams>;
 }) {
   const { token } = await params;
-  const { s } = await searchParams;
+  const s = oneParam(await searchParams, "s");
   const resolved = await getResolvedToken(token);
   if (!resolved) notFound();
 
