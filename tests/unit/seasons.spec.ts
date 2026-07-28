@@ -8,7 +8,14 @@
 // ============================================================================
 
 import { describe, test, expect } from "vitest";
-import { defaultSeasonLabel, seasonLabelForStartYear } from "@/lib/seasons";
+import {
+  defaultSeasonLabel,
+  isRolloverScreen,
+  rolloverProgress,
+  rolloverStepKeys,
+  seasonLabelForStartYear,
+  ROLLOVER_STEPS,
+} from "@/lib/seasons";
 
 describe("seasonLabelForStartYear", () => {
   test("writes a school year the way directors say it", () => {
@@ -50,5 +57,83 @@ describe("defaultSeasonLabel", () => {
     const instant = new Date("2026-08-01T02:00:00Z");
     expect(defaultSeasonLabel(instant, "America/Chicago")).toBe("2025-26");
     expect(defaultSeasonLabel(instant, "UTC")).toBe("2026-27");
+  });
+});
+
+// ============================================================================
+// Rollover progress (spec 005 Wave 13 / T165)
+// ----------------------------------------------------------------------------
+// The wizard's screens numbered themselves in hard-coded heading strings —
+// "Step 1" … "Step 6" — with no total and no progress affordance, and the
+// numbering was wrong twice: the sixth screen is the FINISH, not a step, and a
+// program with nothing to roll from goes from screen one straight to activation,
+// so it saw "Step 1" and then "Step 5". The sequence is derived now, from the
+// same fact the create action branches on.
+// ============================================================================
+
+describe("rolloverStepKeys", () => {
+  test("a real rollover walks all five steps", () => {
+    expect(rolloverStepKeys(true)).toEqual([...ROLLOVER_STEPS]);
+  });
+
+  test("with nothing to carry across the flow is two steps, not five", () => {
+    // createRolloverSeason sends a program with no prior season straight to
+    // activation, so counting five would promise three screens that never come.
+    expect(rolloverStepKeys(false)).toEqual(["new", "activate"]);
+  });
+});
+
+describe("rolloverProgress", () => {
+  test('says "Step 3 of 5" where the old headings said "Step 3"', () => {
+    const p = rolloverProgress("students", true);
+    expect(p.position).toBe(3);
+    expect(p.total).toBe(5);
+    expect(p.finished).toBe(false);
+  });
+
+  test("marks what is behind you done, where you are now, and the rest not yet", () => {
+    const p = rolloverProgress("costumes", true);
+    expect(p.steps.map((s) => s.state)).toEqual([
+      "done",
+      "done",
+      "done",
+      "now",
+      "todo",
+    ]);
+  });
+
+  test("the short path counts its own two steps", () => {
+    const p = rolloverProgress("activate", false);
+    expect(p.position).toBe(2);
+    expect(p.total).toBe(2);
+    expect(p.steps.map((s) => s.key)).toEqual(["new", "activate"]);
+    expect(p.steps.map((s) => s.state)).toEqual(["done", "now"]);
+  });
+
+  test("the finish screen is not a step: everything is done and there is no position", () => {
+    const p = rolloverProgress("done", true);
+    expect(p.finished).toBe(true);
+    expect(p.position).toBeNull();
+    expect(p.total).toBe(5);
+    expect(p.steps.every((s) => s.state === "done")).toBe(true);
+  });
+
+  test("every step carries a label a director would say out loud", () => {
+    for (const s of rolloverProgress("new", true).steps) {
+      expect(s.label.length).toBeGreaterThan(0);
+      expect(s.label).not.toMatch(/^Step \d/);
+    }
+  });
+});
+
+describe("isRolloverScreen", () => {
+  test("accepts the wizard's own screens and nothing else", () => {
+    expect(isRolloverScreen("students")).toBe(true);
+    expect(isRolloverScreen("done")).toBe(true);
+    // `?step=` rides in the URL, so a hand-typed value must fail closed to the
+    // first screen rather than index something.
+    expect(isRolloverScreen("archive")).toBe(false);
+    expect(isRolloverScreen("constructor")).toBe(false);
+    expect(isRolloverScreen("")).toBe(false);
   });
 });
