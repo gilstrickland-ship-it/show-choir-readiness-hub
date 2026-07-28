@@ -375,6 +375,24 @@
     gap: 0.4rem;
   }
 
+  /* `.row-inline` means "these sit on one line", but it never said which line
+     direction — and the base-layer `label` rule is `flex-direction: column`, so
+     a `<label class="row-inline">` inherited the column and stacked its checkbox
+     ABOVE its text. `.row-inline`'s own `align-items: flex-end` then pushed both
+     to the right edge of the fieldset, which is how a competition's ensemble
+     checkboxes (CompEdit), an event's, the results captions, the packet review's
+     "Include" and travel's "Overnight" all ended up right-aligned two-liners.
+     Compound, so every div/form/fieldset use of .row-inline is untouched — and
+     `label` alone could not be fixed, since the column IS right for the many
+     label-above-field pairs inside a .row-inline. Same shape as
+     label.checkbox-inline above; this is the T061/T066 cascade family seen from
+     the other side — components beats base, but only where a declaration
+     actually exists. */
+  label.row-inline {
+    flex-direction: row;
+    align-items: center;
+  }
+
   .muted {
     color: var(--muted-ink);
     font-size: 0.88rem;
@@ -665,11 +683,21 @@
 
   /* ---------------- Tables ---------------- */
 
+  /* `display: block; overflow-x: auto` is what lets a wide table scroll on a
+     phone instead of squeezing its columns to nothing — and it makes this box
+     the SCROLL PORT: the strip of the table a reader can actually see. The
+     row-expanding Edit panels (Money, Wardrobe, People) open several columns in,
+     so what they must fit inside is that strip, not the window. `container-type`
+     names it, and `100cqi` below is its width — the one number no `vw` can
+     express. Inline-size containment is free here: the box is already
+     `width: 100%` of its parent, so its own size never depended on its
+     contents. */
   table.members {
     width: 100%;
     border-collapse: collapse;
     display: block;
     overflow-x: auto;
+    container-type: inline-size;
     font-size: 0.9rem;
   }
 
@@ -695,6 +723,22 @@
 
   table.members tbody tr:hover td {
     background: var(--surface);
+  }
+
+  /* Anchors the app sends someone BACK to. `.shell-header` is
+     `position: sticky; top: 0`, so a fragment jump parks its target directly
+     under the chrome — and the target is always the row that a message belongs
+     to, which makes it the one thing you cannot see. These are load-bearing now
+     that a refused write reopens the row's own popover on its anchor: a ledger
+     row's fix panel (`#fix-<id>`), a budget line's edit panel (`#line-<id>`), a
+     guardian / ensemble / member row, and the student page's four group
+     headings. 5rem matches .comp-section, the first surface that hit this. */
+  table.members tr[id],
+  table.members details[id],
+  h1[id],
+  h2[id],
+  h3[id] {
+    scroll-margin-top: 5rem;
   }
 
   /* ---------------- Chips + badges ---------------- */
@@ -2540,7 +2584,12 @@
     font-weight: 550;
   }
 
-  /* Ensemble chips under the comp title. */
+  /* Ensemble chips under the comp title. The row is a flex container with its
+     own `gap`, and `.chip` carries a legacy `margin` for the inline runs it was
+     built for (a paragraph of chips, where margin IS the spacing). Both applied
+     here, so every gap between two chips was 0.3rem + 0.25rem and the strip read
+     as a loose list rather than a set. The gap is this row's answer; the margin
+     is zeroed for its children only. */
   .comp-head-chips {
     margin: 0;
     display: flex;
@@ -2548,21 +2597,30 @@
     flex-wrap: wrap;
   }
 
+  .comp-head-chips > .chip {
+    margin: 0;
+  }
+
   .comp-section-summary {
     font-size: 0.82rem;
     color: var(--muted-ink);
   }
 
-  /* ---- Packet pipeline strip (spec 005 US7-4) ----
-     Uploaded → Parsed → Reviewed → On itinerary → Published, shown on all three
-     surfaces the pipeline crosses. Compound selectors on every state variant:
-     a bare `.done`/`.now` in this layer would outrank the base-layer element
-     styles it sits beside (the T061/T066 cascade trap). */
-  .packet-steps {
+  /* ---- Step strips ----
+     The packet pipeline (spec 005 US7-4): Uploaded → Parsed → Reviewed → On
+     itinerary → Published, shown on all three surfaces the pipeline crosses.
+     The roster import (spec 005 T137a) is the same idea over three phases —
+     choose → check → import — so it is the same strip rather than a second one
+     that drifts. Compound selectors on every state variant: a bare `.done`/
+     `.now` in this layer would outrank the base-layer element styles it sits
+     beside (the T061/T066 cascade trap). */
+  .packet-steps,
+  .import-steps {
     width: 100%;
   }
 
-  .packet-steps ol {
+  .packet-steps ol,
+  .import-steps ol {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -2571,35 +2629,52 @@
     gap: 0.35rem 0.9rem;
   }
 
-  .packet-step {
+  .packet-step,
+  .import-step {
     font-size: 0.8rem;
     color: var(--muted-ink);
   }
 
+  /* Some steps go somewhere and some don't — "Reviewed" is a link once there is
+     a parse to review, plain text before that. Until now the only difference was
+     `:hover`, which a phone does not have and a keyboard user meets only after
+     tabbing into it, so the strip looked like five inert labels. The link keeps a
+     standing dotted underline (the base `a` treatment, quieted to suit 0.8rem
+     text) and firms up to a solid accent underline on hover and focus. */
   .packet-step a {
     color: inherit;
-    text-decoration: none;
-  }
-
-  .packet-step a:hover {
-    color: var(--accent);
     text-decoration: underline;
+    text-decoration-style: dotted;
+    text-decoration-thickness: 1px;
+    text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+    text-underline-offset: 0.22em;
   }
 
-  .packet-step-mark {
+  .packet-step a:hover,
+  .packet-step a:focus-visible {
+    color: var(--accent);
+    text-decoration-style: solid;
+    text-decoration-color: currentColor;
+  }
+
+  .packet-step-mark,
+  .import-step-mark {
     margin-right: 0.3rem;
     font-weight: 700;
   }
 
-  .packet-step-state {
+  .packet-step-state,
+  .import-step-state {
     font-size: 0.72rem;
   }
 
-  .packet-step.done {
+  .packet-step.done,
+  .import-step.done {
     color: var(--ok-text);
   }
 
-  .packet-step.now {
+  .packet-step.now,
+  .import-step.now {
     color: var(--ink);
     font-weight: 650;
   }
@@ -3034,6 +3109,158 @@
     color: var(--alert-text);
   }
 
+  /* A family is one to three people, never a list you scan — so the guardians
+     are CARDS, page-width, rather than rows of a horizontal scroller. That is
+     the Wave-4 lesson taken one step further: expanding the row instead of
+     floating over it stops a panel being SLICED by `table.members`
+     (`display:block; overflow-x:auto`), but it cannot stop it opening several
+     hundred pixels into that scroller — a guardian panel in the last cell of a
+     five-column table measured zero pixels on screen at 375px. A card has no
+     such offset, so the panel opens at the left edge where it can be read. */
+  .guardian-list {
+    width: 100%;
+    gap: 0.6rem;
+  }
+
+  .guardian-card {
+    width: 100%;
+  }
+
+  .guardian-card-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.6rem;
+  }
+
+  .guardian-card-actions {
+    width: 100%;
+    margin-top: 0.35rem;
+  }
+
+  /* The Edit panel inside a card. `100%` is honest here — the card IS the
+     measure — which is the whole reason the guardians left the table. Same
+     paper-over-rule treatment as .drawer-panel so it still reads as a panel;
+     prefixed class names, never a bare state word, so nothing here can outrank
+     the base-layer element styles it sits beside (the T061/T066 cascade trap). */
+  .people-edit-panel {
+    width: min(30rem, 100%);
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* Ensembles and placements stay tabular — two or three narrow columns, a list
+     you really do scan — so their panels expand the row and measure against the
+     scroll port (`100cqi`, the container set on table.members) less the columns
+     standing to their left. `vw` cannot express that: it knows the phone and
+     not the table. */
+  .people-row-panel {
+    width: min(22rem, 100cqi - 8rem);
+    margin-top: 0.5rem;
+    padding: 0.75rem 0.9rem 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+  }
+
+  /* A panel stacks independent decisions (save the details, turn the address
+     back on, reset the family's links, remove them) — a hairline says those are
+     separate, not one long form, and the two that cannot be undone get a
+     thumb-sized hit area. */
+  .people-edit-form,
+  .people-row-form {
+    width: 100%;
+  }
+
+  .people-edit-form + .people-edit-form,
+  .people-row-form + .people-row-form {
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .people-edit-form button.linklike,
+  .people-edit-form a.linklike,
+  .people-row-form button.linklike,
+  .people-row-form a.linklike {
+    min-height: 44px;
+  }
+
+  /* The student page's groups: a form per group, at a width a name and a grad
+     year are read at rather than the full page measure. */
+  .person-form {
+    width: 100%;
+    max-width: 34rem;
+  }
+
+  /* "Guardians" and its "+ Add guardian" drawer share a line — the drawer is
+     `position: relative`, so its panel anchors to the heading it belongs to. */
+  .person-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.9rem;
+    width: 100%;
+  }
+
+  .person-section-head > h2 {
+    margin: 0;
+  }
+
+  /* The import's one list of everything the parse decided — what happened,
+     where, and the next move. It replaced three unrelated shapes (a red box of
+     skipped columns, a chip inside a table cell, a bullet list of excluded
+     rows), and it is a LIST rather than a table because every field in it is a
+     sentence: four columns of prose came out three words wide on a phone. The
+     entries that kept data out carry an alert rule down their edge, so "what
+     must I act on?" is answerable from the margin. */
+  .import-issues {
+    width: 100%;
+  }
+
+  .import-issue-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .import-issue {
+    padding: 0.6rem 0.85rem 0.7rem;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: var(--radius-m);
+    font-size: 0.9rem;
+  }
+
+  .import-issue.blocking {
+    border-left-color: var(--alert);
+  }
+
+  .import-issue > p {
+    margin: 0 0 0.15rem;
+  }
+
+  .import-issue > p:last-child {
+    margin-bottom: 0;
+  }
+
+  .import-issue-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.6rem;
+  }
+
   /* ===================== Money ===================== */
 
   /* The four decisions an entry asks for, two by two (spec 005 US8-1). The
@@ -3072,9 +3299,15 @@
      `display:block; overflow-x:auto` so it can scroll on a phone, and a scroll
      container clips any absolutely-positioned descendant — a floating panel
      came out sliced off at the cell edge. Same paper-over-rule treatment as
-     .drawer-panel so it still reads as a panel. */
+     .drawer-panel so it still reads as a panel.
+     Its width is measured against the SCROLL PORT (`100cqi`, the container set
+     on table.members), never the viewport: the panel hangs off the last column,
+     roughly 9rem of Line + Planned to its left, so `70vw` — a number that knows
+     the phone but not the table — opened a 262px panel 230px in and left
+     two-thirds of it past the right edge at 375px. Subtracting those columns is
+     what keeps a panel on screen where it opens. */
   .money-fix-panel {
-    width: min(17rem, 70vw);
+    width: min(17rem, 100cqi - 12rem);
     margin-top: 0.5rem;
     padding: 0.75rem 0.9rem 0.9rem;
     background: var(--paper);
@@ -3102,6 +3335,32 @@
 
   .money-fix-form button.linklike {
     min-height: 44px;
+  }
+
+  /* The ledger pager owns the line under the table: how much of the ledger you
+     are looking at on the left, the two ways out of it on the right. On a bare
+     `.row-inline` the count and both links huddled at the left edge in a 0.6rem
+     gap — three targets inside a thumb's width, one of which is text. The auto
+     margin is what pins the links right (space-between alone would strand
+     "← Newer" in the middle of a three-child row); both are declared so the
+     two-child case, a first or last page, lands the same way. */
+  .money-pager {
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem 1.25rem;
+    font-size: 0.85rem;
+  }
+
+  .money-pager > .muted {
+    margin-right: auto;
+  }
+
+  .money-pager a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    font-weight: 600;
   }
 
   .money-ledger td.right,
@@ -4297,7 +4556,8 @@
   .comp-disclosure,
   .money-disclosure,
   .shift-disclosure,
-  .wardrobe-disclosure {
+  .wardrobe-disclosure,
+  .people-disclosure {
     cursor: pointer;
     font-weight: 600;
     color: var(--accent-strong);
@@ -4780,6 +5040,16 @@
       right: auto;
       left: 0;
       width: min(34rem, 92vw);
+    }
+
+    /* The student page's "+ Add guardian" drawer sits at the RIGHT end of its
+       heading row, so flipping its panel to `left: 0` hangs it off that end and
+       runs it ~190px past the screen. It keeps the desktop anchoring, which on a
+       phone is the one that works: the panel's right edge lands on the page
+       gutter and it opens leftward across the width it has. */
+    .person-section-head .drawer-panel {
+      left: auto;
+      right: 0;
     }
 
     /* …but the spine's row popovers keep their own anchoring — flipping them

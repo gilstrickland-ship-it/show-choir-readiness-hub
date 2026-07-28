@@ -189,7 +189,7 @@ function LedgerPager({
 }) {
   if (range.total === 0) return null;
   return (
-    <div className="row-inline">
+    <div className="row-inline money-pager">
       <span className="muted">
         Showing {range.firstShown}–{range.lastShown} of {range.total}{" "}
         {range.total === 1 ? "entry" : "entries"}
