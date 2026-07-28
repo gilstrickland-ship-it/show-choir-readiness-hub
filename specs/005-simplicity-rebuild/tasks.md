@@ -76,9 +76,9 @@
 
 ## Phase 11 — Wave 11: Calendar & records
 
-- [ ] T159 Events calendar + detail: both views kept, create defers to the Season drawer as primary path, detail adopts row/edit idioms; `history` plain-language + flash convention.
-- [ ] T160 Today re-verified end-to-end after every wave: every inbox row, readiness row, comp-week shortcut and aside card points at a surface that still owns that job (Wave 3 moved several); dead links are a release blocker.
-- [ ] T161 Wave-11 verification: full gate + e2e + visual pass.
+- [X] T159 Events calendar + detail: both views kept, create defers to the Season drawer as primary path, detail adopts row/edit idioms; `history` plain-language + flash convention.
+- [X] T160 Today re-verified end-to-end after every wave: every inbox row, readiness row, comp-week shortcut and aside card points at a surface that still owns that job (Wave 3 moved several); dead links are a release blocker.
+- [X] T161 Wave-11 verification: full gate + e2e + visual pass.
 
 ## Phase 12 — Wave 12: Money reporting
 
