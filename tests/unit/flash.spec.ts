@@ -23,7 +23,6 @@ import {
 import {
   SHIFT_FLASH_MAPS,
   shiftErrorSection,
-  shiftOkSection,
   isRowShiftError,
   shiftAnchor,
   type ShiftErrorKey,
@@ -151,7 +150,7 @@ describe("shifts: five toast params collapse into one ?ok=", () => {
     for (const key of SHIFT_OK_KEYS) {
       const entry = flashFrom(SHIFT_FLASH_MAPS.ok, key);
       expect(entry?.message ?? "", key).not.toBe("");
-      expect(shiftOkSection(key), key).toBe("page");
+      expect(entry?.section, key).toBe("page");
     }
   });
 

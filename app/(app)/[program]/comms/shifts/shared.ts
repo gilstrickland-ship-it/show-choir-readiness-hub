@@ -1,4 +1,4 @@
-import { flashFrom, flashSection, type FlashMap } from "@/lib/flash";
+import { flashSection, type FlashMap } from "@/lib/flash";
 
 // The shifts page's URL contract (spec 005 Wave 8 / T142) — the same shape the
 // host command center uses, now shared through lib/flash.
@@ -104,19 +104,10 @@ export function shiftErrorSection(key: ShiftErrorKey): ShiftSection {
   return flashSection(SHIFT_ERROR, key);
 }
 
-export function shiftOkSection(key: ShiftOkKey): ShiftSection {
-  return flashSection(SHIFT_OK, key);
-}
-
 // True when this code belongs to one shift's row rather than to the page.
 export function isRowShiftError(key: ShiftErrorKey): boolean {
   const section = shiftErrorSection(key);
   return section === "panel" || section === "signup";
-}
-
-// The reading half, for the page's own routing decisions (which row to reopen).
-export function shiftError(code: string | null) {
-  return flashFrom(SHIFT_ERROR, code);
 }
 
 export function shiftAnchor(shiftId: string): string {
