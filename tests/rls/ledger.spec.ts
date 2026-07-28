@@ -15,6 +15,8 @@ import { postgrestOver } from './postgrest';
 import { loadBoardSnapshot } from '@/lib/pdf/queries';
 import {
   summarizeSeasonLedger,
+  lineActualsFromRows,
+  actualForDirection,
   UNCATEGORIZED_KEY,
   type LedgerEntryRow,
 } from '@/lib/treasury';
@@ -549,7 +551,11 @@ describe.skipIf(rlsSkipped())('0019 write functions — atomic, treasurer-only, 
       'public.ledger_season_totals(uuid, uuid)',
       'public.ledger_line_actuals(uuid, uuid, uuid, uuid)',
       'public.ledger_running_balance(uuid, uuid, uuid[])',
-      'public.add_ledger_entry(uuid, uuid, date, ledger_entry_direction, bigint, uuid, uuid, uuid, text, text, text)',
+      // Twelve parameters since 0021: the last one is the commitment a payment
+      // draws down (spec 006 R3). The eleven-parameter version was DROPPED
+      // rather than overloaded — PostgREST calls by name, and two candidates
+      // differing only by a defaulted trailing argument are ambiguous.
+      'public.add_ledger_entry(uuid, uuid, date, ledger_entry_direction, bigint, uuid, uuid, uuid, text, text, text, uuid)',
       'public.void_ledger_entry(uuid, uuid, text)',
       'public.categorize_ledger_entry(uuid, uuid, uuid)',
       'private.ledger_may_read(uuid)',
@@ -715,14 +721,22 @@ describe.skipIf(rlsSkipped())('board snapshot: the JS reduction equals the SQL a
     }
   });
 
-  // THE LOADER ITSELF, over 1,200 real rows. This is the read the PDF performs:
-  // its paging loop, its program+season+not-voided filters, its per-category
-  // rollup and its uncategorized bucket. Everything it reports is checked
-  // against the SQL aggregates the on-screen Reports page uses — because "the
-  // PDF agrees with the page" is the only claim that matters, and it can only
-  // be made by running both.
-  test('loadBoardSnapshot reports the whole season, agreeing with the SQL aggregates', async () => {
-    const { snapshot, totals, byLine } = await treasurer().tx(async (c) => {
+  // THE LOADER ITSELF, over 1,200 real rows, AGAINST THE PAGE'S OWN ARITHMETIC.
+  // This is the read the PDF performs — its paging loop, its
+  // program+season+not-voided filters, its per-category rollup and its
+  // uncategorized bucket — and everything it reports is checked against the
+  // figures the on-screen Reports page builds from the SQL aggregates, using the
+  // page's own helpers. "The PDF agrees with the page" is the only claim that
+  // matters, and it can only be made by running both.
+  //
+  // The two surfaces used to define a category's actual DIFFERENTLY: both rolled
+  // up every cent booked to the category's lines regardless of direction, while
+  // the header figures split by the ENTRY's direction — so a refund booked to an
+  // expense line added to that category instead of subtracting from it, and two
+  // numbers that disagreed could be handed to the same board meeting. One
+  // definition now (lib/treasury actualForDirection), on both surfaces.
+  test('loadBoardSnapshot reports the whole season, and every category matches the Reports page', async () => {
+    const { snapshot, totals, byLine, structure } = await treasurer().tx(async (c) => {
       await c.query(SEED, [A.program, A.seasonActive, A.budgetLine, A.treasurer]);
       const t = await c.query<{
         in_cents: string;
@@ -735,46 +749,78 @@ describe.skipIf(rlsSkipped())('board snapshot: the JS reduction equals the SQL a
         in_cents: string;
         out_cents: string;
       }>(`select * from public.ledger_line_actuals($1, $2)`, [A.program, A.seasonActive]);
+      // What the page reads to learn which category owns which line, and which
+      // way that category points.
+      const st = await c.query<{
+        line_id: string;
+        category_id: string;
+        category_name: string;
+        direction: 'income' | 'expense';
+      }>(
+        `select bl.id as line_id, bc.id as category_id, bc.name as category_name, bc.direction
+           from budget_lines bl
+           join budget_categories bc on bc.id = bl.category_id
+          where bl.program_id = $1`,
+        [A.program],
+      );
       const snap = await loadBoardSnapshot(postgrestOver(c), A.seasonActive);
-      return { snapshot: snap, totals: t.rows[0], byLine: l.rows };
+      return { snapshot: snap, totals: t.rows[0], byLine: l.rows, structure: st.rows };
     });
 
     expect(snapshot).not.toBeNull();
     const s = snapshot!;
+    expect(Number(totals.entry_count)).toBeGreaterThan(CAP);
 
     // The uncategorized bucket the loader carved out equals the aggregate's.
     expect(s.uncategorizedInCents + s.uncategorizedOutCents).toBe(
       Number(totals.uncategorized_cents),
     );
 
-    // Actuals, whole. `totalActual*` already fold the uncategorized bucket in,
-    // so together they must account for every cent in the season — and this is
-    // exactly the number that came up short when the read stopped at 1,000.
+    // ---- The Reports page's rollup, computed the way the page computes it ----
+    // lineActualsFromRows over the SQL aggregate, then actualForDirection per
+    // category. This is app/(app)/[program]/treasury/reports/page.tsx, verbatim.
+    const pageByLine = lineActualsFromRows(byLine);
+    const pageByCategory = new Map<string, number>();
+    const categoryName = new Map<string, string>();
+    for (const row of structure) {
+      categoryName.set(row.category_id, row.category_name);
+      pageByCategory.set(
+        row.category_id,
+        (pageByCategory.get(row.category_id) ?? 0) +
+          actualForDirection(pageByLine.get(row.line_id), row.direction),
+      );
+    }
+
+    // Every category the PDF prints carries the figure the page shows for it.
+    const pdfCategories = [...s.incomeCategories, ...s.expenseCategories];
+    expect(pdfCategories.length).toBeGreaterThan(0);
+    for (const cat of pdfCategories) {
+      const catId = [...categoryName.entries()].find(([, n]) => n === cat.name)?.[0];
+      // A category with no lines has no row in `structure` and is legitimately
+      // zero on both surfaces.
+      expect(cat.actualCents).toBe(catId ? (pageByCategory.get(catId) ?? 0) : 0);
+    }
+
+    // And in the aggregate: the PDF's two totals are the page's category
+    // rollups plus the uncategorized bucket it prints as its own line.
+    const pageRolledUp = [...pageByCategory.values()].reduce((a, b) => a + b, 0);
     expect(s.totalActualIncome + s.totalActualExpense).toBe(
-      Number(totals.in_cents) + Number(totals.out_cents),
+      pageRolledUp + s.uncategorizedInCents + s.uncategorizedOutCents,
     );
 
-    // Per category: every line's actual, summed, equals ledger_line_actuals for
-    // the lines that category owns. The seed books everything to one line, so
-    // exactly one category carries it and the rest are zero — which is the
-    // shape a real snapshot has too.
-    const lineTotal = new Map(
+    // The definition itself, pinned: a category counts its OWN direction. The
+    // seed books both directions to one expense line, so the old both-directions
+    // rollup would have reported strictly more than the money that actually went
+    // out — the shape of the number a board would have acted on.
+    const bookedBothWays = byLine
+      .filter((r) => r.budget_line_id !== null)
+      .reduce((sum, r) => sum + Number(r.in_cents) + Number(r.out_cents), 0);
+    expect(pageRolledUp).toBeLessThan(bookedBothWays);
+    expect(s.totalActualExpense - s.uncategorizedOutCents).toBe(
       byLine
         .filter((r) => r.budget_line_id !== null)
-        .map((r) => [r.budget_line_id as string, Number(r.in_cents) + Number(r.out_cents)]),
+        .reduce((sum, r) => sum + Number(r.out_cents), 0),
     );
-    const bookedToLines = [...lineTotal.values()].reduce((a, b) => a + b, 0);
-    const rolledUp = [...s.incomeCategories, ...s.expenseCategories].reduce(
-      (sum, cat) => sum + cat.actualCents,
-      0,
-    );
-    expect(rolledUp).toBe(bookedToLines);
-
-    // And the identity that says nothing was dropped or double-counted.
-    expect(rolledUp + s.uncategorizedInCents + s.uncategorizedOutCents).toBe(
-      Number(totals.in_cents) + Number(totals.out_cents),
-    );
-    expect(Number(totals.entry_count)).toBeGreaterThan(CAP);
   });
 
   test('loadBoardSnapshot returns null for a season that is not there', async () => {
