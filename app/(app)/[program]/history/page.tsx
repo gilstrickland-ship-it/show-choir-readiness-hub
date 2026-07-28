@@ -3,13 +3,21 @@ import { getTenantContext } from "@/lib/tenant";
 import { requireFlag } from "@/lib/require-flag";
 import { createClient } from "@/lib/supabase/server";
 import { activeCaptions } from "@/lib/competitions";
-import { formatDateOnly } from "@/lib/treasury";
-import { formatDateTimeInTz } from "@/lib/datetime";
+import { formatDateInTz, formatDateTimeInTz } from "@/lib/datetime";
 import { ArchivedBanner } from "../ArchivedBanner";
 
 // Trophy case / season history (§5, T028). Visible to every staff role behind the
 // `archive` flag. Competition results grouped by season — the emotional archive
 // payload that makes the multi-year vault loved, not merely useful. Read-only.
+//
+// Re-verified for spec 005 Wave 11 (T159) and it needs nothing structural: it
+// takes no search params, runs no action, and has no write to report the outcome
+// of, so there is no flash contract to adopt — a `?ok=`/`?error=` reader on a
+// page nothing ever redirects to would be machinery for a message that cannot
+// arrive. What it did need was the plain-language pass and one date: the
+// competition date rendered through the TREASURY module's date formatter, which
+// is calendar-correct but is not how the rest of the product says a competition
+// date. It says it the way Today and Season do now.
 
 export const dynamic = "force-dynamic";
 
@@ -87,8 +95,13 @@ export default async function HistoryPage({
 
       {totalResults === 0 && (
         <p className="muted">
-          No results recorded yet. Record placements on each competition&apos;s
-          page after the show, and they&apos;ll live here forever.
+          Nothing here yet. After a show, record the placement on that
+          competition&apos;s own page — they are all listed on{" "}
+          {/* Season absorbs the competition list, and it is reachable from
+              here by construction: this page needs the `archive` flag, and
+              `archive` is one of the flags Season's any-of gate accepts. */}
+          <Link href={`/${slug}/season`}>Season</Link> — and it stays here for
+          as long as the program does.
         </p>
       )}
 
@@ -113,12 +126,25 @@ export default async function HistoryPage({
                 const caps = activeCaptions(r.captions);
                 return (
                   <div className="card" key={i}>
+                    {/* Stays an h2 under the season's h2, which is a heading
+                        level a reader moving by headings is told wrongly: each
+                        card reads as starting a new season. Left alone on
+                        purpose — the eyebrow styling these titles carry is
+                        `.card h2` and nothing else, so demoting the tag here
+                        without widening that selector would silently restyle
+                        every trophy in the case. Handed off as a CSS change
+                        (`.card :is(h2, h3)`), not made half-way. */}
                     <h2>{r.competition?.name ?? "Competition"}</h2>
                     <div className="metric" style={{ fontSize: "1.2rem" }}>
                       {r.placement ?? "Recorded"}
                     </div>
                     <div className="muted">
-                      {formatDateOnly(r.competition?.date)}
+                      {r.competition?.date
+                        ? formatDateInTz(
+                            `${r.competition.date}T12:00:00Z`,
+                            program.timezone,
+                          )
+                        : "No date"}
                       {r.competition?.host_school
                         ? ` · ${r.competition.host_school}`
                         : ""}
@@ -147,10 +173,6 @@ export default async function HistoryPage({
           </div>
         );
       })}
-
-      <p className="muted">
-        <Link href={`/${slug}/dashboard`}>Back to dashboard</Link>
-      </p>
     </section>
   );
 }
