@@ -9,6 +9,27 @@
 //
 // Pure functions only — no DB, no network — so tests/unit covers them directly.
 
+// The zones a program can be set to, and the SINGLE list of them (spec 005 Wave
+// 8 / T143). It was pasted into two files — /launch, where a founder picks one,
+// and Settings, where a director changes it — with a comment in each saying it
+// mirrored the other. Two lists that must agree and are maintained separately
+// only ever agree by luck. It lives here because this is the module that owns
+// what a timezone means to the app.
+//
+// It covers the show-choir corridor rather than all ~600 IANA zones; extend it
+// as programs onboard outside it. A program already set to a zone that is not on
+// this list keeps it — Settings prepends the current value rather than silently
+// re-homing the program's whole calendar.
+export const TIMEZONES: readonly string[] = [
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Phoenix",
+  "America/Los_Angeles",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+];
+
 // Milliseconds to add to a UTC instant to read the same wall clock as `timeZone`
 // at that instant (i.e. the zone's UTC offset, DST-aware).
 export function tzOffsetMs(instant: Date, timeZone: string): number {

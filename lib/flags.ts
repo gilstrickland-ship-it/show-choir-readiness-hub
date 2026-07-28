@@ -17,7 +17,6 @@ export type FlagKey =
   | "shifts"
   | "events"
   | "archive"
-  | "support_access"
   | "hosting"
   | "guide";
 
@@ -71,10 +70,13 @@ export const flagRegistry: Record<FlagKey, FlagDefinition> = {
     description: "Season archive, rollover, and trophy case.",
     default: true,
   },
-  support_access: {
-    description: "Read-only support impersonation view.",
-    default: false,
-  },
+  // NOTE: there is deliberately no `support_access` flag. There was one, and
+  // nothing ever evaluated it — the real gate on support impersonation is
+  // `programs.support_access_until` (time-boxed director consent, set and
+  // cleared from Settings) AND `profiles.is_support`, enforced in the DB by
+  // 0004's SECURITY DEFINER policies and in the app by lib/support.ts. A flag
+  // beside them could only ever be a second, weaker answer to a question the
+  // schema already answers, so it is gone rather than wired up (spec 005 T143).
   hosting: {
     description:
       "Host-mode: run your own invitational — visiting schools, homerooms, schedule, packets.",
@@ -108,17 +110,16 @@ export const flagRegistry: Record<FlagKey, FlagDefinition> = {
 //   • program — the top tier: ALL product features on (same as varsity today,
 //               named separately so future program-only features slot in here).
 //
-// NOTE: `support_access` is intentionally NOT set by any tier. Support
-// impersonation is governed by director consent + profiles.is_support (§10),
-// never by a program's tier — so it stays at its registry default (off) unless a
-// per-program override flips it. Tier bundles decide PRODUCT surface, not the
-// cross-tenant support path.
+// Tier bundles decide PRODUCT surface, and only that. Support impersonation is
+// governed by director consent (`programs.support_access_until`) plus
+// `profiles.is_support` (§10) — a tenant-isolation boundary, not a feature a
+// tier buys, which is why it has no flag at all (see the registry note above).
 //
-// NOTE: `hosting` (Wave I host-mode) is likewise NOT in any tier bundle — same
-// posture as support_access. Running your own invitational is a pilot capability
-// enabled per-program via feature_overrides, not a tier entitlement yet, so it
-// stays at its registry default (off) until a per-program override turns it on.
-// This is a deliberate product decision, recorded in specs/002-roadmap-wave-2 I1.
+// NOTE: `hosting` (Wave I host-mode) is NOT in any tier bundle. Running your own
+// invitational is a pilot capability enabled per-program via feature_overrides,
+// not a tier entitlement yet, so it stays at its registry default (off) until a
+// per-program override turns it on. This is a deliberate product decision,
+// recorded in specs/002-roadmap-wave-2 I1.
 
 export type ProgramTier = "prep" | "varsity" | "program";
 

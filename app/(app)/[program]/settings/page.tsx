@@ -6,7 +6,11 @@ import { SubTabs } from "../SubTabs";
 import { settingsTabs } from "@/lib/subnav";
 import { createClient } from "@/lib/supabase/server";
 import { SETTINGS_ROLES } from "@/lib/nav";
-import { formatDateTimeInTz, formatTimeZoneLabel } from "@/lib/datetime";
+import {
+  formatDateTimeInTz,
+  formatTimeZoneLabel,
+  TIMEZONES,
+} from "@/lib/datetime";
 import {
   supportAccessActive,
   SUPPORT_ACCESS_DAYS,
@@ -24,17 +28,7 @@ import {
 
 // Program settings (director/admin only). Timezone is IANA (Constitution VII) —
 // every itinerary/event time is rendered in this zone, so it's a first-class
-// field. Curated common-zone list covers the show-choir corridor; extend as
-// programs onboard outside it.
-const TIMEZONES: readonly string[] = [
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Phoenix",
-  "America/Los_Angeles",
-  "America/Anchorage",
-  "Pacific/Honolulu",
-];
+// field. The zone list is lib/datetime's — the same one /launch offers.
 
 export default async function SettingsPage({
   params,

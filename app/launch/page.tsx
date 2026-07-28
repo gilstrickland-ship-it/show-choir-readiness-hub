@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { signOut } from "@/app/auth/actions";
 import { brand } from "@/lib/brand";
 import { escapeLike } from "@/lib/email";
-import { formatTimeZoneLabel } from "@/lib/datetime";
+import { formatTimeZoneLabel, TIMEZONES } from "@/lib/datetime";
 import { ROLE_LABELS, type Role } from "@/lib/auth";
 import { createProgram } from "./actions";
 
@@ -21,18 +21,6 @@ import { createProgram } from "./actions";
 // scoped strictly to the signed-in user's id and verified email.
 
 export const dynamic = "force-dynamic";
-
-// IANA zones covering the show-choir corridor (mirrors settings/page.tsx). A
-// director can refine the zone later in Settings.
-const TIMEZONES: readonly string[] = [
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Phoenix",
-  "America/Los_Angeles",
-  "America/Anchorage",
-  "Pacific/Honolulu",
-];
 
 interface MembershipRow {
   id: string;
