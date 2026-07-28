@@ -43,6 +43,46 @@ test.describe("board member role gating", () => {
       page.getByRole("button", { name: "Add entry" }),
     ).toHaveCount(0);
 
+    // The two reporting surfaces are the same seat's, and they are the two a
+    // board actually reads (spec 005 Wave 12). `exact` on every name below,
+    // because a name match is a SUBSTRING match by default and this surface is
+    // full of near-prefixes: an unanchored "Money in" would also match "Money
+    // in (money received)" if the ledger's direction labels ever land here, and
+    // an unanchored "Money" matches both section headings at once.
+    await page.goto("/demo/treasury/budget-vs-actual");
+    await expect(
+      page.getByRole("heading", { name: "Budget vs Actual", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Money in", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Money out", exact: true }),
+    ).toBeVisible();
+    // A pure read surface: it holds no form at all, for any seat. This is the
+    // assertion that catches a write growing here later.
+    await expect(page.locator("main form")).toHaveCount(0);
+
+    await page.goto("/demo/treasury/reports");
+    await expect(
+      page.getByRole("heading", { name: "Reports", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Board snapshot", exact: true }),
+    ).toBeVisible();
+    // The one form on Reports is the event picker, and it GETs — the URL is the
+    // report. Nothing on either page may post.
+    await expect(page.locator('main form:not([method="get"])')).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Show it", exact: true }),
+    ).toBeVisible();
+
+    // A duplicated param arrives as an ARRAY, which used to 500 this page.
+    const dupEvent = await page.request.get(
+      "/demo/treasury/reports?event=comp%3Aone&event=trip%3Atwo",
+    );
+    expect(dupEvent.status()).toBe(200);
+
     // Comms is off the board's surface entirely. The direct URL no longer 404s
     // for an authenticated member — it renders the data-free Restricted notice
     // (names the owning seats, but ships none of the surface's content).
