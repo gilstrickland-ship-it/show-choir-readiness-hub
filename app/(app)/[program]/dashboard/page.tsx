@@ -8,6 +8,7 @@ import {
 } from "@/lib/nav";
 import {
   ATTENDANCE_WRITE_ROLES,
+  COMPETITION_WRITE_ROLES,
   activeCaptions,
 } from "@/lib/competitions";
 import { DIGEST_WRITE_ROLES } from "@/lib/comms";
@@ -73,16 +74,27 @@ export default async function DashboardPage({
 
   // Per-block gates (flag on AND role has read access). The comp-readiness
   // block's own shift/packet sub-gates live inside loadCompReadiness.
+  //
+  // A gate here is a promise about a DESTINATION, so it has to be the gate the
+  // destination actually enforces (spec 005 T160). /comms/digest 404s on the
+  // `comms` flag, not on `digest` — a program with the weekly digest overridden
+  // on and the comms surface off got an inbox row whose "Review & send" was a
+  // 404. Both flags, the same pair lib/readiness already requires for the
+  // shifts check and lib/guide for the announcement step.
   const show = {
     comp: flags.competitions,
     costumes: flags.costumes && COSTUMES_ROLES.includes(role),
     treasury: flags.treasury && TREASURY_ROLES.includes(role),
     roster: ROSTER_ROLES.includes(role),
     absence: flags.competitions && ATTENDANCE_WRITE_ROLES.includes(role),
-    digest: flags.digest && DIGEST_WRITE_ROLES.includes(role),
+    digest: flags.comms && flags.digest && DIGEST_WRITE_ROLES.includes(role),
     results: flags.competitions,
     events: flags.events,
   };
+  // Who may CREATE a competition — the empty hero offers a way to add one, and
+  // adding is Season's job since Wave 1 (US1/P6), so a reader is offered
+  // nothing rather than a drawer with no section in it.
+  const canAddComp = flags.competitions && COMPETITION_WRITE_ROLES.includes(role);
 
   // ---- Next competition + comp-week readiness (shared helper) ---------------
   interface NextComp {
@@ -456,7 +468,12 @@ export default async function DashboardPage({
               <p className="today-kicker">Next competition</p>
               <p className="muted">
                 No upcoming competition on the calendar.{" "}
-                <Link href={`${base}/competitions`}>Add one</Link>.
+                {canAddComp && (
+                  <>
+                    <Link href={`${base}/season?add=comp`}>Add one</Link> on
+                    Season.
+                  </>
+                )}
               </p>
             </div>
           )}

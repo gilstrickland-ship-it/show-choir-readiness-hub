@@ -89,16 +89,38 @@ interface VerifyCtx {
   seasonId: string | null;
 }
 
-interface StepDef {
+// What a link in this panel needs to be true before it is offered. A flag-gated
+// route 404s server-side (Constitution VIII), so a link the guide shows whose
+// flag is off is a guide that ends in a dead end — it is dropped instead.
+//
+// Two shapes, because the app has two shapes of gate: a route behind ONE flag
+// (`requireFlag`, or several of them in a row) and the Season union surface,
+// which 404s only when EVERY absorbed flag is off. `flagsAny` is the same field
+// lib/nav.ts uses for exactly that slot; both halves must pass.
+interface LinkGate {
+  flags?: readonly FlagKey[];
+  flagsAny?: readonly FlagKey[];
+}
+
+export function gatePasses(
+  gate: LinkGate,
+  flags: Record<FlagKey, boolean>,
+): boolean {
+  if (gate.flags && !gate.flags.every((key) => flags[key])) return false;
+  if (gate.flagsAny && !gate.flagsAny.some((key) => flags[key])) return false;
+  return true;
+}
+
+interface StepDef extends LinkGate {
   label: string;
   hint?: string;
   hrefSuffix: string; // appended to `/${slug}`
-  // Flags this step's DESTINATION requires, ALL of them. A flag-gated route
-  // 404s server-side (Constitution VIII), so a step whose link 404s is a guide
-  // that ends in a dead end — the journey drops the step instead. Omitted means
-  // the step is always available.
-  flags?: readonly FlagKey[];
   verify: (ctx: VerifyCtx) => Promise<boolean>;
+}
+
+interface BoardLinkDef extends LinkGate {
+  label: string;
+  hrefSuffix: string;
 }
 
 interface JourneyDef {
@@ -107,7 +129,7 @@ interface JourneyDef {
   lede?: string;
   steps: StepDef[]; // empty for the board orientation card
   // Board orientation card (no tasks): link rows + a single sentence.
-  boardLinks?: { label: string; hrefSuffix: string }[];
+  boardLinks?: BoardLinkDef[];
   boardNote?: string;
   // A non-step footer pointer (treasurer's board-snapshot nudge).
   footer?: { text: string; hrefSuffix: string };
@@ -127,6 +149,7 @@ const DIRECTOR_JOURNEY: JourneyDef = {
       // and from Settings; it is for year-over-year rollover, not first runs.
       label: "Start your season",
       hrefSuffix: "/season",
+      flagsAny: ["competitions", "events", "travel", "archive"],
       verify: async (ctx) => ctx.seasonId != null,
     },
     {
@@ -158,6 +181,11 @@ const DIRECTOR_JOURNEY: JourneyDef = {
     {
       label: "Add your first competition",
       hrefSuffix: "/competitions",
+      // /competitions requireFlag-gates on `competitions`. Nothing declared it
+      // because the flag defaults on and no tier turns it off — but a
+      // per-program override can, and then two of the director's seven steps
+      // pointed at a 404 (spec 005 T160).
+      flags: ["competitions"],
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
         const { count } = await ctx.supabase
@@ -171,6 +199,7 @@ const DIRECTOR_JOURNEY: JourneyDef = {
     {
       label: "Publish the itinerary",
       hrefSuffix: "/competitions",
+      flags: ["competitions"],
       verify: async (ctx) => {
         if (!ctx.seasonId) return false;
         // Itineraries are scoped by competition; filter through an inner join to
@@ -366,15 +395,39 @@ const COSTUME_JOURNEY: JourneyDef = {
 
 // Board member: an orientation card (not tasks). "Your seat sees everything and
 // changes nothing — that transparency protects the program."
+//
+// Its links carry gates for the same reason the steps do, and here it was not a
+// hypothetical: `treasury` is OFF for the whole prep tier, so a board member of
+// any prep program opened Today and was handed a card whose first three rows —
+// three quarters of the card — were 404s (spec 005 T160). The card is where
+// everything lives; it may only name what is there.
 const BOARD_JOURNEY: JourneyDef = {
   kind: "board",
   heading: "Where everything lives",
   steps: [],
   boardLinks: [
-    { label: "Money — the full ledger", hrefSuffix: "/treasury" },
-    { label: "Budget vs actual", hrefSuffix: "/treasury/budget-vs-actual" },
-    { label: "Reports & board snapshot", hrefSuffix: "/treasury/reports" },
-    { label: "Season calendar", hrefSuffix: "/season" },
+    {
+      label: "Money — the full ledger",
+      hrefSuffix: "/treasury",
+      flags: ["treasury"],
+    },
+    {
+      label: "Budget vs actual",
+      hrefSuffix: "/treasury/budget-vs-actual",
+      flags: ["treasury"],
+    },
+    {
+      label: "Reports & board snapshot",
+      hrefSuffix: "/treasury/reports",
+      flags: ["treasury"],
+    },
+    {
+      // Season is a UNION surface: it 404s only when every flag it absorbs is
+      // off, so an any-of gate is the one that matches (lib/nav's Season slot).
+      label: "Season calendar",
+      hrefSuffix: "/season",
+      flagsAny: ["competitions", "events", "travel", "archive"],
+    },
   ],
   boardNote:
     "Your seat sees everything and changes nothing — that transparency protects the program.",
@@ -477,10 +530,12 @@ export async function loadJourneyPanel(
       heading: def.heading,
       lede: def.lede,
       steps: [],
-      boardLinks: (def.boardLinks ?? []).map((l) => ({
-        label: l.label,
-        href: base + l.hrefSuffix,
-      })),
+      boardLinks: (def.boardLinks ?? [])
+        .filter((l) => gatePasses(l, flags))
+        .map((l) => ({
+          label: l.label,
+          href: base + l.hrefSuffix,
+        })),
       boardNote: def.boardNote,
       doneCount: 0,
       total: 0,
@@ -496,9 +551,7 @@ export async function loadJourneyPanel(
   // Steps whose destination is flagged off are dropped BEFORE anything else
   // runs, so the terminal short-circuit reads the terminal step this member can
   // actually reach — not one whose link would 404 on them.
-  const stepDefs = def.steps.filter((s) =>
-    (s.flags ?? []).every((key) => flags[key]),
-  );
+  const stepDefs = def.steps.filter((s) => gatePasses(s, flags));
   if (stepDefs.length === 0) return null;
 
   const ctx: VerifyCtx = { supabase, programId, seasonId };

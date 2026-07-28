@@ -313,4 +313,100 @@ describe("loadJourneyPanel — steps whose destination is flagged off", () => {
     expect(model!.steps[1].label).toBe("Group them into a set");
     expect(model!.steps[1].href).toBe("/demo/costumes/assignments");
   });
+
+  // /competitions requireFlag-gates on `competitions`, and two of the seven
+  // director steps point at it. Nothing declared that, because the flag
+  // defaults on and no tier turns it off — but an override can (spec 005 T160).
+  test("competitions off: both steps that point at /competitions are gone", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ flags: allFlags({ competitions: false }) }),
+    );
+    expect(model!.steps.map((s) => s.href)).not.toContain("/demo/competitions");
+    expect(model!.total).toBe(5);
+  });
+
+  // Season is a UNION surface: it 404s only when EVERY flag it absorbs is off,
+  // so an all-of gate would have dropped step one from programs that can reach
+  // it perfectly well.
+  test("Season's step survives losing three of its four flags", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({
+        flags: allFlags({ competitions: false, events: false, travel: false }),
+      }),
+    );
+    expect(model!.steps[0].href).toBe("/demo/season");
+  });
+
+  test("...and goes when the last one goes too", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({
+        flags: allFlags({
+          competitions: false,
+          events: false,
+          travel: false,
+          archive: false,
+        }),
+      }),
+    );
+    expect(model!.steps.map((s) => s.href)).not.toContain("/demo/season");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE BOARD CARD IS "WHERE EVERYTHING LIVES" — SO IT MAY ONLY NAME WHAT IS
+// ---------------------------------------------------------------------------
+// The step list learned this in Wave 5; the board card never did, and its links
+// were mapped straight through with no gate at all. `treasury` is off for the
+// entire PREP tier, so a board member of any prep program opened Today and got
+// a four-row card whose first three rows were 404s (spec 005 T160).
+describe("board orientation card — flagged-off links", () => {
+  test("all flags on: the four rows the card has always had", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ role: "board_member" }),
+    );
+    expect(model!.boardLinks!.map((l) => l.href)).toEqual([
+      "/demo/treasury",
+      "/demo/treasury/budget-vs-actual",
+      "/demo/treasury/reports",
+      "/demo/season",
+    ]);
+  });
+
+  test("treasury off (the prep tier): the money rows are gone, the card stays", async () => {
+    const model = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({ role: "board_member", flags: allFlags({ treasury: false }) }),
+    );
+    expect(model!.boardLinks!.map((l) => l.href)).toEqual(["/demo/season"]);
+    expect(model!.kind).toBe("board");
+  });
+
+  test("Season's row is any-of, like Season's own gate", async () => {
+    const stillThere = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({
+        role: "board_member",
+        flags: allFlags({ competitions: false, events: false, travel: false }),
+      }),
+    );
+    expect(stillThere!.boardLinks!.map((l) => l.href)).toContain("/demo/season");
+
+    const gone = await loadJourneyPanel(
+      makeSupabase({}),
+      panelArgs({
+        role: "board_member",
+        flags: allFlags({
+          competitions: false,
+          events: false,
+          travel: false,
+          archive: false,
+        }),
+      }),
+    );
+    expect(gone!.boardLinks!.map((l) => l.href)).not.toContain("/demo/season");
+  });
 });

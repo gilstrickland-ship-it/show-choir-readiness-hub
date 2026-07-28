@@ -63,16 +63,29 @@ export async function StartSeasonCard({
   // Seasons exist, just none active — a real choice, made in Settings. This is
   // also where a failed submit lands when the season got created but not
   // activated, so the message renders here too rather than nowhere.
+  //
+  // Settings is director/admin only, so a treasurer or a board member reading
+  // Today was told to go and do something her seat cannot do, on a link that
+  // turns her away when she follows it (spec 005 T160). Same fact, addressed to
+  // the person actually reading it — which is what the no-seasons branch below
+  // has always done.
   if (seasonCount > 0) {
+    const canChoose = SETTINGS_ROLES.includes(role);
     return (
       <>
         {message && <p className="alert-error">{message}</p>}
         <p className="alert-error">
           No active season yet.{" "}
-          <Link href={`/${slug}/settings/rollover`}>
-            Choose which season is active
-          </Link>{" "}
-          in Settings.
+          {canChoose ? (
+            <>
+              <Link href={`/${slug}/settings/rollover`}>
+                Choose which season is active
+              </Link>{" "}
+              in Settings.
+            </>
+          ) : (
+            "Your director picks which season is the active one."
+          )}
         </p>
       </>
     );
