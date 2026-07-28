@@ -8,6 +8,7 @@ import { SETTINGS_ROLES } from "@/lib/nav";
 import { inngest, inngestEnabled } from "@/lib/inngest/client";
 import { runExportJob } from "@/lib/export-run";
 import { programPath } from "@/lib/return-path";
+import type { ExportErrorKey, ExportOkKey } from "../shared";
 
 // Async export request (§13.2, T036). director/admin. Creates an export_jobs row
 // (service-role: the table has no client write policy) and either enqueues the
@@ -22,6 +23,17 @@ import { programPath } from "@/lib/return-path";
 // validates the slug shape and fails closed to "/" (spec 005 T143a).
 function exportPath(slug: string): string {
   return programPath(slug, "settings/export") ?? "/";
+}
+
+// One `?ok=`/`?error=` contract, read back through lib/flash's prototype-safe
+// lookup (spec 005 Wave 13 / T164) — `?requested=1` was a param whose only job
+// was to print one toast.
+function done(slug: string, key: ExportOkKey): string {
+  return `${exportPath(slug)}?ok=${key}`;
+}
+
+function fail(slug: string, key: ExportErrorKey): string {
+  return `${exportPath(slug)}?error=${key}`;
 }
 
 export async function requestExport(formData: FormData): Promise<void> {
@@ -39,7 +51,7 @@ export async function requestExport(formData: FormData): Promise<void> {
     .single();
 
   if (error || !created) {
-    redirect(`${exportPath(slug)}?error=export`);
+    redirect(fail(slug, "export"));
   }
   const jobId = (created as { id: string }).id;
 
@@ -51,5 +63,5 @@ export async function requestExport(formData: FormData): Promise<void> {
   }
 
   revalidatePath(exportPath(slug));
-  redirect(`${exportPath(slug)}?requested=1`);
+  redirect(done(slug, "requested"));
 }
