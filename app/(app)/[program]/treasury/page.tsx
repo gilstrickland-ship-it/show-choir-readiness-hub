@@ -11,8 +11,10 @@ import {
   ledgerSearchTerm,
   seasonTotalsFromRow,
   ledgerPageRange,
+  ledgerPageRangeUnknownTotal,
   parsePageParam,
   monthKeyForDate,
+  LEDGER_PAGE_SIZE,
   type LedgerDirection,
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
@@ -50,6 +52,17 @@ const ERR: Record<string, string> = {
     "Could not save the entry. Check the amount (e.g. 1,234.56), direction, and date.",
   entry_tag:
     "That budget line, competition, or trip isn't in this season. Pick one from this season's lists.",
+  // One sentence per rejection the database can raise (0020). These used to be
+  // one message about the amount format, so a tag from last season sent the
+  // treasurer to re-check a number that was fine.
+  entry_season:
+    "That season isn't this program's, or it's archived — an archived season's books are closed. Nothing was saved.",
+  entry_line:
+    "That budget line isn't on this season's budget. Pick one from this season's list. Nothing was saved.",
+  entry_competition:
+    "That competition isn't in this season. Pick one from this season's list. Nothing was saved.",
+  entry_trip:
+    "That trip isn't in this season. Pick one from this season's list. Nothing was saved.",
   receipt_type: "Receipts must be a PDF or image.",
   receipt_upload: "The receipt failed to upload. The entry was not saved.",
   reconcile: "Could not update the reconciliation record.",
@@ -64,8 +77,25 @@ const ERR: Record<string, string> = {
 const ROW_ERR: Record<string, string> = {
   void: "Could not void that entry. Nothing changed.",
   void_reason: "A void needs a reason. Nothing changed.",
+  void_missing:
+    "That entry isn't in this program. Reload the page and try again — nothing changed.",
+  void_already: "That entry was already voided. Nothing changed.",
+  void_archived:
+    "That season is archived, so its books are closed. Nothing changed.",
   categorize:
     "Could not put that entry on a budget line. Nothing changed — the entry is still there, uncategorized.",
+  // The double-submit case, said plainly: the filing WORKED, and the row this
+  // message is about is the voided original it replaced.
+  categorize_already:
+    "Already filed. That amount is on a budget line now — this row is the voided original it replaced, and the replacement is in the list above.",
+  categorize_voided:
+    "That entry was voided, so there is nothing to file. Nothing changed.",
+  categorize_missing:
+    "That entry isn't in this program. Reload the page and try again — nothing changed.",
+  categorize_archived:
+    "That season is archived, so its books are closed. Nothing changed.",
+  categorize_line:
+    "That budget line isn't on this season's budget. Pick one from this season's list — nothing changed.",
 };
 
 function message(map: Record<string, string>, code: string | null): string | null {
@@ -271,8 +301,19 @@ export default async function LedgerPage({
     else if (op.kind === "lte") countQuery = countQuery.lte(op.column, op.value);
     else countQuery = countQuery.or(op.filters);
   }
-  const { count: matchCount } = await countQuery;
-  const range = ledgerPageRange(matchCount ?? 0, parsePageParam(one("page")));
+  // A DROPPED COUNT ERROR USED TO TRUNCATE THE LEDGER IN SILENCE. `count` comes
+  // back null on failure, ledgerPageRange(0, …) then reports "0 entries" and the
+  // pager renders nothing at all — so a treasurer saw exactly one page and no
+  // indication that anything followed it. The count is now allowed to be
+  // UNKNOWN, which is a different thing from zero.
+  const { count: matchCount, error: countError } = await countQuery;
+  const requestedPage = parsePageParam(one("page"));
+  const countedRange = countError
+    ? null
+    : ledgerPageRange(matchCount ?? 0, requestedPage);
+  const listFrom = countedRange
+    ? countedRange.from
+    : (requestedPage - 1) * LEDGER_PAGE_SIZE;
 
   let listQuery = supabase
     .from("ledger_entries")
@@ -288,25 +329,50 @@ export default async function LedgerPage({
   const { data: entryData } = await listQuery
     .order("entry_date", { ascending: false })
     .order("created_at", { ascending: false })
-    .range(range.from, range.to);
+    // The unique tiebreaker. Two entries sharing a date AND a created_at (a
+    // bulk insert, or the void + replacement a filing writes) have no defined
+    // order without it, and an ambiguous ORDER BY across .range() calls can hand
+    // the same row back on two pages while another is never shown at all. The
+    // board-snapshot pager already learned this.
+    .order("id", { ascending: false })
+    .range(listFrom, listFrom + LEDGER_PAGE_SIZE - 1);
   const entries = (entryData as EntryRow[] | null) ?? [];
+  const range = countedRange ?? ledgerPageRangeUnknownTotal(requestedPage, entries.length);
 
   // Running balance for the rows on THIS page — computed in SQL over the whole
   // season, so it is the season balance as of each entry rather than a total
   // that restarts at zero on page 2 or shifts when a filter is applied.
+  //
+  // A MISSING BALANCE IS NOT ZERO. This map used to be read with `?? 0`, so a
+  // failed rpc printed a full column of $0.00 next to a metric strip that was
+  // still correct — the same "a zero balance is a number a treasurer would read
+  // aloud to a board" rule the totals already follow. The map is now the only
+  // authority: an id it does not carry renders "—".
   const balanceById = new Map<string, number>();
+  let balanceError = false;
   if (season && entries.length > 0) {
-    const { data: balRows } = await supabase.rpc("ledger_running_balance", {
-      p_program_id: program.id,
-      p_season_id: season.id,
-      p_entry_ids: entries.filter((e) => !e.voided_at).map((e) => e.id),
-    });
+    const { data: balRows, error: balErr } = await supabase.rpc(
+      "ledger_running_balance",
+      {
+        p_program_id: program.id,
+        p_season_id: season.id,
+        p_entry_ids: entries.filter((e) => !e.voided_at).map((e) => e.id),
+      },
+    );
+    balanceError = !!balErr;
     for (const r of (balRows as
       | { entry_id: string; balance_cents: number }[]
       | null) ?? []) {
       balanceById.set(r.entry_id, Number(r.balance_cents));
     }
   }
+  // With no active season there is no season balance to be "as of" — the column
+  // would be a blank claim on every row, so it does not appear at all.
+  const showBalance = !!season;
+  const balancesUnavailable =
+    showBalance &&
+    (balanceError ||
+      entries.some((e) => !e.voided_at && !balanceById.has(e.id)));
 
   // ---- Season metric strip + uncategorized nudge ----------------------------
   // One SQL aggregate drives Balance/In/Out, the Uncategorized cell, and the
@@ -472,6 +538,22 @@ export default async function LedgerPage({
         </p>
       )}
 
+      {balancesUnavailable && (
+        <p className="alert-error">
+          The running balance could not be read just now, so the Balance column
+          is blank rather than wrong. Each entry&apos;s own amount is unaffected
+          — reload to try again.
+        </p>
+      )}
+
+      {countError && (
+        <p className="alert-error">
+          How many entries match these filters could not be read just now, so
+          this page says which entries it is showing but not how many there are
+          in total. Keep paging with Older to see the rest.
+        </p>
+      )}
+
       {/* Metric strip */}
       <div className="metric-strip">
         <div className="metric-cell">
@@ -555,6 +637,7 @@ export default async function LedgerPage({
         slug={slug}
         entries={entries}
         balanceById={balanceById}
+        showBalance={showBalance}
         options={options}
         canWrite={canWrite}
         openId={rowWillRender ? openId : null}

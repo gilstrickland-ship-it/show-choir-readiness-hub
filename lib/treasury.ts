@@ -179,6 +179,12 @@ export interface LedgerPageRange {
   total: number;
   hasPrev: boolean;
   hasNext: boolean;
+  // False when the COUNT query failed. `total` and `pages` are then guesses
+  // built from the rows in hand, and the footer must not state them: a failed
+  // count used to read as "0 of 0", which hid the pager entirely and left a
+  // treasurer looking at exactly 100 entries with nothing saying there were
+  // more.
+  totalKnown: boolean;
 }
 
 // `?page=` off the URL: a positive integer, or 1 for anything else (a hand-typed
@@ -216,6 +222,37 @@ export function ledgerPageRange(
     total: n,
     hasPrev: current > 1,
     hasNext: current < pages,
+    totalKnown: true,
+  };
+}
+
+// The same page, described without a count. When the count query fails the LIST
+// is still real — it is the total that is unknown — so paging has to keep
+// working off the page number alone. `hasNext` is inferred the only honest way
+// available: a page that came back full probably has another behind it. Asking
+// for that page and finding it empty is a far better outcome than a pager that
+// vanished and a list that stopped at 100 with no explanation.
+export function ledgerPageRangeUnknownTotal(
+  page: number,
+  rowsOnPage: number,
+  pageSize: number = LEDGER_PAGE_SIZE,
+): LedgerPageRange {
+  const size =
+    Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : LEDGER_PAGE_SIZE;
+  const current = parsePageParam(String(page));
+  const from = (current - 1) * size;
+  const shown = Number.isSafeInteger(rowsOnPage) && rowsOnPage > 0 ? rowsOnPage : 0;
+  return {
+    page: current,
+    pages: current,
+    from,
+    to: from + size - 1,
+    firstShown: shown === 0 ? 0 : from + 1,
+    lastShown: shown === 0 ? 0 : from + shown,
+    total: shown,
+    hasPrev: current > 1,
+    hasNext: shown === size,
+    totalKnown: false,
   };
 }
 

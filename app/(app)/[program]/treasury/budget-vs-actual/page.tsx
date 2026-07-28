@@ -61,6 +61,11 @@ export default async function BudgetVsActualPage({
   let lines: LineRow[] = [];
   let actualByLine = new Map<string, LineActual>();
   let totals: LedgerSeasonTotals | null = null;
+  // The per-line aggregate fails independently of the header aggregate, and its
+  // failure used to collapse into an empty map while the only banner keyed on
+  // the OTHER rpc — so every line printed "$0.00 actual" against a real planned
+  // figure, and every variance read as a full-budget underspend.
+  let actualsUnavailable = false;
 
   if (season) {
     const { data: budget } = await supabase
@@ -94,6 +99,7 @@ export default async function BudgetVsActualPage({
         }),
       ]);
       cats = (catData as CatRow[] | null) ?? [];
+      actualsUnavailable = !!lineActualsRes.error;
       actualByLine = lineActualsRes.error
         ? new Map()
         : lineActualsFromRows(lineActualsRes.data);
@@ -168,12 +174,16 @@ export default async function BudgetVsActualPage({
                       <strong>{c.name}</strong>
                     </td>
                   </tr>
+                  {/* Planned is a budget row and is always known. Actual and
+                      variance come off the ledger aggregate, so when that read
+                      failed they are blanks, never zeros — "$0.00 spent" is a
+                      claim about a season. */}
                   {rows.map(({ l, a, v }) => (
                     <tr key={l.id}>
                       <td style={{ paddingLeft: "1.5rem" }}>{l.name}</td>
                       <td className="num">{formatCents(l.planned_cents)}</td>
-                      <td className="num">{formatCents(a)}</td>
-                      <td className="num">{formatCents(v)}</td>
+                      <td className="num">{money(actualsUnavailable ? null : a)}</td>
+                      <td className="num">{money(actualsUnavailable ? null : v)}</td>
                     </tr>
                   ))}
                   {catLines.length === 0 && (
@@ -182,8 +192,8 @@ export default async function BudgetVsActualPage({
                         No lines.
                       </td>
                       <td className="num">{formatCents(0)}</td>
-                      <td className="num">{formatCents(0)}</td>
-                      <td className="num">{formatCents(0)}</td>
+                      <td className="num">{money(actualsUnavailable ? null : 0)}</td>
+                      <td className="num">{money(actualsUnavailable ? null : 0)}</td>
                     </tr>
                   )}
                   <tr>
@@ -191,9 +201,15 @@ export default async function BudgetVsActualPage({
                       {c.name} subtotal
                     </td>
                     <td className="num">{formatCents(cPlanned)}</td>
-                    <td className="num">{formatCents(cActual)}</td>
                     <td className="num">
-                      {formatCents(lineVariance(cPlanned, cActual, dir))}
+                      {money(actualsUnavailable ? null : cActual)}
+                    </td>
+                    <td className="num">
+                      {money(
+                        actualsUnavailable
+                          ? null
+                          : lineVariance(cPlanned, cActual, dir),
+                      )}
                     </td>
                   </tr>
                 </tbody>
@@ -231,10 +247,14 @@ export default async function BudgetVsActualPage({
         </p>
       )}
 
-      {season && budgetName && !totals && (
+      {season && budgetName && (!totals || actualsUnavailable) && (
         <p className="alert-error">
-          The season actuals could not be read just now, so the totals below are
-          blank rather than wrong. Reload to try again.
+          {!totals && actualsUnavailable
+            ? "The season actuals could not be read just now, so the totals and every line's Actual below are blank rather than wrong."
+            : !totals
+              ? "The season actuals could not be read just now, so the header totals below are blank rather than wrong."
+              : "The per-line actuals could not be read just now, so each line's Actual and Variance below are blank rather than wrong."}{" "}
+          Reload to try again.
         </p>
       )}
 

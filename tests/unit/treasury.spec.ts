@@ -19,6 +19,7 @@ import {
   summarizeSeasonLedger,
   totalForLine,
   ledgerPageRange,
+  ledgerPageRangeUnknownTotal,
   parsePageParam,
   monthKeyForDate,
   firstOfMonth,
@@ -354,6 +355,7 @@ describe("ledgerPageRange", () => {
       total: 412,
       hasPrev: false,
       hasNext: true,
+      totalKnown: true,
     });
   });
 
@@ -395,12 +397,17 @@ describe("ledgerPageRange", () => {
       total: 0,
       hasPrev: false,
       hasNext: false,
+      totalKnown: true,
     });
   });
 
   test("a single entry reads 1–1 of 1", () => {
     const r = ledgerPageRange(1, 1, 100);
     expect([r.firstShown, r.lastShown, r.pages]).toEqual([1, 1, 1]);
+  });
+
+  test("a counted range always says its total is known", () => {
+    expect(ledgerPageRange(412, 2, 100).totalKnown).toBe(true);
   });
 
   test("nonsense totals and page sizes degrade to a safe first page", () => {
@@ -413,6 +420,49 @@ describe("ledgerPageRange", () => {
   test("the default page size is the one the ledger actually uses", () => {
     const r = ledgerPageRange(1000, 2);
     expect([r.from, r.to]).toEqual([LEDGER_PAGE_SIZE, LEDGER_PAGE_SIZE * 2 - 1]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A FAILED COUNT IS NOT A COUNT OF ZERO
+// ---------------------------------------------------------------------------
+// The ledger page dropped the count query's error, so a transient failure gave
+// `count: null` → ledgerPageRange(0, …) → total 0, pages 1, hasNext false. The
+// pager returns null on a zero total, so the treasurer saw exactly 100 entries
+// with NOTHING on screen saying the ledger continued past them — the most
+// dangerous shape a money list can take, because it looks complete.
+describe("ledgerPageRangeUnknownTotal", () => {
+  test("a full page keeps Older available even with no total to show", () => {
+    const r = ledgerPageRangeUnknownTotal(1, 100, 100);
+    expect(r.totalKnown).toBe(false);
+    expect(r.hasNext).toBe(true);
+    expect(r.hasPrev).toBe(false);
+    expect([r.firstShown, r.lastShown]).toEqual([1, 100]);
+    expect([r.from, r.to]).toEqual([0, 99]);
+  });
+
+  test("a short page is the end of the list", () => {
+    const r = ledgerPageRangeUnknownTotal(3, 12, 100);
+    expect(r.hasNext).toBe(false);
+    expect(r.hasPrev).toBe(true);
+    expect([r.firstShown, r.lastShown]).toEqual([201, 212]);
+  });
+
+  test("an empty page past the end offers the way back, not a phantom next", () => {
+    const r = ledgerPageRangeUnknownTotal(4, 0, 100);
+    expect([r.firstShown, r.lastShown]).toEqual([0, 0]);
+    expect(r.hasNext).toBe(false);
+    expect(r.hasPrev).toBe(true);
+  });
+
+  test("a hand-typed page number still lands on a real range", () => {
+    const r = ledgerPageRangeUnknownTotal(-3, 100, 100);
+    expect(r.page).toBe(1);
+    expect([r.from, r.to]).toEqual([0, 99]);
+  });
+
+  test("it never claims a total it does not have", () => {
+    expect(ledgerPageRangeUnknownTotal(2, 100, 100).totalKnown).toBe(false);
   });
 });
 

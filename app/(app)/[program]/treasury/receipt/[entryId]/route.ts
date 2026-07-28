@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser, getMembership } from "@/lib/auth";
 import { TREASURY_ROLES } from "@/lib/nav";
+import { flag, type FlaggableProgram } from "@/lib/flags";
 
 // Open the receipt attached to one ledger entry.
 //
@@ -42,11 +43,18 @@ export async function GET(
   const supabase = await createClient();
   const { data: progRow } = await supabase
     .from("programs")
-    .select("id")
+    .select("id, tier, feature_overrides")
     .eq("slug", slug)
     .maybeSingle();
-  const program = progRow as { id: string } | null;
+  const program = progRow as ({ id: string } & FlaggableProgram) | null;
   if (!program) return text("Program not found", 404);
+
+  // The flag gate every treasury PAGE runs, which this route did not (it is not
+  // a page, so requireFlag's notFound() is the wrong shape — the answer is the
+  // same 404). A program with money turned off must not learn the feature
+  // exists, so this is indistinguishable from a bad URL, exactly as the pages
+  // are (Constitution VIII).
+  if (!flag(program, "treasury")) return text("Not found", 404);
 
   const membership = await getMembership(program.id, user.id);
   if (!membership || !TREASURY_ROLES.includes(membership.role)) {

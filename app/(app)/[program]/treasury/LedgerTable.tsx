@@ -42,6 +42,7 @@ export function LedgerTable({
   slug,
   entries,
   balanceById,
+  showBalance,
   options,
   canWrite,
   openId,
@@ -52,7 +53,13 @@ export function LedgerTable({
   programId: string;
   slug: string;
   entries: EntryRow[];
+  // The ONLY authority on a row's balance. An id it does not carry has no
+  // balance to print — see below.
   balanceById: Map<string, number>;
+  // False with no active season: a season balance "as of" an entry is not a
+  // thing that exists, so the column does not appear rather than printing a
+  // blank (or, as it did, a zero) on every row.
+  showBalance: boolean;
   options: TagOptions;
   canWrite: boolean;
   openId: string | null;
@@ -60,7 +67,7 @@ export function LedgerTable({
   range: LedgerPageRange;
   pageHref: (page: number) => string;
 }) {
-  const columns = canWrite ? 7 : 6;
+  const columns = 5 + (showBalance ? 1 : 0) + (canWrite ? 1 : 0);
   return (
     <>
     <table className="members money-ledger">
@@ -71,7 +78,7 @@ export function LedgerTable({
           <th>Line</th>
           <th>Paid to / from · memo</th>
           <th>Receipt</th>
-          <th className="right">Balance</th>
+          {showBalance && <th className="right">Balance</th>}
           {canWrite && <th></th>}
         </tr>
       </thead>
@@ -132,13 +139,20 @@ export function LedgerTable({
                   <span className="muted">—</span>
                 )}
               </td>
-              <td className="right">
-                {voided ? (
-                  <span className="muted">—</span>
-                ) : (
-                  formatCents(balanceById.get(e.id) ?? 0)
-                )}
-              </td>
+              {showBalance && (
+                <td className="right">
+                  {/* `?? 0` here was a money bug wearing a default value: a
+                      failed running-balance read printed $0.00 down the whole
+                      column, beside a metric strip that was still right. A
+                      balance we do not have reads as "—", the same as a voided
+                      row's, because a zero is a claim and a dash is not. */}
+                  {voided || !balanceById.has(e.id) ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    formatCents(balanceById.get(e.id) as number)
+                  )}
+                </td>
+              )}
               {canWrite && (
                 <td>
                   {voided ? (
@@ -187,13 +201,25 @@ function LedgerPager({
   range: LedgerPageRange;
   pageHref: (page: number) => string;
 }) {
-  if (range.total === 0) return null;
+  if (range.totalKnown && range.total === 0) return null;
+  if (!range.totalKnown && range.firstShown === 0 && !range.hasPrev) return null;
   return (
     <div className="row-inline money-pager">
       <span className="muted">
-        Showing {range.firstShown}–{range.lastShown} of {range.total}{" "}
-        {range.total === 1 ? "entry" : "entries"}
-        {range.pages > 1 ? ` · page ${range.page} of ${range.pages}` : ""}
+        {range.totalKnown ? (
+          <>
+            Showing {range.firstShown}–{range.lastShown} of {range.total}{" "}
+            {range.total === 1 ? "entry" : "entries"}
+            {range.pages > 1 ? ` · page ${range.page} of ${range.pages}` : ""}
+          </>
+        ) : (
+          // The count failed. Say which rows these are and page on; claiming a
+          // total we could not read is how "100 entries" became the whole book.
+          <>
+            Showing {range.firstShown}–{range.lastShown} · page {range.page} ·
+            the total couldn&apos;t be read
+          </>
+        )}
       </span>
       {range.hasPrev && (
         <Link href={pageHref(range.page - 1)} rel="prev">

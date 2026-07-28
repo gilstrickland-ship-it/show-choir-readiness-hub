@@ -52,7 +52,9 @@ export default async function ReportsPage({
   searchParams,
 }: {
   params: Promise<{ program: string }>;
-  searchParams: Promise<{ event?: string }>;
+  // Next hands back an ARRAY for a duplicated param (?event=a&event=b), so the
+  // read goes through `one()` — a hand-typed URL must not 500 the page.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { program: slug } = await params;
   const { program, role, season } = await getTenantContext(slug);
@@ -62,7 +64,12 @@ export default async function ReportsPage({
       <Restricted slug={slug} surface="Money" role={role} allowed={TREASURY_ROLES} />
     );
   }
-  const { event } = await searchParams;
+  const sp = await searchParams;
+  const one = (key: string): string | null => {
+    const v = sp[key];
+    return typeof v === "string" ? v : null;
+  };
+  const event = one("event");
 
   const supabase = await createClient();
 
@@ -72,6 +79,12 @@ export default async function ReportsPage({
   let trips: NamedRow[] = [];
   let seasonByLine = new Map<string, LineActual>();
   let totals: LedgerSeasonTotals | null = null;
+  // The per-line aggregate can fail on its own, and it used to fail SILENTLY:
+  // its error collapsed into an empty map while the only banner keyed on the
+  // OTHER rpc, so a board snapshot could print $0.00 actuals for every category
+  // beside real budgeted figures — the exact shape of number a board acts on.
+  let actualsUnavailable = false;
+  let eventActualsUnavailable = false;
 
   if (season) {
     const [{ data: budget }, { data: compData }, { data: tripData }, lineRes, totalsRes] =
@@ -110,6 +123,7 @@ export default async function ReportsPage({
     const b = budget as { id: string; name: string } | null;
     comps = (compData as NamedRow[] | null) ?? [];
     trips = (tripData as NamedRow[] | null) ?? [];
+    actualsUnavailable = !!lineRes.error;
     seasonByLine = lineRes.error ? new Map() : lineActualsFromRows(lineRes.data);
     const totalsRow = Array.isArray(totalsRes.data)
       ? totalsRes.data[0]
@@ -198,6 +212,7 @@ export default async function ReportsPage({
       p_competition_id: kind === "comp" ? eventId : null,
       p_trip_id: kind === "trip" ? eventId : null,
     });
+    eventActualsUnavailable = !!error;
     if (!error) eventByLine = lineActualsFromRows(data);
   }
   const eventTotals = { inCents: 0, outCents: 0, netCents: 0 };
@@ -253,7 +268,14 @@ export default async function ReportsPage({
               </button>
             </form>
 
-            {eventId && eventName && (
+            {eventId && eventName && eventActualsUnavailable && (
+              <p className="alert-error">
+                What this event cost could not be read just now. Nothing is shown
+                rather than zeros — reload to try again.
+              </p>
+            )}
+
+            {eventId && eventName && !eventActualsUnavailable && (
               <div className="stack">
                 <dl className="detail-list">
                   <dt>Event</dt>
@@ -314,11 +336,19 @@ export default async function ReportsPage({
                 : "No months reconciled yet."}
             </p>
 
-            {!totals && (
+            {/* Two aggregates feed this section and either can fail alone. The
+                banner used to key on the totals rpc only, so a failed per-line
+                read printed $0.00 in every category rollup with nothing saying
+                so. It names whichever one is missing now. */}
+            {(!totals || actualsUnavailable) && (
               <p className="alert-error">
-                The season totals could not be read just now, so the figures
-                below are blank rather than wrong. Reload to try again — do not
-                present this page to the board until it shows numbers.
+                {!totals && actualsUnavailable
+                  ? "The season totals and the category rollups could not be read just now, so the figures below are blank rather than wrong."
+                  : !totals
+                    ? "The season totals could not be read just now, so the header figures below are blank rather than wrong."
+                    : "The category rollups could not be read just now, so the Actual column below is blank rather than wrong."}{" "}
+                Reload to try again — do not present this page to the board until
+                it shows numbers.
               </p>
             )}
 
@@ -351,7 +381,11 @@ export default async function ReportsPage({
                   <tr key={c.id}>
                     <td>{c.name}</td>
                     <td>{CATEGORY_DIRECTION_LABELS[c.direction]}</td>
-                    <td className="num">{formatCents(catActual.get(c.id) ?? 0)}</td>
+                    <td className="num">
+                      {actualsUnavailable
+                        ? "—"
+                        : formatCents(catActual.get(c.id) ?? 0)}
+                    </td>
                   </tr>
                 ))}
                 {cats.length === 0 && (
