@@ -2,8 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { formatDateInTz, formatTimeInTz, zonedWallToUtc } from "@/lib/datetime";
+import {
+  formatDateInTz,
+  formatTimeInTz,
+  zonedDateKey,
+  calendarDaysBetween,
+} from "@/lib/datetime";
 import { itineraryAnchors } from "@/lib/itinerary-days";
+import { oneParam, type SearchParams } from "@/lib/flash";
 import { TokenFooter } from "./parts";
 
 // Guardian-token home — the family "poster" (§8a, §10). A dark hero counts down
@@ -31,16 +37,7 @@ const ALTERATION_OPEN = new Set(["needed", "in_progress"]);
 interface AssignmentRow {
   student_id: string;
   alteration_status: string;
-  alteration_notes: string | null;
   piece: { label: string | null; kind: string } | null;
-}
-
-// Whole days from now to a zoned midnight date (future). Past/today clamp to 0.
-function daysUntil(dateKey: string, tz: string): number | null {
-  const target = zonedWallToUtc(`${dateKey}T00:00`, tz);
-  if (!target || Number.isNaN(target.getTime())) return null;
-  const ms = target.getTime() - Date.now();
-  return ms <= 0 ? 0 : Math.floor(ms / 86_400_000);
 }
 
 export default async function TokenHomePage({
@@ -48,7 +45,9 @@ export default async function TokenHomePage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ welcome?: string }>;
+  // What Next actually hands back — a duplicated `?welcome=1&welcome=2` arrives
+  // as an array, so the read goes through oneParam.
+  searchParams: Promise<SearchParams>;
 }) {
   const { token } = await params;
   const sp = await searchParams;
@@ -80,7 +79,7 @@ export default async function TokenHomePage({
   // this family's guardian-token 'view' rows. The layout logs THIS visit before
   // the page renders, so the count already includes it — show the card at ≤ 3.
   // The footer's "How this page works" link force-shows it any time via ?welcome=1.
-  let showWelcome = sp.welcome === "1";
+  let showWelcome = oneParam(sp, "welcome") === "1";
   if (!showWelcome) {
     // The family's guardian rows (siblings share an email), then their tokens.
     let guardianIds = [guardian.id];
@@ -128,9 +127,7 @@ export default async function TokenHomePage({
   if (seasonId && studentIds.length > 0) {
     const { data: asgn } = await supabase
       .from("costume_assignments")
-      .select(
-        "student_id, alteration_status, alteration_notes, piece:costume_pieces(label, kind)",
-      )
+      .select("student_id, alteration_status, piece:costume_pieces(label, kind)")
       .eq("program_id", program.id)
       .eq("season_id", seasonId)
       .in("student_id", studentIds);
@@ -141,8 +138,12 @@ export default async function TokenHomePage({
     }
   }
 
-  // Next upcoming competition for the family's ensembles.
-  const todayKey = formatIsoDate(new Date());
+  // Next upcoming competition for the family's ensembles. "Upcoming" is measured
+  // on the PROGRAM's calendar, not UTC's (Constitution VII): a UTC date key flips
+  // to tomorrow at 7pm Central, which would drop TODAY's competition off this
+  // poster while the bus is still on its way home — the one evening a family
+  // needs the return time most.
+  const todayKey = zonedDateKey(new Date(), tz);
   let nextComp: {
     id: string;
     name: string;
@@ -274,7 +275,12 @@ export default async function TokenHomePage({
     }
   }
 
-  const days = nextComp?.date ? daysUntil(nextComp.date, tz) : null;
+  // The countdown counts CALENDAR days in program tz (calendarDaysBetween), not
+  // elapsed 24-hour blocks: at 11pm the night before, "0 days" is wrong and
+  // "1 day" is what a parent means. Same helper the staff side counts with.
+  const days = nextComp?.date
+    ? calendarDaysBetween(new Date(), new Date(`${nextComp.date}T12:00:00Z`), tz)
+    : null;
 
   return (
     <section className="stack token-poster">
@@ -385,8 +391,4 @@ export default async function TokenHomePage({
       <TokenFooter token={token} kind="guardian" />
     </section>
   );
-}
-
-function formatIsoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }

@@ -1,7 +1,12 @@
 import { notFound } from "next/navigation";
 import { getResolvedToken } from "@/lib/public-token";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { formatDateInTz, formatTimeInTz, formatDateTimeInTz } from "@/lib/datetime";
+import {
+  formatDateInTz,
+  formatTimeInTz,
+  formatDateTimeInTz,
+  zonedDateKey,
+} from "@/lib/datetime";
 import {
   groupItemsByDay,
   changedItemsSincePublish,
@@ -40,7 +45,10 @@ export default async function PublicItineraryPage({
 
   // Determine which competitions to show.
   let competitionIds: string[] = [];
-  const todayKey = new Date().toISOString().slice(0, 10);
+  // Today on the PROGRAM's calendar, not UTC's (Constitution VII). A UTC key
+  // rolls over at 7pm Central, which used to drop the day's own itinerary out of
+  // this list mid-competition — while the schedule it lists is still running.
+  const todayKey = zonedDateKey(new Date(), tz);
 
   if (resolved.kind === "share") {
     if (resolved.resource !== "itinerary") notFound();
