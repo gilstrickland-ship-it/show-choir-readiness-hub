@@ -1,8 +1,18 @@
+import type { Metadata } from "next";
 import { brand } from "@/lib/brand";
 import { getResolvedToken, getClientIp, rateLimitRawToken } from "@/lib/public-token";
 import { logTokenEvent } from "@/lib/tokens";
 import { LinkExpired } from "./link-expired";
 import "@/app/globals.css";
+
+// The URL *is* the credential here (Constitution II — parents have no accounts),
+// so no /t/ page may be indexed or its links followed: a crawler that picks a
+// token up from a toolbar, a referrer chain, or a pasted link would otherwise
+// publish one family's page. Set on the layout so it covers every page below it.
+// /link-help is deliberately outside this subtree and stays findable.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false, nocache: true },
+};
 
 // Tokenized parent surface (§8a) — no auth, mobile-first, all times in program
 // tz. The layout is the security gate for every /t/[token] page:
