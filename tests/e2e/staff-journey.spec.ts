@@ -35,6 +35,15 @@ test.describe("staff journey (demo director)", () => {
       page.locator(".badge", { hasText: "published" }),
     ).toBeVisible();
 
+    // --- Packet pipeline strip (spec 005 US7-4): the same five steps on the
+    // packet surface, derived from existing status fields ---------------------
+    await page.goto(`/demo/competitions/${DEMO.competitionId}/packet`);
+    const steps = page.getByRole("navigation", { name: "Packet steps" });
+    await expect(steps).toBeVisible();
+    await expect(steps.locator("li")).toHaveCount(5);
+    // Nothing uploaded for this comp, so step one is where you are.
+    await expect(steps.locator("li.now")).toContainText("Uploaded");
+
     // --- Staff parent packet PDF (auth cookies via page.request) -----------
     const packet = await page.request.get(
       `/api/pdf/packet?competition=${DEMO.competitionId}`,
@@ -73,8 +82,18 @@ test.describe("staff journey (demo director)", () => {
     // Lands on the new competition; attendance seeded expected for all 12.
     await page.waitForURL(/\/demo\/competitions\/[0-9a-f-]+\?created=1/);
     await expect(page.getByRole("heading", { name: compName })).toBeVisible();
-    // Exact summary string — "12 expected" alone also matches the readiness rail.
-    await expect(page.getByText("12 expected · 0 partial · 0 absent")).toBeVisible();
+    // The hub is a hub (spec 005 US7): one glance card per area, no inline
+    // attendance grid. Scoped to the card — the readiness rail says "12
+    // expected, 0 absent" too, and an unscoped getByText would match both.
+    const attendanceCard = page.locator(".comp-glance-card", {
+      hasText: "Attendance",
+    });
+    await expect(attendanceCard).toContainText("12 expected · 0 absent");
+    await expect(attendanceCard).toHaveAttribute("href", /\/attendance$/);
+    // The toggles live on the attendance route now, not here.
+    await expect(page.locator("form button", { hasText: "Partial" })).toHaveCount(
+      0,
+    );
     // Both participating ensembles are shown in the header.
     await expect(
       page.locator(".chip", { hasText: "Varsity Mixed" }).first(),

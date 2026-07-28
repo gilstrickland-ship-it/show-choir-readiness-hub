@@ -274,7 +274,7 @@ export default async function CompetitionHub({
   });
 
   return (
-    <section className="comp" id="top">
+    <section className="comp">
       <p className="comp-back">
         <Link href={`${base}/season`}>← Season</Link>
       </p>

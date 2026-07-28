@@ -58,7 +58,7 @@ export function CompEdit({
     <section className="comp-section comp-details" id="details">
       <div className="comp-section-head">
         <h2>Details</h2>
-        <span className="comp-att-summary">{summary}</span>
+        <span className="comp-section-summary">{summary}</span>
       </div>
       {error && <p className="alert-error">{error}</p>}
 

@@ -2494,47 +2494,6 @@
     width: auto;
   }
 
-  .comp-section-links {
-    display: flex;
-    gap: 0.9rem;
-    font-size: 0.82rem;
-  }
-
-  .comp-section-links a,
-  .comp-section-head > a {
-    font-size: 0.82rem;
-    color: var(--muted-ink);
-  }
-
-  .comp-chip {
-    display: inline-block;
-    font-family: var(--font-ui-stack);
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    padding: 0.18rem 0.55rem;
-    border-radius: 4px;
-    background: var(--surface-2);
-    color: var(--ink-2);
-    vertical-align: middle;
-  }
-
-  .comp-chip.ok {
-    background: var(--ok-soft);
-    color: var(--ok-text);
-  }
-
-  .comp-chip.warn {
-    background: var(--warn-soft);
-    color: var(--warn-text);
-  }
-
-  .comp-chip.alert {
-    background: var(--alert-soft);
-    color: var(--alert-text);
-  }
-
   /* ---- Glance cards (spec 005 US7) ----
      One card per area of comp week. The whole card is the link — a phone-sized
      tap target that opens the route owning that job. */
@@ -2599,7 +2558,7 @@
     padding: 0.65rem 0;
   }
 
-  .comp-att-summary {
+  .comp-section-summary {
     font-size: 0.82rem;
     color: var(--muted-ink);
   }
@@ -2750,29 +2709,6 @@
 
   .comp-readiness-row.alert {
     font-weight: 600;
-    color: var(--alert-text);
-  }
-
-  .comp-travel-name {
-    font-size: 0.84rem;
-    font-weight: 550;
-  }
-
-  .comp-travel-meta {
-    font-size: 0.8rem;
-  }
-
-  .comp-travel-empty {
-    margin: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--alert-text);
-  }
-
-  .comp-travel-empty a {
     color: var(--alert-text);
   }
 
@@ -4552,7 +4488,6 @@
     .comp-glance {
       grid-template-columns: 1fr;
     }
-
 
     /* Wave C task landings on phones: metric strip 2-col, header + filters
        stack, drawer stays on-screen, queue rows break. */

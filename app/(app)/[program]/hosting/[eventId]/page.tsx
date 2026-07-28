@@ -448,7 +448,7 @@ export default async function HostingEventPage({
       <section className="comp-section" id="schools">
         <div className="comp-section-head">
           <h2>Visiting schools</h2>
-          <span className="comp-att-summary">
+          <span className="comp-section-summary">
             {roomsInUse.length > 0
               ? `Rooms in use: ${roomsInUse.join(", ")}`
               : "No homerooms assigned yet"}
@@ -603,7 +603,7 @@ export default async function HostingEventPage({
       <section className="comp-section" id="schedule">
         <div className="comp-section-head">
           <h2>Schedule</h2>
-          <span className="comp-att-summary">
+          <span className="comp-section-summary">
             {slots.length} slot{slots.length === 1 ? "" : "s"}
           </span>
         </div>

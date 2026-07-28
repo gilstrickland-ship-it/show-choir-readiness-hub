@@ -40,7 +40,7 @@ export function ResultsForm({
     <section className="comp-section" id="results">
       <div className="comp-section-head">
         <h2>Results</h2>
-        <span className="comp-att-summary">{summary}</span>
+        <span className="comp-section-summary">{summary}</span>
       </div>
       {error && <p className="alert-error">{error}</p>}
 
