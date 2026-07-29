@@ -28,6 +28,7 @@ import {
   type LedgerSeasonTotals,
 } from "@/lib/treasury";
 import { zonedDateKey } from "@/lib/datetime";
+import { StartSeasonCard } from "../StartSeasonCard";
 import { SubTabs } from "../SubTabs";
 import { Flash } from "../Flash";
 import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
@@ -653,11 +654,14 @@ export default async function LedgerPage({
       <Flash flash={pageFlash} section="page" />
 
       {!season && (
-        <p className="alert-error">
-          No active season. Ledger entries are season-scoped —{" "}
-          <Link href={`/${slug}/settings/rollover`}>Start a season</Link> to
-          record them.
-        </p>
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={program.timezone}
+          from="treasury"
+          context="Ledger entries are season-scoped, so there is nowhere to record one yet."
+        />
       )}
 
       {totalsUnavailable && (

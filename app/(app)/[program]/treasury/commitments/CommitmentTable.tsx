@@ -168,8 +168,8 @@ export function CommitmentSection({
             <th>Reference</th>
             <th>Who · what for</th>
             <th>Budget line</th>
-            <th className="right">Amount</th>
-            <th className="right">{held}</th>
+            <th className="num">Amount</th>
+            <th className="num">{held}</th>
             <th className="table-action"></th>
           </tr>
         </thead>
@@ -228,7 +228,7 @@ function CommitmentRow({
           <span className="muted">{row.purpose}</span>
         </td>
         <td>{c.lineName.get(row.budget_line_id) ?? "—"}</td>
-        <td className="right">
+        <td className="num">
           {/* The committed total is amount + shipping + tax, and it is stated
               ONCE (lib/treasury commitmentTotalCents) so the row and the SQL
               cannot come to mean different things by it. `draw` is the SQL's
@@ -236,7 +236,7 @@ function CommitmentRow({
               over the row already in hand. */}
           {formatCents(draw ? draw.totalCents : commitmentTotalCents(row))}
         </td>
-        <td className="right">
+        <td className="num">
           {/* A remaining balance we could not read is a dash. `?? 0` here would
               print "$0.00 still committed" against a live purchase order, which
               is a sentence a treasurer would act on. */}

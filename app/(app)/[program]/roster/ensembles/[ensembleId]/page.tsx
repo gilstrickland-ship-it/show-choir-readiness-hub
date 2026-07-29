@@ -5,6 +5,7 @@ import { Restricted } from "../../../Restricted";
 import { createClient } from "@/lib/supabase/server";
 import { ROSTER_ROLES, ROSTER_WRITE_ROLES } from "@/lib/nav";
 import { MEMBER_ROLE_LABELS, type MemberRole } from "@/lib/roster/ensembles";
+import { StartSeasonCard } from "../../../StartSeasonCard";
 import { MemberRow, type MemberListRow } from "./MemberRow";
 import { AddMember } from "./AddMember";
 
@@ -79,11 +80,14 @@ export default async function EnsembleMembersPage({
           <Link href={`/${slug}/roster/ensembles`}>← Ensembles</Link>
         </p>
         <h1>{ensemble.name}</h1>
-        <p className="muted">
-          No active season, so there is nobody to place yet.{" "}
-          <Link href={`/${slug}/settings/rollover`}>Start a season</Link> and this
-          page fills in.
-        </p>
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={program.timezone}
+          from="ensembles"
+          context="Placements belong to a season, so there is nobody to place yet."
+        />
       </section>
     );
   }

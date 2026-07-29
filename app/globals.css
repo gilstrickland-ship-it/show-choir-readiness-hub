@@ -239,9 +239,17 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Every button in the app is a 44px thumb target. Measured before this line:
+     41.17px at the default font size, and less wherever a surface shrinks the
+     type (37.44px in the money filter row). Four rules used to buy this back a
+     surface at a time — attendance, shifts, the parent frame — which is three
+     places to forget. `min-height` is the whole fix: a <button> is a UA flex
+     box that already centers its own label, so the extra pixels land evenly
+     above and below the text rather than shifting it. */
   button {
     font: inherit;
     font-weight: 600;
+    min-height: 44px;
     padding: 0.45rem 0.9rem;
     border: 1px solid var(--ink);
     border-radius: var(--radius-s);
@@ -348,6 +356,16 @@
 @layer components {
   /* ---------------- Layout primitives ---------------- */
 
+  /* WARNING — `align-items: flex-start` is a shrink-wrap trap, and it is the
+     single most expensive line in this file. A `.stack` is a COLUMN flex
+     container, so `flex-start` is the CROSS axis: every child is sized to its
+     own content instead of the stack's width. Anything that must be as wide as
+     the section it sits in (a table, a card, a panel, a fieldset) needs its own
+     `width: 100%` — which is why so many rules below carry one and say why.
+     Measured, twice: two money tables came out 81px and 94px wide at 1280px,
+     and the parent absence page overflowed 390px because a shrink-wrapped
+     <select> pushed past the column. Keep flex-start (buttons and links must
+     NOT stretch across the page) and give the wide things a width. */
   .stack {
     display: flex;
     flex-direction: column;
@@ -373,6 +391,28 @@
     flex-direction: row;
     align-items: center;
     gap: 0.4rem;
+  }
+
+  /* The one checkbox in the app that stands alone. Everywhere else a <label>
+     wraps the box AND its text, and the text is what makes the target big; the
+     rollover's "coming back" column has no text, so it was a bare 13×13 UA
+     control — the smallest tap target measured anywhere, on the screen where a
+     director thumbs down sixty students. Sizing the input would only draw a
+     bigger tick, so the label IS the target: clicking a label toggles its
+     control, and this one is 44×44 around a 20px box. */
+  label.tick-cell {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    margin: -0.35rem 0;
+  }
+
+  label.tick-cell input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin: 0;
   }
 
   /* `.row-inline` means "these sit on one line", but it never said which line
@@ -472,8 +512,13 @@
   }
 
   /* Settings moved from the nav into the header's right cluster — a quiet
-     UI-font link, distinct from the display-type nav. */
+     UI-font link, distinct from the display-type nav. Quiet, but still a
+     control: 21.06px measured, and the "Sign out" button beside it is 44 from
+     the base rule, so the whole cluster is sized as one. */
   .shell-settings-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     color: var(--muted-ink);
     text-decoration: none;
     font-weight: 550;
@@ -689,6 +734,16 @@
 
   table.members tbody tr:hover td {
     background: var(--surface);
+  }
+
+  /* A figure column reads down its last digit, so money and counts align right.
+     `.num` is already the app's name for "this is a number" (`input.num`,
+     `.detail-list dd.num`); it just had no table rule, so `<td class="num">` on
+     the budget page left-aligned while the ledger's own `.money-ledger td.right`
+     did the same job under a second name. One name, every table. */
+  table.members td.num,
+  table.members th.num {
+    text-align: right;
   }
 
   /* ---- A row's panel leaves the last cell (spec 005 T143b) ----
@@ -974,17 +1029,11 @@
   }
 
   /* The three answers and the note, on the line under the name. This is the one
-     screen in the app worked standing up in a hallway with a phone in one hand,
-     so its buttons get a real thumb target — the base button rule comes out at
-     41px, measured, which is under the 44px every other deliberate hit area in
-     this file holds. Compound (class + element), so nothing here outranks the
-     base-layer button styles it sits beside (the T061/T066 cascade trap). */
+     screen in the app worked standing up in a hallway with a phone in one hand.
+     Its 44px thumb target used to live here; the base `button` rule holds it for
+     every surface now, so this is only the spacing. */
   .attendance-row {
     margin-top: 0.35rem;
-  }
-
-  .attendance-row button {
-    min-height: 44px;
   }
 
   /* ---------------- Public token surface ---------------- */
@@ -1039,11 +1088,15 @@
     font-size: 0.95rem;
   }
 
+  /* Four of these on every parent page, and they are how a family moves around
+     a surface with no nav — so each is a full-width 44px row rather than the
+     36.3px an 0.4rem-padded line of text gives (measured at 375). `min-height`
+     is inert on an inline <a>; `display: flex` is what gives the box a height
+     to raise, and it stretches the row so the tap area is the whole line. */
   .token-footer a {
-    padding: 0.4rem 0;
-  }
-
-  .token-footer a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
     font-weight: 600;
     text-decoration: none;
   }
@@ -1375,10 +1428,17 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The done badge is the one green fill in the app that carries a glyph, and
+     white on `--ok` failed AA in both schemes — 3.42 light, 2.37 dark, measured.
+     `--ok-text` is the token that exists for exactly this ("green, but legible
+     with type on it") and `--paper` follows the scheme, so the ✓ is white on a
+     deep green in light and near-black on a bright green in dark: 5.39 and 9.96.
+     Judged against the 4.5 text threshold, not the 3.0 for large graphics — the
+     ✓ is a glyph, and the badge is only 30px across. */
   .setup-step.done .setup-step-num {
-    background: var(--ok, #1f7a4d);
-    border-color: var(--ok, #1f7a4d);
-    color: #fff;
+    background: var(--ok-text, #0b7a49);
+    border-color: var(--ok-text, #0b7a49);
+    color: var(--paper, #fff);
   }
 
   .setup-step-body {
@@ -1393,7 +1453,13 @@
     font-weight: 600;
   }
 
+  /* Only the UNDONE steps are links, and a link is the whole point of this
+     panel — it is the app's first-use path. A flex item in `.setup-step-body`
+     shrink-wrapped to its line box, 26px measured; this gives it a box. */
   a.setup-step-label {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -1421,6 +1487,14 @@
 
   .journey-footer {
     margin: 0.2rem 0 0;
+  }
+
+  /* The footer's pointer is an <a> inside a 0.85rem paragraph, which is a 16px
+     line of text and nothing else — the smallest target in the panel. */
+  .journey-footer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 
   /* Pill — a slim single-row progress summary that links back to the full
@@ -1482,78 +1556,6 @@
 
   .journey-board-got-it {
     align-self: flex-start;
-  }
-
-  /* Intro strips (spec 003 §3) — a calm orientation line under the heading of the
-     eight complex surfaces. Accent-tinted like .alert-info, never alarming; the
-     "First:" action is bolded inline, the "Got it" dismiss sits to the right (and
-     drops below the copy on narrow screens). */
-  .intro-strip {
-    width: 100%;
-    display: flex;
-    align-items: flex-start;
-    gap: 0.9rem;
-    padding: 0.7rem 0.9rem;
-    border-radius: var(--radius-s);
-    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-    border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
-    border-left: 4px solid var(--accent);
-  }
-
-  .intro-strip-copy {
-    margin: 0;
-    flex: 1;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: var(--ink-2);
-  }
-
-  .intro-strip-copy strong {
-    color: var(--ink);
-  }
-
-  .intro-strip-dismiss {
-    flex: none;
-  }
-
-  @media (max-width: 34rem) {
-    .intro-strip {
-      flex-direction: column;
-      gap: 0.55rem;
-    }
-  }
-
-  /* Heading + "?" re-trigger row (spec §3). Keeps the small help affordance on the
-     heading's baseline without changing the heading's own accessible name. */
-  .page-title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .help-dot {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.4rem;
-    height: 1.4rem;
-    border-radius: 50%;
-    border: 1.5px solid var(--line-strong);
-    color: var(--muted-ink);
-    font-size: 0.78rem;
-    font-weight: 700;
-    line-height: 1;
-    text-decoration: none;
-    transition:
-      border-color var(--dur) var(--ease),
-      color var(--dur) var(--ease);
-  }
-
-  .help-dot:hover {
-    border-color: var(--accent);
-    color: var(--accent);
   }
 
   /* Fair-share guide on the budget page — a quiet, read-only derived card. */
@@ -1824,8 +1826,14 @@
     color: var(--muted-ink);
   }
 
+  /* Smaller type than a hero button, but still a 44px box — 38.83px measured,
+     and it sits in the same row as the counts and beside real <button>s
+     elsewhere on Today, all of which are 44. */
   .inbox-row .button-link {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     font-size: 0.84rem;
     padding: 0.5rem 0.95rem;
   }
@@ -2887,9 +2895,16 @@
     overflow-x: auto;
   }
 
+  /* 36.34px measured, on all six surfaces — the strip is how you move between
+     the pages of a section, so it is one of the most-tapped things in the app.
+     inline-flex + centering turns the padded line of text into a 44px box; the
+     3px underline still lands on the strip's own rule, because the box grows
+     from the middle and the border stays on its bottom edge. */
   .subtabs a,
   .subtabs strong {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     font-family: var(--font-display-stack);
     font-size: 0.95rem;
     font-weight: 650;
@@ -3057,12 +3072,20 @@
     border: 1px solid var(--line);
   }
 
+  /* `min-width: 0` is load-bearing, not tidiness. A grid item's automatic
+     minimum size is its CONTENT, so at ≤375 — where the strip drops to the
+     `1fr 1fr` override below — a 36px display-type figure like "$18,402.55"
+     refused to shrink and pushed the document 6px past the viewport (measured:
+     scrollWidth 381 vs clientWidth 375). Both halves of the fix are needed:
+     without the wrap on `.metric-value`, `min-width: 0` alone clips the figure
+     instead of overflowing the page. */
   .metric-cell {
     background: var(--paper);
     padding: 0.9rem 1.05rem;
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
+    min-width: 0;
   }
 
   .metric-cell.warn {
@@ -3087,6 +3110,9 @@
     font-weight: 800;
     line-height: 1.05;
     font-variant-numeric: tabular-nums;
+    /* See `.metric-cell` — a currency figure has no break opportunity, so this
+       is what lets it wrap rather than clip once the cell may shrink. */
+    overflow-wrap: anywhere;
   }
 
   .metric-value.ok {
@@ -3222,8 +3248,8 @@
 
   /* A panel stacks independent decisions (save the details, turn the address
      back on, reset the family's links, remove them) — a hairline says those are
-     separate, not one long form, and the two that cannot be undone get a
-     thumb-sized hit area. */
+     separate, not one long form. Every one of those buttons is a `.linklike`,
+     and the base `button` rule holds their 44px target now. */
   .people-edit-form,
   .people-row-form {
     width: 100%;
@@ -3234,13 +3260,6 @@
     margin-top: 0.25rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--line);
-  }
-
-  .people-edit-form button.linklike,
-  .people-edit-form a.linklike,
-  .people-row-form button.linklike,
-  .people-row-form a.linklike {
-    min-height: 44px;
   }
 
   /* The student page's groups: a form per group, at a width a name and a grad
@@ -3338,6 +3357,17 @@
     font-size: 0.85rem;
   }
 
+  /* "Clear" sits in a row of 44px controls and had no box of its own — 33×21
+     measured. Direct child only: the folded "More filters" panel holds links of
+     its own that are not part of this row. `.row-inline` aligns on flex-end, so
+     the extra height grows upward and the label still sits on the row's baseline
+     beside the Filter button. */
+  .money-filters > a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
   /* "More filters" is a flex child of the filter row and owns a whole line of
      it, so the five folded controls open under search + direction rather than
      beside them. */
@@ -3379,15 +3409,11 @@
   }
 
   /* "Void it" and "Void & redo" sit side by side and one of them is the
-     irreversible one, so they get a thumb-sized hit area and real space
-     between them rather than the default text-link gap. */
+     irreversible one, so they get real space between them rather than the
+     default text-link gap. (Their 44px height is the base `button` rule.) */
   .money-fix-form .row-inline {
     gap: 1.25rem;
     align-items: center;
-  }
-
-  .money-fix-form button.linklike {
-    min-height: 44px;
   }
 
   /* The ledger pager owns the line under the table: how much of the ledger you
@@ -3414,11 +3440,6 @@
     align-items: center;
     min-height: 44px;
     font-weight: 600;
-  }
-
-  .money-ledger td.right,
-  .money-ledger th.right {
-    text-align: right;
   }
 
   .money-amt {
@@ -3672,18 +3693,12 @@
   }
 
   /* Saving the line and taking it off the schedule are two decisions, not one
-     long form — a hairline says so, and the destructive one gets a thumb-sized
-     hit area. */
+     long form — a hairline says so. */
   .itinerary-row-form + .itinerary-row-form {
     margin-top: 0.25rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--line);
     width: 100%;
-  }
-
-  .itinerary-row-form a.linklike,
-  .itinerary-row-form button.linklike {
-    min-height: 44px;
   }
 
   /* A row panel is the width of the row it opens beneath (`.table-panel` sizes
@@ -3708,16 +3723,12 @@
 
   /* A panel stacks independent forms (save it, move its alteration on, take the
      piece back) — a hairline says those are separate decisions, not one long
-     form, and the destructive one gets a thumb-sized hit area. */
+     form. */
   .wardrobe-row-form + .wardrobe-row-form {
     margin-top: 0.25rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--line);
     width: 100%;
-  }
-
-  .wardrobe-row-form button.linklike {
-    min-height: 44px;
   }
 
   /* ---- Checkout (the hallway screen) ---- */
@@ -4025,17 +4036,14 @@
   }
 
   /* The panel stacks two independent forms (save the shift, delete it) — a
-     hairline says those are two decisions, not one long form, and the delete
-     gets a thumb-sized hit area because it is the irreversible one. */
+     hairline says those are two decisions, not one long form. The delete's
+     thumb-sized hit area used to be bought here; the base `button` rule holds
+     it for every button in the app now. */
   .shift-edit-form + .shift-edit-form {
     margin-top: 0.25rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--line);
     width: 100%;
-  }
-
-  .shift-edit-form button.linklike {
-    min-height: 44px;
   }
 
   /* ===================== Settings (restyle, Wave D) ===================== */
@@ -4320,12 +4328,20 @@
     border-left: 4px solid var(--accent);
   }
 
-  /* Itinerary per-competition action links (packet + add-to-calendar). Stacked
-     with room to breathe so each is an easy phone tap. */
+  /* Itinerary per-competition action links (packet + add-to-calendar). Laid out
+     with room to breathe so each is an easy phone tap — and the links carry a
+     box of their own, because an inline <a> was 24.8px at 375px, the smallest
+     target measured anywhere on the parent surface. */
   .itinerary-links {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem 1.1rem;
+  }
+
+  .itinerary-links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 
   /* Day dividers for multi-day itineraries + trip schedules (Wave G / G2). Only
@@ -4418,15 +4434,18 @@
     overflow-wrap: anywhere;
   }
 
-  /* Mobile ergonomics (C2-4): parent-surface submit buttons inherit the ~36px
-     base button, too small for a reliable thumb tap. Within the token frame ONLY
-     (staff-app button sizing is untouched), give them a ≥44px tap target,
-     consistent with the .token-btn poster buttons. */
-  .token-frame form button,
-  .token-frame button[type="submit"] {
+  /* Mobile ergonomics (C2-4). This surface is phone-first and a family taps it
+     one-handed, so every control gets the app's 44px target. Buttons get theirs
+     from the base `button` rule; these are the fields — the absence form's two
+     <select>s (36.4px measured at 375) and the link-recovery email box (41.2px).
+     Checkboxes and radios are excluded on purpose: `min-height` on a checkbox
+     stretches the CONTROL, not a box around it, so it would draw a 13px-wide,
+     44px-tall tick. Within the token frame ONLY — staff-app sizing is
+     untouched. */
+  .token-frame select,
+  .token-frame textarea,
+  .token-frame input:not([type="hidden"], [type="checkbox"], [type="radio"]) {
     min-height: 44px;
-    padding-top: 0.65rem;
-    padding-bottom: 0.65rem;
   }
 
   /* ---------------- Restricted (role-gated) ---------------- */
@@ -4676,6 +4695,24 @@
     padding: 0.65rem 0;
   }
 
+  /* Half of these triggers are not a <summary> at all: a row whose panel opens
+     by URL (every `td.table-action` "Edit" / "Fix this entry" / "Open") uses an
+     <a> with the same class, so the same name has to buy the same target. It
+     did not — `min-height` is inert on an inline box, and the twelve anchor call
+     sites measured 38.78px against the 45.6px their <summary> siblings get.
+     An inline-flex box has a height to raise. Compound (element + class), so it
+     outranks the shared rule above WITHOUT touching the <summary> shape, which
+     must stay `list-item` or the browser drops its own disclosure marker. */
+  a.travel-disclosure,
+  a.comp-disclosure,
+  a.money-disclosure,
+  a.shift-disclosure,
+  a.wardrobe-disclosure,
+  a.people-disclosure {
+    display: inline-flex;
+    align-items: center;
+  }
+
   .travel-group-grid {
     display: flex;
     flex-wrap: wrap;
@@ -4804,6 +4841,19 @@
       padding: 0.5rem 1.1rem;
     }
 
+    /* The sticky header wraps into two rows on a phone — 83.5px before this
+       pass, 106.19px now that its account controls are 44px — so the 5rem the
+       anchors above carry no longer clears it, and a fragment jump parked the
+       row a message belongs to UNDER the chrome. (It was already 3.5px short.)
+       7.5rem is the measured header plus a line of breathing room. */
+    table.members tr[id],
+    table.members details[id],
+    h1[id],
+    h2[id],
+    h3[id] {
+      scroll-margin-top: 7.5rem;
+    }
+
     .shell-brand > a {
       font-size: 1.1rem;
     }
@@ -4831,8 +4881,15 @@
       border-top: 1px solid var(--line);
     }
 
+    /* The bottom bar is the phone's entire navigation, and its items were 26px
+       tall — measured. A 44px box each; the 3px active indicator stays on the
+       top edge, so the bar grows downward from it rather than the label moving.
+       (`.mobile-nav-sheet`'s `bottom` below is measured off the taller bar.) */
     .mobile-nav a,
     .mobile-nav .mobile-nav-more {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
       font-family: var(--font-display-stack);
       font-size: 13px;
       font-weight: 650;
@@ -4867,7 +4924,10 @@
       position: fixed;
       left: 12px;
       right: 12px;
-      bottom: 68px;
+      /* Clears the bar it opens from: 69px of nav (44px items + its 10/14px
+         padding, measured) plus the 18px gap this was drawn with. Bound to the
+         item height above — raise one and this moves. */
+      bottom: 87px;
       z-index: 41;
       display: flex;
       flex-direction: column;
@@ -5016,10 +5076,16 @@
       font-size: 0.75rem;
     }
 
-    /* Row actions read as quiet links on phones, buttons on desktop. */
+    /* Row actions read as quiet links on phones, buttons on desktop. Dropping
+       the fill also dropped the padding that was holding the target open — 19.83px
+       measured at 375, the smallest tap target in the staff app, on every action
+       Today offers a phone. The box stays 44px; only the paint goes away. */
     .inbox-row .button-link {
       background: none;
       border: none;
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
       padding: 0;
       color: var(--accent);
       font-size: 0.8rem;
@@ -5134,6 +5200,15 @@
 
     .metric-strip {
       grid-template-columns: 1fr 1fr;
+    }
+
+    /* Two-up at 375 leaves each cell 136px of measure, and "$18,402.55" at the
+       desktop 36px wants 152px — so with `.metric-cell`'s min-width:0 in place
+       every balance wrapped mid-number and the strip grew 78px taller. 28px
+       fits "$123,456.78" (131.6px measured) on one line. The wrap stays as the
+       backstop for a figure larger than any program's books. */
+    .metric-value {
+      font-size: 1.75rem;
     }
 
     .people-filters,

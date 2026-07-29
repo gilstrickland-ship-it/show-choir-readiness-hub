@@ -4,16 +4,32 @@
 // we own. An unknown or absent key resolves to null, and the action keeps its
 // existing module-page redirect byte-for-byte.
 //
-// Deliberately tiny: two surfaces host these borrowed forms today (the Season
-// page's quick-add drawer + row-edit popovers, and Today's start-season card).
-// Adding a third means adding it here, on the server, on purpose.
+// Deliberately tiny, and every entry is added here, on the server, on purpose.
+// The first two host the Season page's quick-add drawer + row-edit popovers and
+// Today's start-season card. The rest are the season-scoped surfaces that render
+// the SAME start-season card when a program has no active season (T143g), so a
+// director who starts one from the money or wardrobe page lands back on it
+// rather than being teleported to Today.
 
-export const RETURN_SURFACES = ["season", "dashboard"] as const;
+export const RETURN_SURFACES = [
+  "season",
+  "dashboard",
+  "treasury",
+  "commitments",
+  "assignments",
+  "ensembles",
+] as const;
 export type ReturnSurface = (typeof RETURN_SURFACES)[number];
 
 const SURFACE_PATH: Record<ReturnSurface, string> = {
   season: "season",
   dashboard: "dashboard",
+  treasury: "treasury",
+  commitments: "treasury/commitments",
+  assignments: "costumes/assignments",
+  // The card renders on ONE ensemble's page, whose id this key cannot carry —
+  // the list is the honest landing place.
+  ensembles: "roster/ensembles",
 };
 
 export function isReturnSurface(value: string): value is ReturnSurface {
