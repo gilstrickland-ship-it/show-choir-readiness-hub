@@ -129,7 +129,7 @@ export function EventReport({
             <thead>
               <tr>
                 <th>Budget line</th>
-                <th className="right">Total</th>
+                <th className="num">Total</th>
               </tr>
             </thead>
             <tbody>
@@ -142,7 +142,7 @@ export function EventReport({
                       <span className="money-uncat">Not on a budget line</span>
                     )}
                   </td>
-                  <td className="right">{formatCents(totalForLine(actual))}</td>
+                  <td className="num">{formatCents(totalForLine(actual))}</td>
                 </tr>
               ))}
               {byLine.size === 0 && (

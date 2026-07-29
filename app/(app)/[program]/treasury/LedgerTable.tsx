@@ -93,11 +93,11 @@ export function LedgerTable({
       <thead>
         <tr>
           <th>Date</th>
-          <th className="right">Amount</th>
+          <th className="num">Amount</th>
           <th>Line</th>
           <th>Paid to / from · memo</th>
           <th>Receipt</th>
-          {showBalance && <th className="right">Balance</th>}
+          {showBalance && <th className="num">Balance</th>}
           {canWrite && <th className="table-action"></th>}
         </tr>
       </thead>
@@ -124,7 +124,7 @@ export function LedgerTable({
             <Fragment key={e.id}>
             <tr className={rowClass}>
               <td>{formatDateOnly(e.entry_date)}</td>
-              <td className="right">
+              <td className="num">
                 <span
                   className={
                     voided
@@ -165,7 +165,7 @@ export function LedgerTable({
                 )}
               </td>
               {showBalance && (
-                <td className="right">
+                <td className="num">
                   {/* `?? 0` here was a money bug wearing a default value: a
                       failed running-balance read printed $0.00 down the whole
                       column, beside a metric strip that was still right. A

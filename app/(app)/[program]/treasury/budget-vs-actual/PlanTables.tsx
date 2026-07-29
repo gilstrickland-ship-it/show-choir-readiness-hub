@@ -201,17 +201,17 @@ export function SeasonSummary({
       <thead>
         <tr>
           <th>Whole season</th>
-          <th className="right">Planned</th>
-          <th className="right">Actual so far</th>
-          <th className="right">Difference</th>
+          <th className="num">Planned</th>
+          <th className="num">Actual so far</th>
+          <th className="num">Difference</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td>Money in</td>
-          <td className="right">{figure(plannedIn)}</td>
-          <td className="right">{figure(totals?.inCents ?? null)}</td>
-          <td className="right">
+          <td className="num">{figure(plannedIn)}</td>
+          <td className="num">{figure(totals?.inCents ?? null)}</td>
+          <td className="num">
             {figure(
               totals && plannedIn !== null
                 ? lineVariance(plannedIn, totals.inCents, "income")
@@ -221,9 +221,9 @@ export function SeasonSummary({
         </tr>
         <tr>
           <td>Money out</td>
-          <td className="right">{figure(plannedOut)}</td>
-          <td className="right">{figure(totals?.outCents ?? null)}</td>
-          <td className="right">
+          <td className="num">{figure(plannedOut)}</td>
+          <td className="num">{figure(totals?.outCents ?? null)}</td>
+          <td className="num">
             {figure(
               totals && plannedOut !== null
                 ? lineVariance(plannedOut, totals.outCents, "expense")
@@ -235,10 +235,10 @@ export function SeasonSummary({
           <td>
             <strong>Net (in − out)</strong>
           </td>
-          <td className="right">
+          <td className="num">
             <strong>{figure(plannedNet)}</strong>
           </td>
-          <td className="right">
+          <td className="num">
             <strong>{figure(totals?.netCents ?? null)}</strong>
           </td>
           {/* This cell used to be a hard-coded "—", which on a page where "—"
@@ -246,7 +246,7 @@ export function SeasonSummary({
               that is perfectly computable: how the season's net is running
               against the net the budget planned for. Positive is good news
               here too — more in, or less out, than planned. */}
-          <td className="right">
+          <td className="num">
             <strong>
               {figure(
                 totals && plannedNet !== null
@@ -312,10 +312,10 @@ export function LineSection({
         <thead>
           <tr>
             <th>Budget line</th>
-            <th className="right">Planned</th>
-            <th className="right">{words.actual}</th>
-            <th className="right">{words.promised}</th>
-            <th className="right">{words.variance}</th>
+            <th className="num">Planned</th>
+            <th className="num">{words.actual}</th>
+            <th className="num">{words.promised}</th>
+            <th className="num">{words.variance}</th>
           </tr>
         </thead>
         {secCats.map((c) => {
@@ -356,10 +356,10 @@ export function LineSection({
               {rows.map(({ line, actual, promised, variance }) => (
                 <tr key={line.id}>
                   <td style={{ paddingLeft: "1.5rem" }}>{line.name}</td>
-                  <td className="right">{formatCents(line.planned_cents)}</td>
-                  <td className="right">{figure(known(actual))}</td>
-                  <td className="right">{figure(promisedKnown(promised))}</td>
-                  <td className="right">{figure(varianceKnown(variance))}</td>
+                  <td className="num">{formatCents(line.planned_cents)}</td>
+                  <td className="num">{figure(known(actual))}</td>
+                  <td className="num">{figure(promisedKnown(promised))}</td>
+                  <td className="num">{figure(varianceKnown(variance))}</td>
                 </tr>
               ))}
               {catLines.length === 0 ? (
@@ -376,10 +376,10 @@ export function LineSection({
                   <td style={{ paddingLeft: "1.5rem" }} className="muted">
                     {c.name} subtotal
                   </td>
-                  <td className="right">{formatCents(catPlanned)}</td>
-                  <td className="right">{figure(known(catActual))}</td>
-                  <td className="right">{figure(promisedKnown(catPromised))}</td>
-                  <td className="right">
+                  <td className="num">{formatCents(catPlanned)}</td>
+                  <td className="num">{figure(known(catActual))}</td>
+                  <td className="num">{figure(promisedKnown(catPromised))}</td>
+                  <td className="num">
                     {figure(
                       varianceKnown(
                         direction === "expense"

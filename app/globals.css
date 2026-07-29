@@ -356,6 +356,16 @@
 @layer components {
   /* ---------------- Layout primitives ---------------- */
 
+  /* WARNING — `align-items: flex-start` is a shrink-wrap trap, and it is the
+     single most expensive line in this file. A `.stack` is a COLUMN flex
+     container, so `flex-start` is the CROSS axis: every child is sized to its
+     own content instead of the stack's width. Anything that must be as wide as
+     the section it sits in (a table, a card, a panel, a fieldset) needs its own
+     `width: 100%` — which is why so many rules below carry one and say why.
+     Measured, twice: two money tables came out 81px and 94px wide at 1280px,
+     and the parent absence page overflowed 390px because a shrink-wrapped
+     <select> pushed past the column. Keep flex-start (buttons and links must
+     NOT stretch across the page) and give the wide things a width. */
   .stack {
     display: flex;
     flex-direction: column;
@@ -724,6 +734,16 @@
 
   table.members tbody tr:hover td {
     background: var(--surface);
+  }
+
+  /* A figure column reads down its last digit, so money and counts align right.
+     `.num` is already the app's name for "this is a number" (`input.num`,
+     `.detail-list dd.num`); it just had no table rule, so `<td class="num">` on
+     the budget page left-aligned while the ledger's own `.money-ledger td.right`
+     did the same job under a second name. One name, every table. */
+  table.members td.num,
+  table.members th.num {
+    text-align: right;
   }
 
   /* ---- A row's panel leaves the last cell (spec 005 T143b) ----
@@ -1408,10 +1428,17 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The done badge is the one green fill in the app that carries a glyph, and
+     white on `--ok` failed AA in both schemes — 3.42 light, 2.37 dark, measured.
+     `--ok-text` is the token that exists for exactly this ("green, but legible
+     with type on it") and `--paper` follows the scheme, so the ✓ is white on a
+     deep green in light and near-black on a bright green in dark: 5.39 and 9.96.
+     Judged against the 4.5 text threshold, not the 3.0 for large graphics — the
+     ✓ is a glyph, and the badge is only 30px across. */
   .setup-step.done .setup-step-num {
-    background: var(--ok, #1f7a4d);
-    border-color: var(--ok, #1f7a4d);
-    color: #fff;
+    background: var(--ok-text, #0b7a49);
+    border-color: var(--ok-text, #0b7a49);
+    color: var(--paper, #fff);
   }
 
   .setup-step-body {
@@ -3117,12 +3144,20 @@
     border: 1px solid var(--line);
   }
 
+  /* `min-width: 0` is load-bearing, not tidiness. A grid item's automatic
+     minimum size is its CONTENT, so at ≤375 — where the strip drops to the
+     `1fr 1fr` override below — a 36px display-type figure like "$18,402.55"
+     refused to shrink and pushed the document 6px past the viewport (measured:
+     scrollWidth 381 vs clientWidth 375). Both halves of the fix are needed:
+     without the wrap on `.metric-value`, `min-width: 0` alone clips the figure
+     instead of overflowing the page. */
   .metric-cell {
     background: var(--paper);
     padding: 0.9rem 1.05rem;
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
+    min-width: 0;
   }
 
   .metric-cell.warn {
@@ -3147,6 +3182,9 @@
     font-weight: 800;
     line-height: 1.05;
     font-variant-numeric: tabular-nums;
+    /* See `.metric-cell` — a currency figure has no break opportunity, so this
+       is what lets it wrap rather than clip once the cell may shrink. */
+    overflow-wrap: anywhere;
   }
 
   .metric-value.ok {
@@ -3474,11 +3512,6 @@
     align-items: center;
     min-height: 44px;
     font-weight: 600;
-  }
-
-  .money-ledger td.right,
-  .money-ledger th.right {
-    text-align: right;
   }
 
   .money-amt {
@@ -5242,6 +5275,15 @@
 
     .metric-strip {
       grid-template-columns: 1fr 1fr;
+    }
+
+    /* Two-up at 375 leaves each cell 136px of measure, and "$18,402.55" at the
+       desktop 36px wants 152px — so with `.metric-cell`'s min-width:0 in place
+       every balance wrapped mid-number and the strip grew 78px taller. 28px
+       fits "$123,456.78" (131.6px measured) on one line. The wrap stays as the
+       backstop for a figure larger than any program's books. */
+    .metric-value {
+      font-size: 1.75rem;
     }
 
     .people-filters,
