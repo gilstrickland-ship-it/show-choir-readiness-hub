@@ -25,10 +25,9 @@ Sequenced BEFORE spec 005's Wave 9 (tutorials), so first-use guidance covers com
 
 - [X] T178 Full gate + e2e (a treasurer/director pair walking request → approve → pay → close, and the self-approval refusal) + measured visual pass; production migration applied after review.
 
-## Production migrations — READY, NOT APPLIED
+## Production migrations — APPLIED 2026-07-28/29
 
-Apply in order: `0021_commitments.sql` → `0022_commitment_drawdown_rows.sql` → `0023_commitment_thresholds.sql`. All idempotent and re-runnable.
-**0023 is deploy-blocking**: `lib/tenant.ts` now selects the three `programs` threshold columns, so an unmigrated database 400s that select. 0021 must precede any code passing `add_ledger_entry`'s twelfth parameter.
+`0021_commitments` → `0022_commitment_drawdown_rows` → `0023_commitment_thresholds` applied and verified in that order, ahead of the code deploy as required (0023 is deploy-blocking: `lib/tenant.ts` selects the three `programs` threshold columns). `0024_itinerary_items_changed_at` followed with spec 005's T169. Production is at **0024**. Code shipped via PRs #20-#22.
 
 ## Resolved during implementation
 
