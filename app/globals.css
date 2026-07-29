@@ -1068,11 +1068,15 @@
     font-size: 0.95rem;
   }
 
+  /* Four of these on every parent page, and they are how a family moves around
+     a surface with no nav — so each is a full-width 44px row rather than the
+     36.3px an 0.4rem-padded line of text gives (measured at 375). `min-height`
+     is inert on an inline <a>; `display: flex` is what gives the box a height
+     to raise, and it stretches the row so the tap area is the whole line. */
   .token-footer a {
-    padding: 0.4rem 0;
-  }
-
-  .token-footer a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
     font-weight: 600;
     text-decoration: none;
   }
@@ -4366,12 +4370,20 @@
     border-left: 4px solid var(--accent);
   }
 
-  /* Itinerary per-competition action links (packet + add-to-calendar). Stacked
-     with room to breathe so each is an easy phone tap. */
+  /* Itinerary per-competition action links (packet + add-to-calendar). Laid out
+     with room to breathe so each is an easy phone tap — and the links carry a
+     box of their own, because an inline <a> was 24.8px at 375px, the smallest
+     target measured anywhere on the parent surface. */
   .itinerary-links {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem 1.1rem;
+  }
+
+  .itinerary-links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 
   /* Day dividers for multi-day itineraries + trip schedules (Wave G / G2). Only
@@ -4464,15 +4476,18 @@
     overflow-wrap: anywhere;
   }
 
-  /* Mobile ergonomics (C2-4): parent-surface submit buttons inherit the ~36px
-     base button, too small for a reliable thumb tap. Within the token frame ONLY
-     (staff-app button sizing is untouched), give them a ≥44px tap target,
-     consistent with the .token-btn poster buttons. */
-  .token-frame form button,
-  .token-frame button[type="submit"] {
+  /* Mobile ergonomics (C2-4). This surface is phone-first and a family taps it
+     one-handed, so every control gets the app's 44px target. Buttons get theirs
+     from the base `button` rule; these are the fields — the absence form's two
+     <select>s (36.4px measured at 375) and the link-recovery email box (41.2px).
+     Checkboxes and radios are excluded on purpose: `min-height` on a checkbox
+     stretches the CONTROL, not a box around it, so it would draw a 13px-wide,
+     44px-tall tick. Within the token frame ONLY — staff-app sizing is
+     untouched. */
+  .token-frame select,
+  .token-frame textarea,
+  .token-frame input:not([type="hidden"], [type="checkbox"], [type="radio"]) {
     min-height: 44px;
-    padding-top: 0.65rem;
-    padding-bottom: 0.65rem;
   }
 
   /* ---------------- Restricted (role-gated) ---------------- */
