@@ -1558,78 +1558,6 @@
     align-self: flex-start;
   }
 
-  /* Intro strips (spec 003 §3) — a calm orientation line under the heading of the
-     eight complex surfaces. Accent-tinted like .alert-info, never alarming; the
-     "First:" action is bolded inline, the "Got it" dismiss sits to the right (and
-     drops below the copy on narrow screens). */
-  .intro-strip {
-    width: 100%;
-    display: flex;
-    align-items: flex-start;
-    gap: 0.9rem;
-    padding: 0.7rem 0.9rem;
-    border-radius: var(--radius-s);
-    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-    border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
-    border-left: 4px solid var(--accent);
-  }
-
-  .intro-strip-copy {
-    margin: 0;
-    flex: 1;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: var(--ink-2);
-  }
-
-  .intro-strip-copy strong {
-    color: var(--ink);
-  }
-
-  .intro-strip-dismiss {
-    flex: none;
-  }
-
-  @media (max-width: 34rem) {
-    .intro-strip {
-      flex-direction: column;
-      gap: 0.55rem;
-    }
-  }
-
-  /* Heading + "?" re-trigger row (spec §3). Keeps the small help affordance on the
-     heading's baseline without changing the heading's own accessible name. */
-  .page-title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .help-dot {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.4rem;
-    height: 1.4rem;
-    border-radius: 50%;
-    border: 1.5px solid var(--line-strong);
-    color: var(--muted-ink);
-    font-size: 0.78rem;
-    font-weight: 700;
-    line-height: 1;
-    text-decoration: none;
-    transition:
-      border-color var(--dur) var(--ease),
-      color var(--dur) var(--ease);
-  }
-
-  .help-dot:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
   /* Fair-share guide on the budget page — a quiet, read-only derived card. */
   .fair-share-card {
     border: 1px solid var(--line);
@@ -3320,8 +3248,8 @@
 
   /* A panel stacks independent decisions (save the details, turn the address
      back on, reset the family's links, remove them) — a hairline says those are
-     separate, not one long form, and the two that cannot be undone get a
-     thumb-sized hit area. */
+     separate, not one long form. Every one of those buttons is a `.linklike`,
+     and the base `button` rule holds their 44px target now. */
   .people-edit-form,
   .people-row-form {
     width: 100%;
@@ -4108,17 +4036,14 @@
   }
 
   /* The panel stacks two independent forms (save the shift, delete it) — a
-     hairline says those are two decisions, not one long form, and the delete
-     gets a thumb-sized hit area because it is the irreversible one. */
+     hairline says those are two decisions, not one long form. The delete's
+     thumb-sized hit area used to be bought here; the base `button` rule holds
+     it for every button in the app now. */
   .shift-edit-form + .shift-edit-form {
     margin-top: 0.25rem;
     padding-top: 0.75rem;
     border-top: 1px solid var(--line);
     width: 100%;
-  }
-
-  .shift-edit-form button.linklike {
-    min-height: 44px;
   }
 
   /* ===================== Settings (restyle, Wave D) ===================== */
