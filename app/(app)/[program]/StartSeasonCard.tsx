@@ -1,20 +1,29 @@
 import Link from "next/link";
 import type { Role } from "@/lib/auth";
 import { SETTINGS_ROLES } from "@/lib/nav";
+import type { ReturnSurface } from "@/lib/return-path";
 import { createClient } from "@/lib/supabase/server";
 import { defaultSeasonLabel } from "@/lib/seasons";
 import { startFirstSeason } from "./settings/rollover/actions";
 
-// "Start your season" (spec 005 US3) — what a program with no active season sees
-// on Season and on Today, in place of the alert that used to send a brand-new
-// director into a six-step ROLLOVER wizard. Three shapes, decided by data and
-// seat:
+// "Start your season" (spec 005 US3) — what a program with no active season sees,
+// in place of the alert that used to send a brand-new director into a six-step
+// ROLLOVER wizard. Three shapes, decided by data and seat:
 //   • no seasons yet + a settings seat → one field, one submit, done.
 //   • no seasons yet + any other seat  → who to ask.
 //   • seasons exist but none is active → Settings, because WHICH one should be
 //     active is a human decision this card has no business guessing.
-// Server component. It runs its own head-count so the two pages that render it
-// stay one line each, and it is only rendered when there is no active season.
+//
+// Every season-scoped surface renders THIS, not its own sentence (T143g). Money,
+// Commitments, Assignments and one ensemble's page each used to write their own
+// "No active season — Start a season" pointing at /settings/rollover, which is
+// SETTINGS_ROLES-only: a treasurer, a costume manager or a board member who
+// followed it was turned away by <Restricted>. The seat check that stops that
+// already lives here, so `context` is the only thing a surface still owns — the
+// one clause that says why THIS page is empty.
+//
+// Server component. It runs its own head-count so the pages that render it stay
+// one line each, and it is only rendered when there is no active season.
 
 const SEASON_ERROR: Record<string, string> = {
   label: "Give the season a name, like 2026-27.",
@@ -42,15 +51,19 @@ export async function StartSeasonCard({
   timezone,
   from,
   error,
+  context,
 }: {
   slug: string;
   programId: string;
   role: Role;
   timezone: string;
   // Which surface to return to — an allow-listed key the action resolves to a
-  // path server-side, never a URL from the browser.
-  from: "season" | "dashboard";
+  // path server-side, never a URL from the browser (lib/return-path).
+  from: ReturnSurface;
   error?: string | null;
+  // One clause naming why this particular page is empty, e.g. "Ledger entries
+  // are season-scoped." Rendered ahead of the pointer in every shape.
+  context?: string;
 }) {
   const supabase = await createClient();
   const { count } = await supabase
@@ -75,7 +88,7 @@ export async function StartSeasonCard({
       <>
         {message && <p className="alert-error">{message}</p>}
         <p className="alert-error">
-          No active season yet.{" "}
+          No active season yet. {context ? `${context} ` : ""}
           {canChoose ? (
             <>
               <Link href={`/${slug}/settings/rollover`}>
@@ -95,9 +108,10 @@ export async function StartSeasonCard({
     return (
       <div className="confirm-box stack" style={{ width: "100%" }}>
         <h2>No season yet</h2>
+        {context && <p className="muted">{context}</p>}
         <p className="muted">
-          Your director needs to start the season. Until then there is no
-          calendar to put competitions, events, or trips on.
+          Your director needs to start the season. Until then there is no season
+          for the roster, the calendar or the money to hang on.
         </p>
       </div>
     );
@@ -107,6 +121,7 @@ export async function StartSeasonCard({
     <div className="confirm-box stack" style={{ width: "100%" }}>
       <h2>Start your season</h2>
       {message && <p className="alert-error">{message}</p>}
+      {context && <p className="muted">{context}</p>}
       <p className="muted">
         A season is the school year everything hangs on — your roster, the
         calendar, the money. Name it and you are going.
