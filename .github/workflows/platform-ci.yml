@@ -2,9 +2,19 @@ name: platform-ci
 
 # Tenant isolation is existential (Constitution I): the RLS suite is CI-blocking
 # and runs against a real Postgres 16 on every change.
+# Private repo: every job minute counts against the account's 2,000 free
+# Actions minutes. Run only on PRs and pushes to main — unfiltered `on: push`
+# plus the pull_request event double-ran every PR branch and burned the full
+# monthly quota on WIP pushes.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# Supersede in-flight runs for the same branch/PR; never cancel main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   platform:
