@@ -92,12 +92,17 @@ export async function StudentsStep({
               <tr key={s.id}>
                 <td>
                   <input type="hidden" name="student" value={s.id} />
-                  <input
-                    type="checkbox"
-                    name={`return_${s.id}`}
-                    defaultChecked={!graduating}
-                    aria-label={`${s.first_name} ${s.last_name} is coming back`}
-                  />
+                  {/* The label carries the tap target, not the box: a bare
+                      checkbox is 13px, and this is a list you thumb down on a
+                      phone. The name stays on the input (.tick-cell). */}
+                  <label className="tick-cell">
+                    <input
+                      type="checkbox"
+                      name={`return_${s.id}`}
+                      defaultChecked={!graduating}
+                      aria-label={`${s.first_name} ${s.last_name} is coming back`}
+                    />
+                  </label>
                 </td>
                 <td>
                   {s.last_name}, {s.first_name}

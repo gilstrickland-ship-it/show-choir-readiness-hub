@@ -143,7 +143,7 @@ export function BoardSnapshot({
           <tr>
             <th>Category</th>
             <th>In or out</th>
-            <th className="right">So far this season</th>
+            <th className="num">So far this season</th>
           </tr>
         </thead>
         <tbody>
@@ -151,7 +151,7 @@ export function BoardSnapshot({
             <tr key={c.id}>
               <td>{c.name}</td>
               <td>{DIRECTION_WORDS[c.direction]}</td>
-              <td className="right">
+              <td className="num">
                 {actualsUnavailable
                   ? "—"
                   : formatCents(catActual.get(c.id) ?? 0)}

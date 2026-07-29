@@ -17,9 +17,20 @@ import {
 } from "@/lib/return-path";
 
 describe("returnPath", () => {
-  test("resolves the two allow-listed surfaces", () => {
+  test("resolves every allow-listed surface", () => {
     expect(returnPath("demo", "season")).toBe("/demo/season");
     expect(returnPath("demo", "dashboard")).toBe("/demo/dashboard");
+    expect(returnPath("demo", "treasury")).toBe("/demo/treasury");
+    expect(returnPath("demo", "commitments")).toBe("/demo/treasury/commitments");
+    expect(returnPath("demo", "assignments")).toBe("/demo/costumes/assignments");
+    expect(returnPath("demo", "ensembles")).toBe("/demo/roster/ensembles");
+  });
+
+  test("a key is not the path it resolves to", () => {
+    // The point of the indirection: the browser never names a path, only a key,
+    // and a key that looks like the path it stands for is still refused.
+    expect(returnPath("demo", "treasury/commitments")).toBeNull();
+    expect(returnPath("demo", "costumes/assignments")).toBeNull();
   });
 
   test("tolerates surrounding whitespace on the key", () => {
@@ -28,7 +39,8 @@ describe("returnPath", () => {
 
   test("an absent or unknown key means the module-page redirect", () => {
     expect(returnPath("demo", "")).toBeNull();
-    expect(returnPath("demo", "treasury")).toBeNull();
+    expect(returnPath("demo", "settings")).toBeNull();
+    expect(returnPath("demo", "roster")).toBeNull();
     // Not a key: a URL. The whole point of the allow-list.
     expect(returnPath("demo", "https://evil.example/steal")).toBeNull();
     expect(returnPath("demo", "/demo/season")).toBeNull();
@@ -96,9 +108,11 @@ describe("programRoot (T143a)", () => {
 });
 
 describe("isReturnSurface", () => {
-  test("narrows to the two surfaces that host borrowed forms", () => {
+  test("narrows to the surfaces that host borrowed forms", () => {
     expect(isReturnSurface("season")).toBe(true);
     expect(isReturnSurface("dashboard")).toBe(true);
+    expect(isReturnSurface("commitments")).toBe(true);
     expect(isReturnSurface("settings")).toBe(false);
+    expect(isReturnSurface("rollover")).toBe(false);
   });
 });

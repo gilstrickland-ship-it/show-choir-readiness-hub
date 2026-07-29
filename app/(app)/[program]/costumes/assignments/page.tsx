@@ -10,6 +10,7 @@ import {
   isDirectKind,
   type PieceKind,
 } from "@/lib/costumes";
+import { StartSeasonCard } from "../../StartSeasonCard";
 import { SubTabs } from "../../SubTabs";
 import { costumeTabs } from "@/lib/subnav";
 import { AddSet } from "./AddSet";
@@ -196,10 +197,14 @@ export default async function AssignmentsPage({
       <SubTabs strip={costumeTabs(slug, "assignments")} />
 
       {!season && (
-        <p className="muted">
-          No active season — assignments and sets both belong to a season.{" "}
-          <Link href={`/${slug}/settings/rollover`}>Start a season</Link>.
-        </p>
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={program.timezone}
+          from="assignments"
+          context="Assignments and sets both belong to a season."
+        />
       )}
 
       {one("saved") && <p className="alert-ok">Saved.</p>}

@@ -25,6 +25,7 @@ import {
   type LedgerPageRange,
 } from "@/lib/treasury";
 import { zonedDateKey } from "@/lib/datetime";
+import { StartSeasonCard } from "../../StartSeasonCard";
 import { SubTabs } from "../../SubTabs";
 import { Flash } from "../../Flash";
 import { readFlash, oneParam, type PageFlash } from "@/lib/flash";
@@ -448,11 +449,14 @@ export default async function CommitmentsPage({
       <Flash flash={pageFlash} section="page" />
 
       {!season && (
-        <p className="alert-error">
-          No active season. Commitments are season-scoped —{" "}
-          <Link href={`/${slug}/settings/rollover`}>Start a season</Link> to
-          record them.
-        </p>
+        <StartSeasonCard
+          slug={slug}
+          programId={program.id}
+          role={role}
+          timezone={program.timezone}
+          from="commitments"
+          context="Commitments are season-scoped, so there is nowhere to record one yet."
+        />
       )}
 
       {season && !totals && (
